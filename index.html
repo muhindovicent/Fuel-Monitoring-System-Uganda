@@ -37,7 +37,7 @@
     font-size: 15px;
   }
 
-  /* ─── SIDEBAR ─── */
+
   .sidebar {
     position: fixed; top: 0; left: 0;
     width: var(--sidebar-width); height: 100vh;
@@ -133,7 +133,7 @@
 
   .content { max-width: 1100px; padding: 2.5rem 3rem 4rem; }
 
-  /* ─── TYPOGRAPHY ─── */
+  
   h2 {
     font-size: 1.6rem;
     margin: 2.5rem 0 1rem;
@@ -158,7 +158,7 @@
   ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
   li { margin-bottom: 0.3rem; }
 
-  /* ─── CODE ─── */
+
   pre {
     background: var(--code-bg);
     color: #e2e8f0;
@@ -191,7 +191,7 @@
   .sql-comment { color: #6b7280; font-style: italic; }
   .sql-string { color: #fdba74; }
 
-  /* ─── TABLES ─── */
+  
   table {
     width: 100%;
     border-collapse: collapse;
@@ -208,7 +208,7 @@
   tbody tr:hover { background: #eef2f7; }
   th { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
 
-  /* ─── DIAGRAM BOXES ─── */
+  
   .diagram {
     background: #0d1117;
     color: #e6edf3;
@@ -229,7 +229,7 @@
     font-family: var(--font-mono);
   }
 
-  /* ─── CARDS ─── */
+
   .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -251,7 +251,7 @@
   }
   .card .desc { font-size: 0.82rem; color: var(--text-light); }
 
-  /* ─── STATE DIAGRAM ─── */
+
   .state-machine {
     font-family: var(--font-mono);
     font-size: 0.78rem;
@@ -264,13 +264,12 @@
     white-space: pre;
   }
 
-  /* ─── BADGES ─── */
+
   .badge-green { background: #d1fae5; color: #065f46; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
   .badge-red { background: #fee2e2; color: #991b1b; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
   .badge-yellow { background: #fef3c7; color: #92400e; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
   .badge-blue { background: #dbeafe; color: #1e40af; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
 
-  /* ─── NOTE ─── */
   .note {
     background: #fffbeb;
     border-left: 4px solid var(--accent);
@@ -281,7 +280,7 @@
   }
   .note strong { color: var(--accent-dark); }
 
-  /* ─── RESPONSIVE ─── */
+
   @media (max-width: 768px) {
     .sidebar {
       position: relative;
@@ -296,7 +295,7 @@
     .card-grid { grid-template-columns: 1fr; }
   }
 
-  /* ─── TOGGLE ─── */
+
   .menu-toggle {
     display: none;
     position: fixed; top: 0.75rem; left: 0.75rem;
@@ -315,7 +314,7 @@
     .sidebar.show { display: block; position: fixed; }
   }
 
-  /* ─── LAYER BADGES ─── */
+  
   .layer-stack { display: flex; flex-direction: column; gap: 0; margin: 1rem 0; }
   .layer {
     display: flex; align-items: center;
@@ -343,7 +342,7 @@
 
 <button class="menu-toggle" id="menuToggle">☰</button>
 
-<!-- ─── SIDEBAR ─── -->
+
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <h1>⛽ MafutaWatch Uganda</h1>
@@ -391,7 +390,7 @@
   </div>
 </nav>
 
-<!-- ─── MAIN ─── -->
+
 <div class="main" id="top">
 
 <div class="hero">
@@ -409,7 +408,6 @@
 
 <div class="content">
 
-<!-- ─── PLATFORM SUMMARY ─── -->
 <h2>Platform Summary</h2>
 
 <div class="card-grid">
