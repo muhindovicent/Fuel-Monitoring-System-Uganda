@@ -1,4 +1,4 @@
-# Matano-Meters — Security Framework: Sybil Attack Mitigation Protocol
+# MafutaWatch Uganda — Security Framework: Sybil Attack Mitigation Protocol
 
 ## 1. Threat Model Overview
 

@@ -1,10 +1,10 @@
-# Matano-Meters — The National Fuel Price Transparency Platform
+# MafutaWatch Uganda — The National Fuel Price Transparency Platform
 
 **Ministry of Works and Transport** | **Ministry of Energy and Mineral Development (MEMD)** | **Republic of Uganda**
 
 ---
 
-- **Platform:** Matano-Meters (National Fuel Price Transparency Platform)
+- **Platform:** MafutaWatch Uganda (National Fuel Price Transparency Platform)
 - **Channels:** USSD (`*284*X#`), WhatsApp Bot, Progressive Web App (PWA)
 - **Target Load:** 150,000 concurrent peak-hour sessions
 - **Stack:** PostgreSQL 15+ / PostGIS 3.3+, Redis 7+, Kafka/RabbitMQ, Node.js/Go Workers, React/Vue PWA
@@ -1032,7 +1032,7 @@ async function findNearestStations(geoJsonPoint, radiusMeters = 5000) {
 All strings stored in Redis hash `i18n:{locale}:{state}` for hot-reload without deployment.
 
 ```
-i18n:lg:WELCOME -> "Matano-Meters!\n1. Teeka omuwendo\n2. Kebera\n3. Olulimi"
+i18n:lg:WELCOME -> "MafutaWatch Uganda!\n1. Teeka omuwendo\n2. Kebera\n3. Olulimi"
 i18n:lg:SELECT_REGION_PROMPT -> "Londa essaza lyo:\n{regions}"
 i18n:lg:SELECT_DISTRICT_PROMPT -> "Londa disitulikiti:\n{districts}"
 i18n:lg:CONFIRM_PROMPT -> "Kakasa:\n{station}\n{fuel}\nUGX {price}/L\n1. Kakasa\n0. Ddayo"
@@ -1485,6 +1485,6 @@ async function emergencyPriceFreeze(stationId, reason) {
 
 ---
 
-*Matano-Meters — National Fuel Price Transparency Platform*
+*MafutaWatch Uganda — National Fuel Price Transparency Platform*
 *Commissioned by Ministry of Works and Transport & MEMD, Republic of Uganda*
 *Reference Architecture v1.0 — May 2026*

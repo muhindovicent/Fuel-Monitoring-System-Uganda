@@ -1,4 +1,4 @@
-# Matano-Meters — USSD Stateful Session Logic Flow
+# MafutaWatch Uganda — USSD Stateful Session Logic Flow
 
 ## 1. Redis Session Architecture
 
@@ -576,7 +576,7 @@ All strings stored in Redis hash `i18n:{locale}:{state}` for hot-reload without 
 Example for Luganda:
 
 ```
-i18n:lg:WELCOME -> "Matano-Meters!\n1. Teeka omuwendo\n2. Kebera\n3. Olulimi"
+i18n:lg:WELCOME -> "MafutaWatch Uganda!\n1. Teeka omuwendo\n2. Kebera\n3. Olulimi"
 i18n:lg:SELECT_REGION_PROMPT -> "Londa essaza lyo:\n{regions}"
 i18n:lg:SELECT_DISTRICT_PROMPT -> "Londa disitulikiti:\n{districts}"
 i18n:lg:CONFIRM_PROMPT -> "Kakasa:\n{sstation}\n{fuel}\nUGX {price}/L\n1. Kakasa\n0. Ddayo"

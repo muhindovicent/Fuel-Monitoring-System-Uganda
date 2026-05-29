@@ -1,7 +1,7 @@
-// Matano-Meters — Service Worker v1.0
+// MafutaWatch Uganda — Service Worker v1.0
 // Offline-first caching strategy for fuel price data
 
-const CACHE_NAME = 'matano-meters-v1';
+const CACHE_NAME = 'MafutaWatch Uganda-v1';
 const STATIC_ASSETS = [
   'index.html',
   'manifest.json',

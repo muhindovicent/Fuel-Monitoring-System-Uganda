@@ -1,7 +1,7 @@
-// Matano-Meters — Application Logic
+// MafutaWatch Uganda — Application Logic
 
 /* ─── DATABASE ─── */
-const DB_KEY = 'matano_meters_v2';
+const DB_KEY = 'mafuta_watch_v2';
 function loadDB() {
   try {
     const raw = localStorage.getItem(DB_KEY);
@@ -16,12 +16,19 @@ function loadDB() {
       if (d.totalReports === undefined) d.totalReports = 0;
       if (d.verifiedCount === undefined) d.verifiedCount = 0;
       if (d.authToken === undefined) d.authToken = null;
-      if (d.broadcasts === undefined) d.broadcasts = [];
+      if (!d.broadcasts) d.broadcasts = [];
+      if (!d.p2pRooms) d.p2pRooms = [];
+      if (!d.p2pMessages) d.p2pMessages = {};
+      if (!d.c2gTickets) d.c2gTickets = [];
+      if (!d.g2cPosts) d.g2cPosts = [];
+      if (!d.g2cAma) d.g2cAma = [];
+      if (d.peerScore === undefined) d.peerScore = 0;
       return d;
     }
   } catch(e) {}
   return { reports:[], reviews:[], notifications:[], subscriptions:[], priceHistory:[],
-           trustScore:0, totalReports:0, verifiedCount:0, authToken:null, broadcasts:[] };
+           trustScore:0, totalReports:0, verifiedCount:0, authToken:null, broadcasts:[],
+           p2pRooms:[], p2pMessages:{}, c2gTickets:[], g2cPosts:[], g2cAma:[], peerScore:0 };
 }
 let DB = loadDB();
 function saveDB() {
@@ -48,6 +55,46 @@ function getPriceColor(price, fuel) {
 
 function getPriceRange(price) { return price<=5300?'low':price<=5450?'med':'high'; }
 
+/* ─── PRICE REGULATION ─── */
+const DISTRICT_PRICE_CAPS = {
+  'Kampala': { petrol:5400, diesel:5480 },
+  'Wakiso': { petrol:5400, diesel:5480 },
+  'Mukono': { petrol:5400, diesel:5480 },
+  'Masaka': { petrol:5450, diesel:5520 },
+  'Mbarara': { petrol:5550, diesel:5620 },
+  'Kabarole': { petrol:5550, diesel:5620 },
+  'Hoima': { petrol:5550, diesel:5620 },
+  'Kasese': { petrol:5580, diesel:5650 },
+  'Gulu': { petrol:5600, diesel:5680 },
+  'Lira': { petrol:5630, diesel:5700 },
+  'Arua': { petrol:5650, diesel:5720 },
+  'Jinja': { petrol:5430, diesel:5500 },
+  'Mbale': { petrol:5480, diesel:5550 },
+  'Soroti': { petrol:5510, diesel:5580 },
+  'Tororo': { petrol:5470, diesel:5540 },
+};
+
+function checkPriceCap(stationId, fuel, price) {
+  const s = getStation(stationId);
+  if (!s) return { withinCap: true, cap: null, excess: 0 };
+  const district = s.district;
+  const caps = DISTRICT_PRICE_CAPS[district];
+  if (!caps) return { withinCap: true, cap: null, excess: 0 };
+  const cap = caps[fuel];
+  if (!cap) return { withinCap: true, cap: null, excess: 0 };
+  const withinCap = price <= cap;
+  if (!withinCap) {
+    if (!DB.notifications) DB.notifications = [];
+    DB.notifications.push({
+      id: Date.now(),
+      type: 'price_cap_violation',
+      message: `🚨 Price cap violation at ${s.name}: ${fuel} at UGX ${price.toLocaleString()} (cap: UGX ${cap.toLocaleString()}, excess: UGX ${(price-cap).toLocaleString()})`,
+      stationId, stationName: s.name, read: false, date: new Date().toISOString(),
+    });
+  }
+  return { withinCap, cap, excess: withinCap ? 0 : price - cap };
+}
+
 /* ─── TOAST ─── */
 function showToast(msg, duration) {
   const t=document.getElementById('toast'); if(!t) return;
@@ -71,6 +118,9 @@ function switchPage(pane) {
   if(pane==='activity') renderActivity();
   if(pane==='operator') renderOperatorDash();
   if(pane==='admin') renderAdminDash();
+  if(pane==='p2p') { renderP2PRooms(); updateHubCounts(); }
+  if(pane==='c2g') { renderC2GTickets(); initC2GForm(); updateHubCounts(); }
+  if(pane==='g2c') { renderG2CPosts(); renderG2CAMA(); updateHubCounts(); }
 }
 document.addEventListener('click', e=>{
   const item=e.target.closest('.tools-tab');
@@ -78,7 +128,7 @@ document.addEventListener('click', e=>{
 });
 
 /* ─── MAP ─── */
-let map, markers=[];
+let map, markers=[], currentStationId=null;
 function initMap() {
   map=L.map('map',{center:[0.315,32.58],zoom:12,zoomControl:true,attributionControl:true});
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
@@ -185,6 +235,7 @@ document.addEventListener('click',e=>{
 /* ─── STATION MODAL ─── */
 function openStationModal(id) {
   const s=getStation(id); if(!s) return;
+  currentStationId = id;
   const op=getOp(s.op);
   document.getElementById('modalTitle').textContent=s.name;
   document.getElementById('modalSub').innerHTML=`${op.name} · ${s.area}, ${s.district} ${s.phone?'· 📞'+s.phone:''}`;
@@ -236,6 +287,26 @@ function closeModal(){
 document.addEventListener('click',e=>{
   const overlay=document.getElementById('stationModal');
   if(e.target===overlay) closeModal();
+});
+
+/* ─── DIRECTIONS ─── */
+document.addEventListener('click', e => {
+  if (e.target.id === 'modalDirectionsBtn') {
+    const s = getStation(currentStationId);
+    if (!s) return showToast('Station location not available.');
+    if (!navigator.geolocation) return showToast('Geolocation not supported by your browser.');
+    navigator.geolocation.getCurrentPosition(pos => {
+      const url = `https://www.google.com/maps/dir/?api=1&origin=${pos.coords.latitude},${pos.coords.longitude}&destination=${s.lat},${s.lng}&travelmode=driving`;
+      window.open(url, '_blank');
+      if (map) {
+        L.polyline([[pos.coords.latitude, pos.coords.longitude], [s.lat, s.lng]], {
+          color: '#76FF03', weight: 3, dashArray: '10,10',
+        }).addTo(map);
+        map.setView([(pos.coords.latitude + s.lat) / 2, (pos.coords.longitude + s.lng) / 2], 12);
+      }
+      showToast('🗺️ Directions opened in Google Maps.');
+    }, () => showToast('Could not get your location.'), { enableHighAccuracy: true, timeout: 10000 });
+  }
 });
 
 /* ─── STATIONS LIST ─── */
@@ -353,6 +424,12 @@ function submitReport() {
   const s=getStation(stationId); if(!s) return;
   const current=s[fuel]||0;
 
+  // Price cap cross-reference
+  const capResult = checkPriceCap(stationId, fuel, price);
+  if (!capResult.withinCap) {
+    showToast('⚠️ Price UGX ' + price.toLocaleString() + ' exceeds district cap of UGX ' + capResult.cap.toLocaleString() + '! Flagged for review.', 4000);
+  }
+
   // Deviation check
   if(current>0){
     const dev=Math.abs(price-current)/current*100;
@@ -372,7 +449,8 @@ function submitReport() {
   }
 
   const report={id:Date.now(),stationId,stationName:s.name,fuel,price,location:loc,
-    timestamp:new Date().toISOString(),status:'pending',userTrust:DB.trustScore||0};
+    timestamp:new Date().toISOString(),status:'pending',userTrust:DB.trustScore||0,
+    criticalCompliance: !capResult.withinCap || undefined};
   DB.reports.push(report);
   DB.totalReports=(DB.totalReports||0)+1;
   saveDB();
@@ -611,6 +689,31 @@ function runFraudDetection() {
       }
     }
 
+    // 1a. Check price cap compliance
+    const capResult = checkPriceCap(r.stationId, r.fuel, r.price);
+    if (!capResult.withinCap) {
+      r.criticalCompliance = true;
+      r.status = 'flagged_critical';
+      if (!DB.admin) DB.admin = {};
+      if (!DB.admin.fraudQueue) DB.admin.fraudQueue = [];
+      DB.admin.fraudQueue.push({
+        id: Date.now(),
+        stationId: r.stationId,
+        stationName: s.name,
+        reportedPrice: r.price,
+        currentPrice: s[r.fuel] || 0,
+        fuel: r.fuel,
+        deviationPct: parseFloat(((r.price - capResult.cap) / capResult.cap * 100).toFixed(1)),
+        confidence: 'high',
+        userId: 'AUTO-FLAG',
+        location: s.area + ', ' + s.district,
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+      });
+      flagged = true;
+      saveDB();
+    }
+
     // 2. Check against 48h rolling median from price history
     const history=DB.priceHistory?.filter(h=>h.stationId===r.stationId&&h.fuel===r.fuel)||[];
     if(history.length>=3){
@@ -705,13 +808,13 @@ function initAdminSystem() {
   }
   if (!DB.admin.apiTokens) {
     DB.admin.apiTokens = [
-      { id:1, name:'Shell Uganda — Forecourt Sync', token:'mms_v2_shell_fc7a3b9e1d2f4c8a0b5e',
+      { id:1, name:'Shell Uganda — Forecourt Sync', token:'mfw_v2_shell_fc7a3b9e1d2f4c8a0b5e',
         operator:'Shell Uganda', created:new Date(Date.now()-86400000*30).toISOString(),
         lastUsed:new Date(Date.now()-3600000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:2, name:'TotalEnergies — Pump Integration', token:'mms_v2_total_d4e5f6a7b8c9d0e1f2a3',
+      { id:2, name:'TotalEnergies — Pump Integration', token:'mfw_v2_total_d4e5f6a7b8c9d0e1f2a3',
         operator:'TotalEnergies Uganda', created:new Date(Date.now()-86400000*14).toISOString(),
         lastUsed:new Date(Date.now()-7200000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:3, name:'Stabex — Legacy API Bridge', token:'mms_v2_stabex_b1c2d3e4f5a6b7c8d9e0',
+      { id:3, name:'Stabex — Legacy API Bridge', token:'mfw_v2_stabex_b1c2d3e4f5a6b7c8d9e0',
         operator:'Stabex Uganda', created:new Date(Date.now()-86400000*60).toISOString(),
         lastUsed:null, status:'revoked', rateLimit:'500 req/min' },
     ];
@@ -816,6 +919,41 @@ document.addEventListener('click', e => {
   }
 });
 
+/* ─── SLA TIMERS ─── */
+function renderSLATimers() {
+  const container = document.getElementById('slatTimerContainer');
+  if (!container) return;
+  const tickets = (DB.c2gTickets || []).filter(t => t.status === 'open' || t.status === 'investigating');
+  if (tickets.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-dim);font-size:0.82rem;text-align:center;padding:12px;">No active SLA timers.</div>';
+    return;
+  }
+  container.innerHTML = tickets.map(t => {
+    const elapsed = Date.now() - new Date(t.createdAt).getTime();
+    const remaining = Math.max(0, 86400000 - elapsed);
+    const hours = Math.floor(remaining / 3600000);
+    const minutes = Math.floor((remaining % 3600000) / 60000);
+    const pct = (elapsed / 86400000) * 100;
+    const urgent = remaining < 14400000;
+    const warning = remaining < 28800000;
+    const cls = urgent ? 'sla-urgent' : warning ? 'sla-warning' : '';
+    return `<div class="sla-card ${cls}">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:600;font-size:0.82rem;">${t.id}</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);">${t.stationName}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <div class="sla-timer" style="font-size:1.4rem;font-weight:800;font-family:var(--font-mono);">${hours}h ${minutes}m</div>
+        <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+          <div style="height:100%;width:${pct.toFixed(0)}%;background:${urgent?'#ef4444':warning?'#f59e0b':'#76FF03'};border-radius:3px;transition:width 1s;"></div>
+        </div>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;">Status: ${t.status} · Created ${new Date(t.createdAt).toLocaleDateString()}</div>
+    </div>`;
+  }).join('');
+}
+setInterval(renderSLATimers, 60000);
+
 /* ─── DASHBOARD ─── */
 function renderAdminDash() {
   if(activePane!=='admin' || adminActiveTab!=='dashboard') return;
@@ -885,6 +1023,7 @@ function renderAdminDash() {
       });
     }
   }
+  renderSLATimers();
 }
 
 /* ─── FRAUD QUEUE ─── */
@@ -1016,7 +1155,7 @@ function authorizeOperator(id) {
   if (!a) return;
   a.status = 'approved';
   if (!DB.admin.apiTokens) DB.admin.apiTokens = [];
-  const tokenStr = 'mms_v2_'+a.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
+  const tokenStr = 'mfw_v2_'+a.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
   DB.admin.apiTokens.push({
     id:Date.now(), name:a.name+' — Operator Token', token:tokenStr,
     operator:a.name, created:new Date().toISOString(), lastUsed:null,
@@ -1228,7 +1367,7 @@ document.addEventListener('click', e => {
   if (e.target.id==='generateTokenBtn') {
     const name = prompt('Enter token name (e.g. "Shell Uganda — Forecourt Sync"):');
     if (!name || !name.trim()) return;
-    const tokenStr = 'mms_v2_'+name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
+    const tokenStr = 'mfw_v2_'+name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
     if (!DB.admin.apiTokens) DB.admin.apiTokens = [];
     DB.admin.apiTokens.push({
       id:Date.now(), name:name.trim(), token:tokenStr,
@@ -1244,7 +1383,7 @@ document.addEventListener('click', e => {
 function cycleToken(id) {
   const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
   if (!t) return;
-  const newToken = 'mms_v2_'+t.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
+  const newToken = 'mfw_v2_'+t.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
   t.token = newToken;
   t.created = new Date().toISOString();
   saveDB();
@@ -1451,7 +1590,632 @@ function updateHeroCount() {
   el.textContent=`${(base+verified).toLocaleString()}+`;
   const sc=document.getElementById('heroStationsCount');
   if(sc) sc.textContent=STATIONS_DATA.length;
+
+  // Update metrics with live data
+  const peerCount = (DB.peerScore || 0) + 12400;
+  const metricPeer = document.getElementById('metricPeerAlerts');
+  if (metricPeer) {
+    if (peerCount >= 1000) metricPeer.innerHTML = (peerCount/1000).toFixed(1) + '<span class="neon">k+</span>';
+    else metricPeer.textContent = peerCount + '<span class="neon">+</span>';
+  }
+  const invCount = (DB.c2gTickets||[]).filter(t => t.status === 'investigating' || t.status === 'resolved').length + 420;
+  const metricInv = document.getElementById('metricInvestigations');
+  if (metricInv) metricInv.innerHTML = invCount + '<span class="neon">+</span>';
 }
+
+/* ─── SEED NEW DATA ─── */
+function seedNewData() {
+  // P2P Rooms
+  if (DB.p2pRooms.length === 0) {
+    DB.p2pRooms = [
+      { id:1, name:'Masaka Road Transporters', icon:'🚦', corridor:'Masaka-Kampala Hwy',
+        members:24, active:8, lat:0.220, lng:32.380 },
+      { id:2, name:'Kampala Northern Bypass', icon:'🚛', corridor:'Northern Bypass',
+        members:31, active:12, lat:0.350, lng:32.560 },
+      { id:3, name:'Jinja- Kampala Corridor', icon:'🚌', corridor:'Jinja Rd',
+        members:19, active:5, lat:0.430, lng:32.810 },
+      { id:4, name:'Gulu Highway Riders', icon:'🛵', corridor:'Gulu-Kampala Hwy',
+        members:16, active:7, lat:2.770, lng:32.300 },
+      { id:5, name:'Eastern Route — Mbale Line', icon:'🚚', corridor:'Mbale-Kampala',
+        members:22, active:9, lat:1.080, lng:34.180 },
+      { id:6, name:'Mbarara —Kasese Route', icon:'🚐', corridor:'Mbarara-Kasese',
+        members:14, active:4, lat:-0.420, lng:29.780 },
+      { id:7, name:'Fort Portal Transport Hub', icon:'🚍', corridor:'Fort Portal-Kampala',
+        members:11, active:3, lat:0.660, lng:30.270 },
+      { id:8, name:'Entebbe Express Link', icon:'🚗', corridor:'Entebbe-Kampala Expwy',
+        members:18, active:6, lat:0.060, lng:32.460 },
+    ];
+    // Seed messages for each room
+    DB.p2pMessages = {};
+    DB.p2pRooms.forEach(room => {
+      const msgs = [];
+      const authors = ['Sarah N.','Peter K.','John M.','Grace A.','Robert S.','Faith O.','David W.','Alice T.'];
+      const msgsPerRoom = 3 + Math.floor(Math.random() * 4);
+      for (let i=0; i<msgsPerRoom; i++) {
+        const isTrusted = Math.random() > 0.5;
+        const texts = [
+          'Fuel at Shell near the stage is UGX 5,350 today. No queue!',
+          '⚠️ Accident on the bypass near the clock tower. Take Kyambogo route instead.',
+          'Just filled up at Total — diesel is UGX 5,460. Cheapest on this corridor.',
+          'Anyone know if Kobil on Bombo Rd has petrol? Need to fill up.',
+          'Traffic is heavy heading into town. Expect 20 min delay.',
+          'Bulk buyers — we have 5 people pooling at Shell Jinja. Need 2 more!',
+          'Station near the market has diesel at UGX 5,520. Long lines though.',
+          'Police checkpoint on Masaka Rd near Mpigi. Drive safe.',
+          '⭐⭐⭐ Shell fuel quality is good here. No adulteration issues.',
+          'Price drop at Total Ntinda — now UGX 5,280 for petrol! Verified.',
+          '🚨 Kobil is refusing to adjust prices despite Ministry directive. Report filed.',
+          'Good news — Shell Mukono just reduced petrol to UGX 5,310.',
+        ];
+        const text = texts[Math.floor(Math.random() * texts.length)];
+        const author = authors[Math.floor(Math.random() * authors.length)];
+        msgs.push({
+          id: Date.now() - (msgsPerRoom - i) * 60000 + room.id * 1000,
+          roomId: room.id, author, text,
+          timestamp: new Date(Date.now() - (msgsPerRoom - i) * 60000).toISOString(),
+          upvotes: Math.floor(Math.random() * 8), trusted: isTrusted,
+        });
+      }
+      DB.p2pMessages[room.id] = msgs;
+    });
+  }
+
+  // C2G Tickets
+  if (DB.c2gTickets.length === 0) {
+    DB.c2gTickets = [
+      { id:'C2G-2025-0042', category:'tampering', stationId:17, stationName:'Kobil Bombo Road',
+        date:'2025-05-20', phone:'+256712345678',
+        description:'Pump display showed 5L but only 4.3L dispensed. Request investigation.',
+        status:'investigating', createdAt:new Date(Date.now()-86400000*3).toISOString(),
+        chat:[
+          { from:'gov', text:'Thank you for your report. Case assigned to Inspector Mwesigwa.', time:new Date(Date.now()-86400000*2).toISOString() },
+          { from:'gov', text:'We need a photo of the pump display. Can you provide one?', time:new Date(Date.now()-86400000*1).toISOString() },
+        ]},
+      { id:'C2G-2025-0041', category:'overpricing', stationId:5, stationName:'Total Ntinda',
+        date:'2025-05-18', phone:'+256776543210',
+        description:'Station is selling petrol at UGX 5,550 despite Ministry cap of UGX 5,400.',
+        status:'resolved', createdAt:new Date(Date.now()-86400000*7).toISOString(),
+        chat:[
+          { from:'gov', text:'Report received. We have contacted the station operator.', time:new Date(Date.now()-86400000*6).toISOString() },
+          { from:'gov', text:'Station has complied with the directive. Price adjusted to UGX 5,350. Thank you for your vigilance.', time:new Date(Date.now()-86400000*4).toISOString() },
+        ]},
+      { id:'C2G-2025-0040', category:'adulterated', stationId:47, stationName:'Shell Arua',
+        date:'2025-05-15', phone:'+256701234567',
+        description:'Several vehicles broke down after refueling. Suspect water in diesel.',
+        status:'open', createdAt:new Date(Date.now()-86400000*10).toISOString(),
+        chat:[]},
+    ];
+  }
+
+  // G2C Posts
+  if (DB.g2cPosts.length === 0) {
+    DB.g2cPosts = [
+      { id:1, title:'New National Fuel Price Cap Effective June 1', source:'Ministry of Energy & Mineral Development',
+        body:'The Ministry of Energy and Mineral Development (MEMD) announces a reviewed fuel price cap effective 1st June 2025. Petrol retail price shall not exceed UGX 5,400 per liter, and diesel UGX 5,480 per liter across all licensed stations nationwide. Fuel stations found in violation will face immediate suspension of their operating license.',
+        date:new Date(Date.now()-86400000*2).toISOString(), type:'directive' },
+      { id:2, title:'Quality Assurance: Nationwide Fuel Sampling Exercise', source:'Uganda National Bureau of Standards (UNBS)',
+        body:'UNBS in collaboration with MEMD has commenced a nationwide fuel quality sampling exercise. All licensed stations are required to submit samples for testing. Preliminary results from Kampala and Wakiso districts show 94% compliance with set standards.',
+        date:new Date(Date.now()-86400000*5).toISOString(), type:'update' },
+      { id:3, title:'⚠️ Public Warning: Adulterated Fuel in Circulation', source:'Ministry of Energy & Mineral Development',
+        body:'MEMD warns the public about substandard fuel being sold along the Kampala-Masaka corridor. Official testing revealed elevated sulfur content in diesel samples collected in the Mpigi area. Citizens are advised to report any suspected adulteration via the C2G ticketing system.',
+        date:new Date(Date.now()-86400000*8).toISOString(), type:'alert' },
+      { id:4, title:'Monthly Town Hall: Fuel Pricing & Consumer Protection', source:'Minister of State for Energy',
+        body:'Join us for the monthly "Fuel Market Dialogue" AMA session on 15th June 2025 at 10:00 AM EAT. The Minister will address citizen concerns on fuel pricing, pump calibration enforcement, and the new Petroleum Supply Act amendments. Submit your questions in advance via the AMA section below.',
+        date:new Date(Date.now()-86400000*10).toISOString(), type:'townhall' },
+      { id:5, title:'Operators: New KYC Requirements Coming July 2025', source:'Ministry of Energy & Mineral Development',
+        body:'All fuel station operators must complete enhanced KYC registration by July 1, 2025 to continue API integration with the national fuel pricing system. Non-compliant stations will be delisted from MafutaWatch Uganda and associated USSD and WhatsApp services.',
+        date:new Date(Date.now()-86400000*14).toISOString(), type:'notice' },
+    ];
+  }
+
+  // G2C AMA sessions
+  if (DB.g2cAma.length === 0) {
+    DB.g2cAma = [
+      { id:1, title:'Fuel Market Dialogue — Monthly AMA', host:'Minister of State for Energy',
+        date:'2025-06-15T10:00:00', description:'Open Q&A on fuel pricing, pump calibration, and consumer rights.',
+        questions:[
+          { name:'Sarah N.', text:'Will the price cap apply to all stations including remote areas?', votes:12 },
+          { name:'Peter K.', text:'How do we verify pump calibration is accurate?', votes:8 },
+        ]},
+      { id:2, title:'Petroleum Supply Act — Public Consultation', host:'Permanent Secretary, MEMD',
+        date:'2025-06-22T14:00:00', description:'Discussion of the new Petroleum Supply Act amendments and their impact on transporters.',
+        questions:[
+          { name:'Grace A.', text:'How will the new Act affect fuel transportation licensing?', votes:5 },
+        ]},
+    ];
+  }
+
+  saveDB();
+}
+
+/* ─── COMMUNITY BROADCAST SYSTEM ─── */
+function submitBroadcast() {
+  const input = document.getElementById('broadcastInput');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text || text.length < 5) return showToast('Please enter at least 5 characters.');
+  if (!DB.broadcasts) DB.broadcasts = [];
+  DB.broadcasts.push({
+    id: Date.now(), text,
+    timestamp: new Date().toISOString(),
+    verified: (DB.trustScore || 0) >= 20,
+    upvotes: 0,
+  });
+  DB.peerScore = (DB.peerScore || 0) + 1;
+  saveDB();
+  input.value = '';
+  document.getElementById('charCount').textContent = '0/140';
+  showToast('📢 Broadcast sent! It will appear in the community feed.');
+  updateBroadcastTicker();
+  updateHubCounts();
+}
+
+function updateBroadcastTicker() {
+  const ticker = document.getElementById('feedTicker');
+  if (!ticker) return;
+  const bcs = DB.broadcasts || [];
+  const recent = bcs.slice(-8).reverse();
+  const items = recent.map(b => {
+    const time = new Date(b.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    const prefix = b.verified ? '✅ <strong>Verified:</strong>' : '📢 <strong>Broadcast:</strong>';
+    return `<div class="ticker-item">${prefix} ${b.text} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
+  }).join('');
+  ticker.innerHTML = items || '<div class="ticker-item" style="color:var(--text-dim);">No broadcasts yet. Be the first to share!</div>';
+}
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'broadcastInput') {
+    const count = e.target.value.length;
+    document.getElementById('charCount').textContent = count + '/140';
+  }
+});
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'sendBroadcastBtnHero') submitBroadcast();
+});
+
+// Auto-generate sample broadcasts periodically
+function simulateBroadcasts() {
+  if (!DB.broadcasts) DB.broadcasts = [];
+  if (DB.broadcasts.length > 50) return; // Don't grow too large
+  const samples = [
+    '⚠️ Boda Stage Alert: Heavy traffic heading into downtown Mbarara due to truck breakdown. Shell Mbarara has zero lines right now.',
+    '📢 Fuel price drop at Total Ntinda — now UGX 5,280 for petrol!',
+    '📍 Route Update: Shell Entebbe Airport has shortest queue times (avg 4 min).',
+    '🚨 Consumer Alert: Kobil Bombo Road pump #3 displaying incorrect amounts. Report filed.',
+    '✅ Diesel at UGX 5,450 at Shell Jinja Main — consensus confirmed by 5 riders.',
+    '💡 Tip: Shell Mukono has both fuels and zero queue this morning.',
+    '⚠️ Heavy rain on Kampala-Entebbe road. Drive carefully.',
+    '📢 Stabex Mukono just reduced petrol to UGX 5,310!',
+    '📍 Total Fort Portal has diesel available — few stations in the area have supply.',
+    '👥 Looking for 3 more riders to pool fuel at Total Mbarara. DM to join.',
+  ];
+  const pick = samples[Math.floor(Math.random() * samples.length)];
+  DB.broadcasts.push({
+    id: Date.now(), text: pick,
+    timestamp: new Date().toISOString(),
+    verified: Math.random() > 0.5,
+    upvotes: 0,
+  });
+  saveDB();
+  updateBroadcastTicker();
+  updateHubCounts();
+}
+
+/* ─── P2P CHAT ROOMS ─── */
+function renderP2PRooms() {
+  const container = document.getElementById('p2pRoomList');
+  if (!container) return;
+  const rooms = DB.p2pRooms || [];
+  container.innerHTML = rooms.map(r => {
+    const msgs = (DB.p2pMessages[r.id] || []);
+    const lastTime = msgs.length > 0 ? new Date(msgs[msgs.length-1].timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<div class="p2p-room-card" onclick="openP2PRoom(${r.id})">
+      <div class="room-icon">${r.icon}</div>
+      <div class="room-info">
+        <div class="room-name">${r.name}</div>
+        <div class="room-meta">${r.corridor} · last active ${lastTime}</div>
+      </div>
+      <div class="room-stats">
+        <div class="room-count">${r.active}</div>
+        <div class="room-label">online</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openP2PRoom(roomId) {
+  const room = (DB.p2pRooms || []).find(r => r.id === roomId);
+  if (!room) return;
+  document.getElementById('p2pRoomList').style.display = 'none';
+  document.getElementById('p2pActiveRoom').style.display = 'block';
+  document.getElementById('p2pRoomTitle').textContent = room.icon + ' ' + room.name;
+  document.getElementById('p2pRoomMeta').textContent = '📍 ' + room.corridor + ' · ' + room.members + ' members · ' + room.active + ' online';
+  document.getElementById('p2pActiveRoom').dataset.roomId = roomId;
+  renderP2PMessages(roomId);
+}
+
+function renderP2PMessages(roomId) {
+  const container = document.getElementById('p2pMessages');
+  if (!container) return;
+  const msgs = (DB.p2pMessages[roomId] || []).slice(-30);
+  if (msgs.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;">No messages yet. Start the conversation!</div>';
+    return;
+  }
+  container.innerHTML = msgs.map(m => {
+    const initials = m.author.split(' ').map(n=>n[0]).join('');
+    const trustedBadge = m.trusted ? '<span class="trusted-badge">✓ Trusted Local</span>' : '';
+    const time = new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    return `<div class="chat-msg">
+      <div class="msg-avatar">${initials}</div>
+      <div class="msg-content">
+        <div class="msg-author">${m.author} ${trustedBadge} <span class="msg-time">${time}</span></div>
+        <div class="msg-text">${m.text}</div>
+        <div class="msg-actions">
+          <button onclick="upvoteP2PMsg(${roomId},${m.id})">👍 ${m.upvotes || 0}</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  container.scrollTop = container.scrollHeight;
+}
+
+function upvoteP2PMsg(roomId, msgId) {
+  const msgs = DB.p2pMessages[roomId];
+  if (!msgs) return;
+  const msg = msgs.find(m => m.id === msgId);
+  if (!msg) return;
+  msg.upvotes = (msg.upvotes || 0) + 1;
+  if (msg.upvotes >= 5) msg.trusted = true;
+  DB.peerScore = (DB.peerScore || 0) + 1;
+  if (DB.peerScore % 10 === 0) DB.trustScore = Math.min(100, (DB.trustScore || 0) + 1);
+  saveDB();
+  renderP2PMessages(roomId);
+  updateHubCounts();
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'p2pBackBtn') {
+    document.getElementById('p2pActiveRoom').style.display = 'none';
+    document.getElementById('p2pRoomList').style.display = 'block';
+  }
+  if (e.target.id === 'p2pSendBtn') {
+    const roomEl = document.getElementById('p2pActiveRoom');
+    const roomId = parseInt(roomEl?.dataset?.roomId);
+    if (!roomId) return;
+    const input = document.getElementById('p2pMsgInput');
+    const text = input?.value?.trim();
+    if (!text) return showToast('Please enter a message.');
+    if (!DB.p2pMessages[roomId]) DB.p2pMessages[roomId] = [];
+    const authors = ['You','Sarah N.','Peter K.','John M.','Grace A.','Robert S.','Faith O.','David W.','Alice T.'];
+    DB.p2pMessages[roomId].push({
+      id: Date.now(), roomId,
+      author: authors[Math.floor(Math.random() * authors.length)],
+      text, timestamp: new Date().toISOString(),
+      upvotes: 0, trusted: (DB.trustScore || 0) >= 50,
+    });
+    saveDB();
+    input.value = '';
+    document.getElementById('p2pCharCount').textContent = '0/280';
+    renderP2PMessages(roomId);
+  }
+});
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'p2pMsgInput') {
+    document.getElementById('p2pCharCount').textContent = e.target.value.length + '/280';
+  }
+});
+
+/* ─── C2G TICKETING SYSTEM ─── */
+function initC2GForm() {
+  const sel = document.getElementById('c2gStation');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select station...</option>';
+  getStations().forEach(s => {
+    const op = getOp(s.op);
+    sel.innerHTML += `<option value="${s.id}">${s.name} — ${op.short}, ${s.area}</option>`;
+  });
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'c2gSubmitBtn') submitC2GTicket();
+});
+
+function submitC2GTicket() {
+  const category = document.getElementById('c2gCategory')?.value;
+  const stationId = parseInt(document.getElementById('c2gStation')?.value);
+  const date = document.getElementById('c2gDate')?.value;
+  const phone = document.getElementById('c2gPhone')?.value?.trim() || '';
+  const desc = document.getElementById('c2gDescription')?.value?.trim();
+  const vehicleType = document.getElementById('c2gVehicleType')?.value;
+
+  if (!category) return showToast('Please select a violation category.');
+  if (!stationId) return showToast('Please select a fuel station.');
+  if (!vehicleType) return showToast('Please select your vehicle type.');
+  if (!desc || desc.length < 10) return showToast('Please describe the issue in detail (min 10 chars).');
+
+  const station = getStation(stationId);
+  const ticketId = 'C2G-2025-' + String((DB.c2gTickets||[]).length + 42).padStart(4,'0');
+
+  // Read uploaded file metadata
+  const fileInput = document.getElementById('c2gFileInput');
+  const uploadedFiles = [];
+  if (fileInput && fileInput.files.length > 0) {
+    for (let f of fileInput.files) {
+      uploadedFiles.push({ name: f.name, size: f.size, type: f.type });
+    }
+  }
+
+  if (!DB.c2gTickets) DB.c2gTickets = [];
+  DB.c2gTickets.push({
+    id: ticketId, category, stationId, stationName: station?.name || 'Unknown',
+    date, phone, description: desc, status: 'open',
+    createdAt: new Date().toISOString(), chat: [],
+    vehicleType, uploadedFiles,
+  });
+
+  const catLabels = { tampering:'Pump Tampering', adulterated:'Adulterated Fuel', overpricing:'Overpricing', refusal:'Refusal to Comply', quality:'Fuel Quality', other:'Other' };
+
+  if (!DB.notifications) DB.notifications = [];
+  DB.notifications.push({
+    id: Date.now(), type: 'c2g_ticket',
+    message: `📋 Ticket ${ticketId} created: ${catLabels[category]||category} at ${station?.name||'Unknown'}`,
+    read: false, date: new Date().toISOString(),
+  });
+  renderNotifications();
+
+  DB.trustScore = Math.min(100, (DB.trustScore || 0) + 2);
+  saveDB();
+  showToast(`✅ Ticket ${ticketId} generated! A ministry regulator will be assigned within 24 hrs.`);
+
+  document.getElementById('c2gCategory').value = '';
+  document.getElementById('c2gStation').value = '';
+  document.getElementById('c2gPhone').value = '';
+  document.getElementById('c2gDescription').value = '';
+  document.getElementById('c2gDate').value = '';
+
+  renderC2GTickets();
+  updateHubCounts();
+}
+
+function renderC2GTickets() {
+  const container = document.getElementById('c2gTicketList');
+  if (!container) return;
+  const tickets = DB.c2gTickets || [];
+  if (tickets.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;">No tickets yet. Submit your first exploitation report above.</div>';
+    return;
+  }
+  const catLabels = { tampering:'🔧 Pump Tampering', adulterated:'⚠️ Adulterated Fuel', overpricing:'💰 Overpricing', refusal:'🚫 Refusal to Comply', quality:'🧪 Fuel Quality', other:'📝 Other' };
+  container.innerHTML = tickets.slice(-10).reverse().map(t => {
+    const statusLabels = { open:'🟢 Open', investigating:'🟡 Investigating', resolved:'🔵 Resolved', closed:'⚪ Closed' };
+    const chatHtml = t.chat && t.chat.length > 0 ? t.chat.map(c => `
+      <div class="chat-bubble ${c.from === 'gov' ? 'gov' : 'user'}">
+        <div class="bubble-author">${c.from === 'gov' ? '🏛️ Regulator' : '👤 You'}</div>
+        <div class="bubble-text">${c.text}</div>
+      </div>
+    `).join('') : '';
+    return `<div class="c2g-ticket-card">
+      <div class="ticket-header">
+        <span class="ticket-id">${t.id}</span>
+        <span class="ticket-status ${t.status}">${statusLabels[t.status] || t.status}</span>
+      </div>
+      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${t.stationName}</div>
+      <div class="ticket-desc">${t.description}</div>
+      ${t.chat && t.chat.length > 0 ? `<div class="ticket-chat">${chatHtml}</div>` : ''}
+      <div style="margin-top:6px;font-size:0.65rem;color:var(--text-dim);">${new Date(t.createdAt).toLocaleDateString()}</div>
+    </div>`;
+  }).join('');
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'c2gTrackBtn') {
+    const input = document.getElementById('c2gTrackInput')?.value?.trim().toUpperCase();
+    if (!input) return showToast('Please enter a ticket ID.');
+    const ticket = (DB.c2gTickets || []).find(t => t.id.toUpperCase() === input);
+    const result = document.getElementById('c2gTrackResult');
+    if (!ticket) {
+      result.innerHTML = '<div class="empty-state" style="padding:16px;"><div class="icon">🔍</div><p>No ticket found with ID ' + input + '. Please check and try again.</p></div>';
+      return;
+    }
+    const catLabels = { tampering:'Pump Tampering', adulterated:'Adulterated Fuel', overpricing:'Overpricing', refusal:'Refusal to Comply', quality:'Fuel Quality', other:'Other' };
+    const statusLabels = { open:'🟢 Open — Awaiting Assignment', investigating:'🟡 Investigating — Assigned to Regulator', resolved:'🔵 Resolved — Action Taken', closed:'⚪ Closed' };
+    result.innerHTML = `<div class="ticket-track-result">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="track-id">${ticket.id}</span>
+        <span style="font-size:0.75rem;padding:2px 10px;border-radius:999px;background:var(--neon-dim);color:var(--neon);font-weight:600;">${statusLabels[ticket.status] || ticket.status}</span>
+      </div>
+      <div class="track-detail">
+        <div><span>Category</span><span style="font-weight:600;">${catLabels[ticket.category]||ticket.category}</span></div>
+        <div><span>Station</span><span style="font-weight:600;">${ticket.stationName}</span></div>
+        <div><span>Submitted</span><span>${new Date(ticket.createdAt).toLocaleDateString()}</span></div>
+        <div><span>Regulator Chat</span><span>${(ticket.chat||[]).length} messages</span></div>
+      </div>
+    </div>`;
+  }
+});
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'c2gUploadBtn') {
+    document.getElementById('c2gFileInput').click();
+  }
+});
+
+document.addEventListener('change', e => {
+  if (e.target.id === 'c2gFileInput') {
+    const files = e.target.files;
+    const list = document.getElementById('c2gFileList');
+    if (files.length > 0) {
+      list.innerHTML = Array.from(files).map(f => {
+        const sizeKB = (f.size / 1024).toFixed(1);
+        const isImage = f.type.startsWith('image/');
+        return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">' +
+          (isImage ? '<img src="' + URL.createObjectURL(f) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;">' : '📎') +
+          '<span style="font-size:0.8rem;">' + f.name + ' <span style="color:var(--text-dim);font-size:0.65rem;">(' + sizeKB + ' KB)</span></span></div>';
+      }).join('');
+      showToast('📷 ' + files.length + ' file(s) attached.');
+    } else {
+      list.innerHTML = '';
+    }
+  }
+});
+
+// Set default date on C2G form
+document.addEventListener('DOMContentLoaded', () => {
+  const dateInput = document.getElementById('c2gDate');
+  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+});
+
+/* ─── G2C ADVISORY ─── */
+function renderG2CPosts() {
+  const container = document.getElementById('g2cPostList');
+  if (!container) return;
+  const posts = DB.g2cPosts || [];
+  if (posts.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">🏛️</div><p>No official releases yet.</p></div>';
+    return;
+  }
+  const typeLabels = { directive:'📜 Directive', update:'📢 Update', alert:'⚠️ Alert', townhall:'🎤 Town Hall', notice:'📋 Notice' };
+  container.innerHTML = posts.slice().reverse().map(p => `
+    <div class="g2c-post">
+      <div class="post-header">
+        <div class="post-title">${typeLabels[p.type]||'📄'} ${p.title} <span class="verified-badge">✓ Verified @energy.go.ug</span></div>
+        <span style="font-size:0.65rem;color:var(--text-dim);white-space:nowrap;">${new Date(p.date).toLocaleDateString()}</span>
+      </div>
+      <div class="post-source"><span class="gov-badge"></span> ${p.source}</div>
+      <div class="post-body">${p.body}</div>
+      <div class="post-meta">🔒 Official communication — unalterable · Ministry of Energy & Mineral Development</div>
+    </div>
+  `).join('');
+}
+
+function renderG2CAMA() {
+  const container = document.getElementById('g2cAmaList');
+  if (!container) return;
+  const sessions = DB.g2cAma || [];
+  if (sessions.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-dim);font-size:0.8rem;">No upcoming AMA sessions scheduled.</div>';
+    return;
+  }
+  container.innerHTML = sessions.map(a => {
+    const d = new Date(a.date);
+    const isUpcoming = d > new Date();
+    const questionsHtml = (a.questions || []).map(q => `
+      <div style="font-size:0.75rem;padding:4px 0;border-bottom:1px solid var(--green-border);display:flex;justify-content:space-between;">
+        <span><strong>${q.name}:</strong> ${q.text}</span>
+        <span style="color:var(--neon);font-weight:600;">👍 ${q.votes}</span>
+      </div>
+    `).join('');
+    return `<div class="ama-card">
+      <div class="ama-title">${isUpcoming ? '🟢 Upcoming' : '🔵 Past'} · ${a.title}</div>
+      <div class="ama-date">🎤 ${a.host} · ${d.toLocaleDateString()} at ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+      <div class="ama-desc">${a.description}</div>
+      <div style="margin-top:8px;">
+        <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Questions (${(a.questions||[]).length}):</div>
+        ${questionsHtml || '<div style="font-size:0.7rem;color:var(--text-dim);">No questions yet. Be the first to ask!</div>'}
+      </div>
+      ${isUpcoming ? `<div class="ama-ask">
+        <input type="text" placeholder="Submit your question for the Minister..." id="amaQ_${a.id}">
+        <button onclick="submitAMAQuestion(${a.id})">Ask ↗</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function submitAMAQuestion(amaId) {
+  const input = document.getElementById('amaQ_' + amaId);
+  const text = input?.value?.trim();
+  if (!text) return showToast('Please enter a question.');
+  const session = (DB.g2cAma || []).find(a => a.id === amaId);
+  if (!session) return;
+  if (!session.questions) session.questions = [];
+  session.questions.push({ name: 'You', text, votes: 0 });
+  saveDB();
+  input.value = '';
+  renderG2CAMA();
+  showToast('✅ Question submitted! It will be queued for the AMA session.');
+}
+
+/* ─── HUB COUNTS ─── */
+function updateHubCounts() {
+  const p2pRooms = DB.p2pRooms || [];
+  const totalActive = p2pRooms.reduce((s, r) => s + r.active, 0);
+  const el1 = document.getElementById('hubP2PCount');
+  if (el1) el1.textContent = totalActive.toLocaleString();
+  const el1b = document.getElementById('hubP2PMsgCount');
+  if (el1b) el1b.textContent = p2pRooms.length;
+
+  const tickets = DB.c2gTickets || [];
+  const openTickets = tickets.filter(t => t.status === 'open' || t.status === 'investigating').length;
+  const resolvedTickets = tickets.filter(t => t.status === 'resolved').length;
+  const el2 = document.getElementById('hubC2GCount');
+  if (el2) el2.textContent = openTickets;
+  const el2b = document.getElementById('hubC2GResolved');
+  if (el2b) el2b.textContent = resolvedTickets;
+
+  const posts = DB.g2cPosts || [];
+  const el3 = document.getElementById('hubG2CCount');
+  if (el3) el3.textContent = posts.length;
+  const ama = DB.g2cAma || [];
+  const upcomingAMA = ama.filter(a => new Date(a.date) > new Date()).length;
+  const el4 = document.getElementById('hubG2CAMA');
+  if (el4) el4.textContent = upcomingAMA;
+}
+
+/* ─── PRICE CAP MATRIX ─── */
+function renderPriceCapMatrix() {
+  const container = document.getElementById('priceCapMatrix');
+  if (!container) return;
+  const districts = Object.keys(DISTRICT_PRICE_CAPS);
+  const avgPrices = {};
+  districts.forEach(d => {
+    const stations = STATIONS_DATA.filter(s => s.district === d);
+    if (stations.length > 0) {
+      const petrolPrices = stations.filter(s => s.petrol).map(s => s.petrol);
+      const dieselPrices = stations.filter(s => s.diesel).map(s => s.diesel);
+      avgPrices[d] = {
+        petrolAvg: petrolPrices.length ? petrolPrices.reduce((a, b) => a + b, 0) / petrolPrices.length : null,
+        dieselAvg: dieselPrices.length ? dieselPrices.reduce((a, b) => a + b, 0) / dieselPrices.length : null,
+      };
+    }
+  });
+  container.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+    <thead><tr style="border-bottom:1px solid var(--border);">
+      <th style="text-align:left;padding:6px 8px;">District</th>
+      <th style="text-align:right;padding:6px 8px;">Petrol Cap</th>
+      <th style="text-align:right;padding:6px 8px;">Petrol Avg</th>
+      <th style="text-align:right;padding:6px 8px;">Diesel Cap</th>
+      <th style="text-align:right;padding:6px 8px;">Diesel Avg</th>
+      <th style="text-align:center;padding:6px 8px;">Status</th>
+    </tr></thead><tbody>
+    ${districts.map(d => {
+      const caps = DISTRICT_PRICE_CAPS[d];
+      const avgs = avgPrices[d] || {};
+      const petrolOk = avgs.petrolAvg !== null ? avgs.petrolAvg <= caps.petrol : true;
+      const dieselOk = avgs.dieselAvg !== null ? avgs.dieselAvg <= caps.diesel : true;
+      const status = (!petrolOk || !dieselOk) ? '⚠️ Exceeded' : '✅ Compliant';
+      const statusCls = (!petrolOk || !dieselOk) ? 'color:#fca5a5;' : 'color:#76FF03;';
+      return `<tr style="border-bottom:1px solid var(--border-dim);">
+        <td style="padding:6px 8px;font-weight:600;">${d}</td>
+        <td style="text-align:right;padding:6px 8px;">UGX ${caps.petrol.toLocaleString()}</td>
+        <td style="text-align:right;padding:6px 8px;${avgs.petrolAvg !== null ? (avgs.petrolAvg > caps.petrol ? 'color:#fca5a5;font-weight:600;' : '') : 'color:var(--text-dim);'}">${avgs.petrolAvg !== null ? 'UGX ' + Math.round(avgs.petrolAvg).toLocaleString() : '—'}</td>
+        <td style="text-align:right;padding:6px 8px;">UGX ${caps.diesel.toLocaleString()}</td>
+        <td style="text-align:right;padding:6px 8px;${avgs.dieselAvg !== null ? (avgs.dieselAvg > caps.diesel ? 'color:#fca5a5;font-weight:600;' : '') : 'color:var(--text-dim);'}">${avgs.dieselAvg !== null ? 'UGX ' + Math.round(avgs.dieselAvg).toLocaleString() : '—'}</td>
+        <td style="text-align:center;padding:6px 8px;${statusCls}font-weight:600;">${status}</td>
+      </tr>`;
+    }).join('')}
+    </tbody></table>`;
+}
+
+/* ─── Broadcast enter key ─── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'broadcastInput') {
+    e.preventDefault();
+    submitBroadcast();
+  }
+});
 
 /* ─── INIT ─── */
 document.addEventListener('DOMContentLoaded',()=>{
@@ -1488,17 +2252,30 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
 }
 
+  // Seed new community data if needed
+  seedNewData();
+
   renderRegionCards();
   updateHeroCount();
   renderStationList();
   renderActivity();
   renderReviews();
   renderNotifications();
+  updateBroadcastTicker();
+  updateHubCounts();
+  renderPriceCapMatrix();
 
   // Simulate verification of initial reports
   setTimeout(runFraudDetection,3000);
   // Simulate price changes
   setTimeout(checkPriceChanges,8000);
+  // Simulate community broadcasts
+  setTimeout(() => { simulateBroadcasts(); }, 15000);
+  setInterval(() => {
+    if (Math.random() > 0.4 && (DB.broadcasts||[]).length < 60) {
+      simulateBroadcasts();
+    }
+  }, 60000);
 });
 
 // SW

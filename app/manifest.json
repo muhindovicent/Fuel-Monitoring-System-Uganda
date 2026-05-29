@@ -1,6 +1,6 @@
 {
-  "name": "Matano-Meters — Uganda Fuel Prices",
-  "short_name": "Matano-Meters",
+  "name": "MafutaWatch Uganda — Uganda Fuel Prices",
+  "short_name": "MafutaWatch Uganda",
   "description": "Real-time fuel price transparency platform for Uganda. Report and view petrol, diesel, and kerosene prices across all licensed stations.",
   "start_url": "index.html",
   "display": "standalone",

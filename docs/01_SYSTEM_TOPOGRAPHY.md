@@ -1,4 +1,4 @@
-# Matano-Meters — System Topography Mapping
+# MafutaWatch Uganda — System Topography Mapping
 
 ## 1. End-to-End Cloud Infrastructure Diagram
 

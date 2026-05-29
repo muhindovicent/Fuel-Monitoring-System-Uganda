@@ -1,4 +1,4 @@
-// Matano-Meters — Data Definitions
+// MafutaWatch Uganda — Data Definitions
 
 const OPERATORS = [
   { id:1, name:'Shell Uganda', short:'Shell' }, { id:2, name:'TotalEnergies Uganda', short:'Total' },
