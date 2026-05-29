@@ -126,6 +126,11 @@ document.addEventListener('click', e=>{
   const item=e.target.closest('.tools-tab');
   if(item) switchPage(item.dataset.pane);
 });
+document.addEventListener('click', e=>{
+  if(e.target.id==='breadcrumbHome') { e.preventDefault(); switchPage('map'); }
+  if(e.target.id==='breadcrumbGov') { e.preventDefault(); document.querySelector('.gov-institutional')?.scrollIntoView({behavior:'smooth'}); }
+  if(e.target.id==='breadcrumbDirs') { e.preventDefault(); document.querySelector('.directory-block')?.scrollIntoView({behavior:'smooth'}); }
+});
 
 /* ─── MAP ─── */
 let map, markers=[], currentStationId=null;
@@ -647,21 +652,36 @@ setTimeout(checkPriceChanges,5000);
 
 // Notification bell click
 document.addEventListener('click',e=>{
-  if(e.target.closest('#notifPanel')){
-    const notifs=DB.notifications||[];
-    const unread=notifs.filter(n=>!n.read).length;
-    if(unread===0){
-      showToast('🔔 No new price alerts.');
-    } else {
-      const latest=notifs.filter(n=>!n.read).slice(-3);
-      latest.forEach(n=>{n.read=true;});
-      saveDB();
-      renderNotifications();
-      const msgs=latest.map(n=>n.message).join(' · ');
-      showToast(`🔔 ${unread} alert${unread>1?'s':''}: ${msgs}`,5000);
-    }
+  const panel=e.target.closest('#notifPanel');
+  const dd=document.getElementById('notifDropdown');
+  if(panel){
+    e.stopPropagation();
+    dd.classList.toggle('open');
+    if(dd.classList.contains('open')) renderNotifDropdown();
+    return;
   }
+  if(e.target.closest('#notifDropdown')) return;
+  dd.classList.remove('open');
 });
+function renderNotifDropdown(){
+  const list=document.getElementById('notifList');
+  if(!list) return;
+  const notifs=DB.notifications||[];
+  const unread=notifs.filter(n=>!n.read).length;
+  notifs.forEach(n=>{n.read=true;});
+  saveDB();
+  renderNotifications();
+  if(notifs.length===0){
+    list.innerHTML='<div class="notif-empty">No notifications yet.</div>';
+    return;
+  }
+  list.innerHTML=notifs.slice().reverse().map(n=>`
+    <div class="notif-item ${unread>0?'':'read'}">
+      ${n.message}
+      <div class="notif-time">${new Date(n.time||n.createdAt).toLocaleString()}</div>
+    </div>
+  `).join('');
+}
 
 /* ─── FRAUD DETECTION ─── */
 function runFraudDetection() {

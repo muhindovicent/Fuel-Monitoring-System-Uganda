@@ -512,6 +512,10 @@ html { scroll-padding-top: 110px; }
   <div class="navbar-links">
     <span class="trust-score show" id="trustBadge">Trust: 0</span>
     <button class="notif-btn" id="notifPanel"><span>🔔</span><span class="badge" id="notifBadge">0</span></button>
+    <div class="notif-dropdown" id="notifDropdown">
+      <div class="notif-dropdown-header">Notifications</div>
+      <div class="notif-dropdown-body" id="notifList"></div>
+    </div>
     <a href="#hero" onclick="event.preventDefault();switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Map</a>
     <a href="#hero" onclick="event.preventDefault();switchPage('stations');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Stations</a>
     <a href="#hero" onclick="event.preventDefault();switchPage('planner');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Trip</a>
@@ -525,11 +529,11 @@ html { scroll-padding-top: 110px; }
 
 <!-- ─── BREADCRUMB ─── -->
 <div class="gov-breadcrumb">
-  <a href="https://www.mafutawatch.go.ug">Home</a>
+  <a href="#" id="breadcrumbHome">Home</a>
   <span class="sep">›</span>
-  <a href="#">About Government</a>
+  <a href="#" id="breadcrumbGov">About Government</a>
   <span class="sep">›</span>
-  <a href="#">Regulatory Directories</a>
+  <a href="#" id="breadcrumbDirs">Regulatory Directories</a>
   <span class="sep">›</span>
   <span class="current">MafutaWatch Uganda</span>
 </div>
