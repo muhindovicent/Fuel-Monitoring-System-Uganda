@@ -1,0 +1,1574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Matano-Meters — National Fuel Price Transparency Platform</title>
+<style>
+  :root {
+    --primary: #1a3a5c;
+    --primary-light: #2c5f8a;
+    --accent: #e8a838;
+    --accent-dark: #c88a1e;
+    --bg: #f5f7fa;
+    --card-bg: #ffffff;
+    --sidebar-bg: #0f1f2e;
+    --sidebar-width: 280px;
+    --text: #1a1a2e;
+    --text-light: #6b7280;
+    --code-bg: #1e293b;
+    --border: #e2e8f0;
+    --success: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; scroll-padding-top: 2rem; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    position: fixed; top: 0; left: 0;
+    width: var(--sidebar-width); height: 100vh;
+    background: var(--sidebar-bg);
+    color: #cbd5e1;
+    overflow-y: auto;
+    z-index: 100;
+    border-right: 1px solid rgba(255,255,255,0.05);
+  }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--primary-light); border-radius: 2px; }
+
+  .sidebar-header {
+    padding: 1.5rem 1.25rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .sidebar-header h1 {
+    font-size: 1.1rem;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+  .sidebar-header .subtitle {
+    font-size: 0.75rem;
+    color: var(--accent);
+    margin-top: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .sidebar-header .badge {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.65rem;
+    background: rgba(232,168,56,0.15);
+    color: var(--accent);
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .sidebar-nav { padding: 0.75rem 0; }
+  .sidebar-nav a {
+    display: block;
+    padding: 0.5rem 1.25rem;
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 0.82rem;
+    transition: all 0.15s;
+    border-left: 3px solid transparent;
+  }
+  .sidebar-nav a:hover,
+  .sidebar-nav a.active {
+    color: #fff;
+    background: rgba(255,255,255,0.04);
+    border-left-color: var(--accent);
+  }
+  .sidebar-nav .section-label {
+    padding: 1rem 1.25rem 0.35rem;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #475569;
+    font-weight: 600;
+  }
+
+  /* ─── MAIN ─── */
+  .main {
+    margin-left: var(--sidebar-width);
+    min-height: 100vh;
+  }
+
+  .hero {
+    background: linear-gradient(135deg, var(--primary) 0%, #0f2b44 100%);
+    color: #fff;
+    padding: 3rem 3rem 2.5rem;
+  }
+  .hero h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.02em; }
+  .hero .ministry {
+    margin-top: 0.5rem;
+    font-size: 0.95rem;
+    color: #94a3b8;
+  }
+  .hero .strip {
+    display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;
+  }
+  .hero .strip span {
+    padding: 0.2rem 0.75rem;
+    background: rgba(255,255,255,0.08);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    color: #cbd5e1;
+  }
+
+  .content { max-width: 1100px; padding: 2.5rem 3rem 4rem; }
+
+  /* ─── TYPOGRAPHY ─── */
+  h2 {
+    font-size: 1.6rem;
+    margin: 2.5rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent);
+    color: var(--primary);
+  }
+  h2:first-of-type { margin-top: 0; }
+  h3 {
+    font-size: 1.15rem;
+    margin: 1.8rem 0 0.75rem;
+    color: var(--primary-light);
+  }
+  h4 {
+    font-size: 1rem;
+    margin: 1.2rem 0 0.5rem;
+    color: var(--text);
+  }
+  p { margin-bottom: 1rem; color: #374151; }
+  a { color: var(--primary-light); }
+
+  ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+
+  /* ─── CODE ─── */
+  pre {
+    background: var(--code-bg);
+    color: #e2e8f0;
+    padding: 1.25rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.55;
+    margin: 1rem 0;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    background: #f1f5f9;
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    color: var(--danger);
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+  .sql-keyword { color: #93c5fd; }
+  .sql-type { color: #86efac; }
+  .sql-func { color: #fde68a; }
+  .sql-comment { color: #6b7280; font-style: italic; }
+  .sql-string { color: #fdba74; }
+
+  /* ─── TABLES ─── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.88rem;
+  }
+  thead { background: var(--primary); color: #fff; }
+  th, td {
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    border: 1px solid var(--border);
+  }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody tr:hover { background: #eef2f7; }
+  th { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+  /* ─── DIAGRAM BOXES ─── */
+  .diagram {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 1.25rem;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    line-height: 1.35;
+    overflow-x: auto;
+    margin: 1rem 0;
+    white-space: pre;
+    border: 1px solid #30363d;
+  }
+
+  .flow-arrow {
+    display: inline-block;
+    color: var(--accent);
+    font-family: var(--font-mono);
+  }
+
+  /* ─── CARDS ─── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+  .card h4 { margin-top: 0; color: var(--primary); }
+  .card .value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--primary-light);
+    margin: 0.25rem 0;
+  }
+  .card .desc { font-size: 0.82rem; color: var(--text-light); }
+
+  /* ─── STATE DIAGRAM ─── */
+  .state-machine {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0;
+    white-space: pre;
+  }
+
+  /* ─── BADGES ─── */
+  .badge-green { background: #d1fae5; color: #065f46; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .badge-red { background: #fee2e2; color: #991b1b; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .badge-yellow { background: #fef3c7; color: #92400e; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .badge-blue { background: #dbeafe; color: #1e40af; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+
+  /* ─── NOTE ─── */
+  .note {
+    background: #fffbeb;
+    border-left: 4px solid var(--accent);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.88rem;
+  }
+  .note strong { color: var(--accent-dark); }
+
+  /* ─── RESPONSIVE ─── */
+  @media (max-width: 768px) {
+    .sidebar {
+      position: relative;
+      width: 100%;
+      height: auto;
+      border-right: none;
+    }
+    .main { margin-left: 0; }
+    .hero { padding: 2rem 1.5rem; }
+    .hero h1 { font-size: 1.5rem; }
+    .content { padding: 1.5rem; }
+    .card-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ─── TOGGLE ─── */
+  .menu-toggle {
+    display: none;
+    position: fixed; top: 0.75rem; left: 0.75rem;
+    z-index: 200;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1.2rem;
+  }
+  @media (max-width: 768px) {
+    .menu-toggle { display: block; }
+    .sidebar.collapsed { display: none; }
+    .sidebar.show { display: block; position: fixed; }
+  }
+
+  /* ─── LAYER BADGES ─── */
+  .layer-stack { display: flex; flex-direction: column; gap: 0; margin: 1rem 0; }
+  .layer {
+    display: flex; align-items: center;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .layer:first-child { border-radius: 8px 8px 0 0; }
+  .layer:last-child { border-radius: 0 0 8px 8px; }
+  .layer .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--primary); color: #fff;
+    font-size: 0.7rem; font-weight: 700; margin-right: 0.75rem; flex-shrink: 0;
+  }
+  .layer:nth-child(1) { background: #f0fdf4; }
+  .layer:nth-child(2) { background: #f0f9ff; }
+  .layer:nth-child(3) { background: #fffbeb; }
+  .layer:nth-child(4) { background: #fef2f2; }
+  .layer:nth-child(5) { background: #f5f3ff; }
+</style>
+</head>
+<body>
+
+<button class="menu-toggle" id="menuToggle">☰</button>
+
+<!-- ─── SIDEBAR ─── -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h1>⛽ Matano-Meters</h1>
+    <div class="subtitle">National Fuel Price Transparency Platform</div>
+    <div class="badge">Architecture v1.0</div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="section-label">Overview</div>
+    <a href="#top">Platform Summary</a>
+
+    <div class="section-label">1. System Topography</div>
+    <a href="#s1">Infrastructure Diagram</a>
+    <a href="#s1-dataflow">Data Flows</a>
+    <a href="#s1-contracts">Async Contracts</a>
+    <a href="#s1-scaling">Scaling Parameters</a>
+
+    <div class="section-label">2. Database Schema</div>
+    <a href="#s2">Enums &amp; Types</a>
+    <a href="#s2-geo">Geographic Hierarchy</a>
+    <a href="#s2-stations">Operators &amp; Stations</a>
+    <a href="#s2-users">Users &amp; Trust</a>
+    <a href="#s2-reports">Price Reports</a>
+    <a href="#s2-consensus">Consensus Engine</a>
+    <a href="#s2-verified">Verified Prices</a>
+    <a href="#s2-security">Security Tables</a>
+    <a href="#s2-triggers">Triggers &amp; Functions</a>
+
+    <div class="section-label">3. USSD Session Flow</div>
+    <a href="#s3">Redis Architecture</a>
+    <a href="#s3-states">State Machine</a>
+    <a href="#s3-engine">Core Engine Code</a>
+    <a href="#s3-handlers">State Handlers</a>
+    <a href="#s3-budget">Performance Budget</a>
+    <a href="#s3-whatsapp">WhatsApp Integration</a>
+
+    <div class="section-label">4. Security Framework</div>
+    <a href="#s4">Threat Model</a>
+    <a href="#s4-layers">Defense in Depth</a>
+    <a href="#s4-access">Access Control</a>
+    <a href="#s4-trust">Trust System</a>
+    <a href="#s4-anticheat">Anti-Cheat Engine</a>
+    <a href="#s4-behavioral">Behavioral Detection</a>
+    <a href="#s4-incident">Incident Response</a>
+    <a href="#s4-compliance">Data Protection</a>
+  </div>
+</nav>
+
+<!-- ─── MAIN ─── -->
+<div class="main" id="top">
+
+<div class="hero">
+  <h1>Matano-Meters</h1>
+  <div class="ministry">Ministry of Works and Transport &middot; Ministry of Energy and Mineral Development &middot; Republic of Uganda</div>
+  <div class="strip">
+    <span>USSD *284*X#</span>
+    <span>WhatsApp Bot</span>
+    <span>Progressive Web App</span>
+    <span>150K Concurrent Sessions</span>
+    <span>PostGIS Spatial Engine</span>
+    <span>Kafka Event Bus</span>
+  </div>
+</div>
+
+<div class="content">
+
+<!-- ─── PLATFORM SUMMARY ─── -->
+<h2>Platform Summary</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <h4>Channels</h4>
+    <div class="value">3</div>
+    <div class="desc">USSD (*284*X#), WhatsApp Bot, PWA</div>
+  </div>
+  <div class="card">
+    <h4>Peak Load</h4>
+    <div class="value">150K</div>
+    <div class="desc">Concurrent sessions during peak commuting hours</div>
+  </div>
+  <div class="card">
+    <h4>Response Budget</h4>
+    <div class="value">&lt;4s</div>
+    <div class="desc">USSD carrier timeout compliance</div>
+  </div>
+  <div class="card">
+    <h4>Trust Tiers</h4>
+    <div class="value">6</div>
+    <div class="desc">Unverified to Association Leader (0-100)</div>
+  </div>
+  <div class="card">
+    <h4>Defense Layers</h4>
+    <div class="value">5</div>
+    <div class="desc">Rate limit → Trust → Stats → Behavior → Response</div>
+  </div>
+  <div class="card">
+    <h4>Compliance</h4>
+    <div class="value">DPA 2019</div>
+    <div class="desc">Uganda Data Protection &amp; Privacy Act</div>
+  </div>
+</div>
+
+<p>Matano-Meters is a national-scale, fault-tolerant ecosystem for crowd-sourcing, verifying, and mapping real-time fuel prices across all licensed retail stations in Uganda. It serves the entire socio-economic spectrum via three interfaces powered by a unified API backend and asynchronous event-driven architecture.</p>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 1. SYSTEM TOPOGRAPHY                                        -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="s1">1. System Topography Mapping</h2>
+
+<h3 id="s1">1.1 End-to-End Infrastructure Diagram</h3>
+
+<div class="diagram">┌─────────────────────────────────────────────────────────────────────────────┐
+│                              INTERNET                                       │
+│                (Boda Riders / Matatu Drivers / Station Attendants)           │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    CDN / DDoS PROTECTION LAYER                               │
+│              Cloudflare (DNS, WAF, Rate Limiting, SSL Termination)            │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        API GATEWAY LAYER                                     │
+│                    Kong / AWS API Gateway (OAuth2, JWT, mTLS)                │
+│                                                                              │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐  ┌─────────────────┐ │
+│  │ /ussd/*      │  │ /whatsapp/*   │  │ /api/v1/*    │  │ /ws/*           │ │
+│  │ (REST hook)  │  │ (Webhook)     │  │ (REST/Graph) │  │ (WebSocket)     │ │
+│  └──────┬───────┘  └───────┬───────┘  └──────┬───────┘  └────────┬────────┘ │
+└─────────┼──────────────────┼──────────────────┼───────────────────┼──────────┘
+          │                  │                  │                   │
+          ▼                  ▼                  ▼                   ▼
+┌─────────────────┐  ┌──────────────────┐  ┌──────────────┐  ┌──────────────────┐
+│ Africa's Talking │  │ Meta WhatsApp    │  │ PWA Backend  │  │ WebSocket         │
+│ USSD Connector   │  │ Business API     │  │ (Node.js/Go) │  │ Server (WS       │
+│ (SMS/USSD       │  │ Connector        │  │              │  │  + Server-Sent   │
+│  Gateway)        │  │ (Cloud API)      │  │              │  │  Events)         │
+└────────┬────────┘  └────────┬─────────┘  └──────┬───────┘  └────────┬─────────┘
+         │                    │                    │                   │
+         └──────────┬─────────┘                    │                   │
+                    │                              │                   │
+                    ▼                              ▼                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     ASYNCHRONOUS EVENT BUS LAYER                             │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │            Apache Kafka / RabbitMQ (Clustered, HA)                   │    │
+│  │                                                                      │    │
+│  │  Topics:                                                             │    │
+│  │  - ussd.requests     - price.reports          - verification.results │    │
+│  │  - whatsapp.messages - location.pins          - notifications.send   │    │
+│  │  - consensus.events  - anomaly.alerts         - audit.logs           │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────┬───────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                   INTERNAL WORKER MICROSERVICES POOL                         │
+│                     (Kubernetes / Nomad, Auto-scaled)                       │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
+│  │ USSD Session  │  │ WhatsApp     │  │ Verification  │  │ Price            │ │
+│  │ Worker        │  │ Message      │  │ Engine        │  │ Aggregator       │ │
+│  │ (State Mgmt)  │  │ Worker       │  │ (Anti-Cheat)  │  │ (Median Calc)    │ │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘ │
+│         │                 │                 │                   │           │
+│  ┌──────┴───────┐  ┌──────┴───────┐  ┌──────┴───────┐  ┌──────┴─────────┐  │
+│  │ GIS / Spatial │  │ Trust Score  │  │ Notification │  │ Station        │  │
+│  │ Query Worker  │  │ Engine       │  │ Worker       │  │ Console Worker │  │
+│  │ (PostGIS)     │  │ (Redis)      │  │ (Push/SMS)   │  │ (Operator OTP) │  │
+│  └───────────────┘  └──────────────┘  └──────────────┘  └────────────────┘  │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │  Analytics &amp; Anomaly Detection Worker (Spark/Flink Stream)           │    │
+│  │  - Real-time Sybil attack detection                                  │    │
+│  │  - Geospatial price anomaly clustering                               │    │
+│  │  - Moving median deviation alerts                                    │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────┬───────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         DATA &amp; PERSISTENCE LAYER                             │
+│                                                                              │
+│  ┌─────────────────────────┐  ┌────────────────────┐  ┌───────────────────┐ │
+│  │ PostgreSQL + PostGIS    │  │ Redis Cluster       │  │ MinIO / S3        │ │
+│  │ (RDS / Aurora)          │  │ (6+ nodes, HA)      │  │ Compatible Store  │ │
+│  │                         │  │                     │  │                   │ │
+│  │ • Stations (GEOGRAPHY)  │  │ • USSD Sessions     │  │ • Station Photos  │ │
+│  │ • Price Reports         │  │ • Rate Limit Buckets│  │ • Receipt Images  │ │
+│  │ • Verified Prices       │  │ • Price Cache       │  │ • ID Documents    │ │
+│  │ • Users (hashed MSISDN) │  │ • Trust Score Cache │  │ • Audit Exports   │ │
+│  │ • Geo Hierarchy         │  │ • Geo Index Cache   │  │                   │ │
+│  │ • Audit Logs            │  │ • Leaderboard       │  │                   │ │
+│  └─────────────────────────┘  └────────────────────┘  └───────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                   MONITORING &amp; OBSERVABILITY                                 │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
+│  │ Prometheus +  │  │ Grafana       │  │ ELK / Loki   │  │ PagerDuty /      │ │
+│  │ Metrics       │  │ Dashboards    │  │ Log Pipeline │  │ Opsgenie Alerts │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘</div>
+
+<h3 id="s1-dataflow">1.2 Data Flow: USSD Price Report Submission</h3>
+
+<div class="diagram">User dials *284*1#
+     │
+     ▼
+Africa's Talking → POST /ussd/inbound
+     │
+     ▼
+API Gateway → Route to /ussd/* endpoint
+     │
+     ▼
+USSD Connector → Parse MSISDN + SessionID + Text
+     │
+     ├──► Redis: Get session:{msisdn} (restore state)
+     │
+     ▼
+USSD Connector → Enrich &amp; publish to Kafka topic: `ussd.requests`
+     │
+     ▼
+USSD Session Worker (consumes topic)
+     ├──► Redis: Update session:{msisdn} state machine
+     ├──► If price report: publish to `price.reports`
+     │
+     ▼
+Verification Engine (consumes `price.reports`)
+     ├──► Compute 48h median for station+fuel_type
+     ├──► Check reporter trust score
+     ├──► If low trust: open consensus window (TTL 15 min)
+     │               → wait for 3 matching reports
+     │               → publish to `consensus.events`
+     ├──► If high trust: publish to `verification.results`
+     │
+     ▼
+Price Aggregator (consumes `verification.results`)
+     ├──► Update verified_prices table
+     ├──► Invalidate Redis price cache
+     ├──► Publish to `notifications.send`
+     │
+     ▼
+USSD Session Worker → Compose response → Kafka: `ussd.responses`
+     │
+     ▼
+Africa's Talking → Deliver CON/END to user's handset</div>
+
+<h3>1.3 Data Flow: WhatsApp Location Query</h3>
+
+<div class="diagram">User sends location via WhatsApp
+     │
+     ▼
+Meta Cloud API → POST /whatsapp/inbound
+     │
+     ▼
+API Gateway → Route to /whatsapp/* endpoint
+     │
+     ▼
+WhatsApp Connector → Extract GeoJSON from Location object
+     │
+     ▼
+Publish to `whatsapp.messages` (Kafka)
+     │
+     ▼
+WhatsApp Message Worker
+     ├──► Parse lat/lng from GeoJSON
+     ├──► Query PostGIS:
+     │     SELECT * FROM stations
+     │     WHERE ST_DWithin(location, ST_SetSRID(ST_MakePoint($lng,$lat),4326), 5000)
+     │     ORDER BY price_per_liter ASC LIMIT 3;
+     ├──► Format interactive list message
+     ├──► Publish to `notifications.send`
+     │
+     ▼
+Notification Worker → POST to Meta WhatsApp API
+     │
+     ▼
+User receives interactive message with station list</div>
+
+<h3 id="s1-contracts">1.4 Asynchronous Processing Contract</h3>
+
+<table>
+<thead>
+<tr><th>Component</th><th>Input Topic</th><th>Output Topic</th><th>Consumer Group</th></tr>
+</thead>
+<tbody>
+<tr><td>USSD Connector</td><td>(HTTP)</td><td><code>ussd.requests</code></td><td>ussd-ingest</td></tr>
+<tr><td>WhatsApp Connector</td><td>(HTTP)</td><td><code>whatsapp.messages</code></td><td>wa-ingest</td></tr>
+<tr><td>USSD Session Worker</td><td><code>ussd.requests</code></td><td><code>price.reports</code>, <code>ussd.responses</code></td><td>ussd-session</td></tr>
+<tr><td>WhatsApp Message Worker</td><td><code>whatsapp.messages</code></td><td><code>price.reports</code>, <code>wa.responses</code></td><td>wa-session</td></tr>
+<tr><td>Verification Engine</td><td><code>price.reports</code></td><td><code>verification.results</code>, <code>consensus.events</code></td><td>verification</td></tr>
+<tr><td>Price Aggregator</td><td><code>verification.results</code></td><td><code>notifications.send</code></td><td>aggregation</td></tr>
+<tr><td>Notification Worker</td><td><code>notifications.send</code></td><td>(HTTP outbound)</td><td>notifier</td></tr>
+<tr><td>Anomaly Detector</td><td><code>price.reports</code>, <code>verification.results</code></td><td><code>anomaly.alerts</code></td><td>anomaly-ml</td></tr>
+</tbody>
+</table>
+
+<h3 id="s1-scaling">1.5 Infrastructure Scaling Parameters</h3>
+
+<table>
+<thead>
+<tr><th>Service</th><th>Min Replicas</th><th>Max Replicas</th><th>Scale Trigger</th><th>CPU Threshold</th></tr>
+</thead>
+<tbody>
+<tr><td>USSD Connector</td><td>3</td><td>20</td><td>Kafka lag + CPU</td><td>70%</td></tr>
+<tr><td>WhatsApp Connector</td><td>2</td><td>15</td><td>Kafka lag + CPU</td><td>70%</td></tr>
+<tr><td>Verification Engine</td><td>5</td><td>30</td><td>Kafka lag</td><td>60%</td></tr>
+<tr><td>Price Aggregator</td><td>3</td><td>10</td><td>Event count</td><td>70%</td></tr>
+<tr><td>GIS Worker</td><td>2</td><td>10</td><td>Latency &gt; 500ms</td><td>75%</td></tr>
+<tr><td>PWA Backend</td><td>3</td><td>12</td><td>HTTP req/s &gt; 1000</td><td>65%</td></tr>
+<tr><td>Notification Worker</td><td>5</td><td>25</td><td>Queue depth</td><td>60%</td></tr>
+</tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 2. DATABASE SCHEMA                                          -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="s2">2. Database Schema DDL</h2>
+<p>Production-ready PostgreSQL 15+ with PostGIS 3.3+, pg_partman partitioning, and Row-Level Security.</p>
+
+<h3 id="s2">2.1 Enum Types</h3>
+<pre><span class="sql-keyword">CREATE TYPE</span> fuel_type <span class="sql-keyword">AS ENUM</span> (
+    <span class="sql-string">'petrol'</span>, <span class="sql-string">'diesel'</span>, <span class="sql-string">'kerosene'</span>
+);
+
+<span class="sql-keyword">CREATE TYPE</span> price_report_status <span class="sql-keyword">AS ENUM</span> (
+    <span class="sql-string">'pending'</span>, <span class="sql-string">'verified'</span>, <span class="sql-string">'rejected'</span>,
+    <span class="sql-string">'superseded'</span>, <span class="sql-string">'flagged_anomaly'</span>
+);
+
+<span class="sql-keyword">CREATE TYPE</span> user_tier <span class="sql-keyword">AS ENUM</span> (
+    <span class="sql-string">'unverified'</span>, <span class="sql-string">'basic'</span>, <span class="sql-string">'trusted'</span>,
+    <span class="sql-string">'verified_reporter'</span>, <span class="sql-string">'station_official'</span>,
+    <span class="sql-string">'association_leader'</span>
+);
+
+<span class="sql-keyword">CREATE TYPE</span> session_channel <span class="sql-keyword">AS ENUM</span> (
+    <span class="sql-string">'ussd'</span>, <span class="sql-string">'whatsapp'</span>, <span class="sql-string">'pwa'</span>, <span class="sql-string">'api'</span>
+);</pre>
+
+<h3 id="s2-geo">2.2 Geographic Hierarchy</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> geo_regions (
+    id              <span class="sql-type">SMALLSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    code            <span class="sql-type">VARCHAR</span>(<span class="sql-string">4</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>,
+    name_en         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>) <span class="sql-keyword">NOT NULL</span>,
+    name_lg         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>),       <span class="sql-comment">-- Luganda</span>
+    name_ny         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>),       <span class="sql-comment">-- Runyakitara</span>
+    geometry        <span class="sql-type">GEOGRAPHY</span>(<span class="sql-type">MULTIPOLYGON</span>, <span class="sql-string">4326</span>),
+    created_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+);
+<span class="sql-keyword">CREATE INDEX</span> idx_geo_regions_geom <span class="sql-keyword">ON</span> geo_regions <span class="sql-keyword">USING</span> <span class="sql-type">GIST</span> (geometry);
+
+<span class="sql-keyword">CREATE TABLE</span> geo_districts (
+    id              <span class="sql-type">SMALLSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    region_id       <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> geo_regions(id),
+    code            <span class="sql-type">VARCHAR</span>(<span class="sql-string">6</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>,
+    name_en         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>) <span class="sql-keyword">NOT NULL</span>,
+    name_lg         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>),
+    name_ny         <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>),
+    geometry        <span class="sql-type">GEOGRAPHY</span>(<span class="sql-type">MULTIPOLYGON</span>, <span class="sql-string">4326</span>),
+    population      <span class="sql-type">INTEGER</span>,
+    created_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+);
+<span class="sql-keyword">CREATE INDEX</span> idx_geo_districts_geom <span class="sql-keyword">ON</span> geo_districts <span class="sql-keyword">USING</span> <span class="sql-type">GIST</span> (geometry);</pre>
+
+<h3 id="s2-stations">2.3 Fuel Operators &amp; Stations</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> fuel_operators (
+    id              <span class="sql-type">SMALLSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    name            <span class="sql-type">VARCHAR</span>(<span class="sql-string">150</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>,
+    short_code      <span class="sql-type">VARCHAR</span>(<span class="sql-string">10</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>,
+    is_active       <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">TRUE</span>,
+    created_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+);
+
+<span class="sql-keyword">CREATE TABLE</span> stations (
+    id              <span class="sql-type">SERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    operator_id     <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> fuel_operators(id),
+    subcounty_id    <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL REFERENCES</span> geo_subcounties(id),
+    station_code    <span class="sql-type">VARCHAR</span>(<span class="sql-string">20</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>,
+    name            <span class="sql-type">VARCHAR</span>(<span class="sql-string">200</span>) <span class="sql-keyword">NOT NULL</span>,
+    location        <span class="sql-type">GEOGRAPHY</span>(<span class="sql-type">POINT</span>, <span class="sql-string">4326</span>) <span class="sql-keyword">NOT NULL</span>,  <span class="sql-comment">-- Core spatial column</span>
+    is_active       <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">TRUE</span>,
+    has_diesel      <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">TRUE</span>,
+    has_petrol      <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">TRUE</span>,
+    has_kerosene    <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">FALSE</span>,
+    created_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+);
+<span class="sql-comment">-- Spatial GiST index for fast radius queries</span>
+<span class="sql-keyword">CREATE INDEX</span> idx_stations_location <span class="sql-keyword">ON</span> stations <span class="sql-keyword">USING</span> <span class="sql-type">GIST</span> (location);
+<span class="sql-keyword">CREATE INDEX</span> idx_stations_active <span class="sql-keyword">ON</span> stations(is_active) <span class="sql-keyword">WHERE</span> is_active = <span class="sql-keyword">TRUE</span>;</pre>
+
+<h3 id="s2-users">2.4 Users &amp; Trust System</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> users (
+    id              <span class="sql-type">BIGSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    msisdn_hash     <span class="sql-type">VARCHAR</span>(<span class="sql-string">64</span>) <span class="sql-keyword">NOT NULL UNIQUE</span>, <span class="sql-comment">-- SHA-256(salt + MSISDN)</span>
+    msisdn_salt     <span class="sql-type">VARCHAR</span>(<span class="sql-string">32</span>) <span class="sql-keyword">NOT NULL</span>,
+    trust_score     <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">0</span>
+                    <span class="sql-keyword">CHECK</span> (trust_score <span class="sql-keyword">BETWEEN</span> <span class="sql-string">0</span> <span class="sql-keyword">AND</span> <span class="sql-string">100</span>),
+    tier            user_tier <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">'unverified'</span>,
+    total_reports   <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">0</span>,
+    verified_count  <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">0</span>,
+    rejected_count  <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">0</span>,
+    is_blacklisted  <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">FALSE</span>,
+    locale          <span class="sql-type">VARCHAR</span>(<span class="sql-string">10</span>) <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">'en'</span>,
+    first_seen_at   <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    last_active_at  <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    created_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+);
+<span class="sql-keyword">CREATE INDEX</span> idx_users_trust_score <span class="sql-keyword">ON</span> users(trust_score <span class="sql-keyword">DESC</span>);</pre>
+
+<h3 id="s2-reports">2.5 Price Reports (Monthly Partitioned)</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> price_reports (
+    id                  <span class="sql-type">BIGSERIAL</span>,
+    station_id          <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL REFERENCES</span> stations(id),
+    reporter_user_id    <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> users(id),
+    fuel_type           fuel_type <span class="sql-keyword">NOT NULL</span>,
+    reported_price      <span class="sql-type">NUMERIC</span>(<span class="sql-string">6</span>,<span class="sql-string">2</span>) <span class="sql-keyword">NOT NULL CHECK</span> (reported_price &gt; <span class="sql-string">0</span>),
+    reporter_trust_score <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL</span>,
+    reporter_tier       user_tier <span class="sql-keyword">NOT NULL</span>,
+    channel             session_channel <span class="sql-keyword">NOT NULL</span>,
+    status              price_report_status <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">'pending'</span>,
+    consensus_group_id  <span class="sql-type">BIGINT</span>,
+    ip_address          <span class="sql-type">INET</span>,
+    created_at          <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>()
+) <span class="sql-keyword">PARTITION BY RANGE</span> (created_at);
+
+<span class="sql-comment">-- Auto-create monthly partitions</span>
+<span class="sql-keyword">SELECT</span> partman.create_parent(
+    p_parent_table := <span class="sql-string">'public.price_reports'</span>,
+    p_control := <span class="sql-string">'created_at'</span>,
+    p_interval := <span class="sql-string">'1 month'</span>,
+    p_premake := <span class="sql-string">3</span>,
+    p_start_partition := <span class="sql-string">'2026-01-01'</span>
+);</pre>
+
+<h3 id="s2-consensus">2.6 Consensus Groups (Anti-Sybil)</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> consensus_groups (
+    id                  <span class="sql-type">BIGSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    station_id          <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL REFERENCES</span> stations(id),
+    fuel_type           fuel_type <span class="sql-keyword">NOT NULL</span>,
+    target_price_range  <span class="sql-type">NUMRANGE</span>,
+    min_required_votes  <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">3</span>,
+    current_votes       <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">0</span>,
+    is_resolved         <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">FALSE</span>,
+    expires_at          <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL</span>,  <span class="sql-comment">-- TTL 15 minutes</span>
+
+    <span class="sql-keyword">CONSTRAINT</span> unique_active_group <span class="sql-keyword">UNIQUE</span> (station_id, fuel_type, is_resolved)
+);
+
+<span class="sql-keyword">CREATE TABLE</span> consensus_votes (
+    id                  <span class="sql-type">BIGSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    consensus_group_id  <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> consensus_groups(id),
+    reporter_user_id    <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> users(id),
+    reported_price      <span class="sql-type">NUMERIC</span>(<span class="sql-string">6</span>,<span class="sql-string">2</span>) <span class="sql-keyword">NOT NULL</span>,
+    created_at          <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    <span class="sql-keyword">UNIQUE</span> (consensus_group_id, reporter_user_id)
+);</pre>
+
+<h3 id="s2-verified">2.7 Verified Prices &amp; Materialized View</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> verified_prices (
+    id              <span class="sql-type">BIGSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    station_id      <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL REFERENCES</span> stations(id),
+    fuel_type       fuel_type <span class="sql-keyword">NOT NULL</span>,
+    price           <span class="sql-type">NUMERIC</span>(<span class="sql-string">6</span>,<span class="sql-string">2</span>) <span class="sql-keyword">NOT NULL CHECK</span> (price &gt; <span class="sql-string">0</span>),
+    source_report_id <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL REFERENCES</span> price_reports(id),
+    verification_method <span class="sql-type">VARCHAR</span>(<span class="sql-string">50</span>) <span class="sql-keyword">NOT NULL</span>,
+    median_baseline <span class="sql-type">NUMERIC</span>(<span class="sql-string">6</span>,<span class="sql-string">2</span>),
+    deviation_pct   <span class="sql-type">NUMERIC</span>(<span class="sql-string">5</span>,<span class="sql-string">2</span>),
+    effective_from  <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    effective_until <span class="sql-type">TIMESTAMPTZ</span>,  <span class="sql-comment">-- NULL = currently active</span>
+
+    <span class="sql-keyword">CONSTRAINT</span> unique_active_price
+        <span class="sql-keyword">UNIQUE</span> (station_id, fuel_type, effective_until)
+);
+
+<span class="sql-comment">-- Materialized view for sub-50ms nearest-cheapest queries</span>
+<span class="sql-keyword">CREATE MATERIALIZED VIEW</span> mv_nearest_cheapest <span class="sql-keyword">AS</span>
+<span class="sql-keyword">SELECT</span> s.id <span class="sql-keyword">AS</span> station_id, s.station_code, s.name <span class="sql-keyword">AS</span> station_name,
+       fo.name <span class="sql-keyword">AS</span> operator_name, vp.fuel_type, vp.price, s.location,
+       gd.id <span class="sql-keyword">AS</span> district_id, gd.name_en <span class="sql-keyword">AS</span> district_name
+<span class="sql-keyword">FROM</span> stations s
+<span class="sql-keyword">JOIN</span> fuel_operators fo <span class="sql-keyword">ON</span> fo.id = s.operator_id
+<span class="sql-keyword">JOIN</span> verified_prices vp <span class="sql-keyword">ON</span> vp.station_id = s.id <span class="sql-keyword">AND</span> vp.effective_until <span class="sql-keyword">IS NULL</span>
+<span class="sql-keyword">JOIN</span> geo_subcounties gs <span class="sql-keyword">ON</span> gs.id = s.subcounty_id
+<span class="sql-keyword">JOIN</span> geo_districts gd <span class="sql-keyword">ON</span> gd.id = gs.district_id;
+
+<span class="sql-keyword">CREATE UNIQUE INDEX</span> idx_mv_nearest_unique
+    <span class="sql-keyword">ON</span> mv_nearest_cheapest (station_id, fuel_type);
+<span class="sql-keyword">CREATE INDEX</span> idx_mv_nearest_loc
+    <span class="sql-keyword">ON</span> mv_nearest_cheapest <span class="sql-keyword">USING</span> <span class="sql-type">GIST</span> (location);</pre>
+
+<h3 id="s2-security">2.8 Security &amp; Rate Limiting Tables</h3>
+<pre><span class="sql-keyword">CREATE TABLE</span> rate_limit_events (
+    id              <span class="sql-type">BIGSERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    msisdn_hash     <span class="sql-type">VARCHAR</span>(<span class="sql-string">64</span>),
+    ip_address      <span class="sql-type">INET</span>,
+    endpoint        <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>) <span class="sql-keyword">NOT NULL</span>,
+    request_count   <span class="sql-type">SMALLINT</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-string">1</span>,
+    window_start    <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL</span>,
+    window_end      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL</span>,
+    blocked         <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">FALSE</span>
+);
+
+<span class="sql-keyword">CREATE TABLE</span> blacklisted_entities (
+    id              <span class="sql-type">SERIAL</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    entity_type     <span class="sql-type">VARCHAR</span>(<span class="sql-string">20</span>) <span class="sql-keyword">NOT NULL CHECK</span> (entity_type <span class="sql-keyword">IN</span> (
+                        <span class="sql-string">'msisdn_hash'</span>, <span class="sql-string">'ip_address'</span>, <span class="sql-string">'device_id'</span>)),
+    entity_value    <span class="sql-type">VARCHAR</span>(<span class="sql-string">64</span>) <span class="sql-keyword">NOT NULL</span>,
+    reason          <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    detected_by     <span class="sql-type">VARCHAR</span>(<span class="sql-string">100</span>) <span class="sql-keyword">NOT NULL</span>,
+    blocked_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">NOW</span>(),
+    expires_at      <span class="sql-type">TIMESTAMPTZ</span>,
+    is_active       <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-keyword">TRUE</span>,
+    <span class="sql-keyword">UNIQUE</span> (entity_type, entity_value)
+);</pre>
+
+<h3 id="s2-triggers">2.9 Core Triggers</h3>
+<pre><span class="sql-comment">-- Auto-update trust score when report status changes</span>
+<span class="sql-keyword">CREATE OR REPLACE FUNCTION</span> fn_update_user_trust()
+<span class="sql-keyword">RETURNS TRIGGER AS</span> $$
+<span class="sql-keyword">BEGIN</span>
+    <span class="sql-keyword">IF</span> <span class="sql-keyword">NEW</span>.status = <span class="sql-string">'verified'</span> <span class="sql-keyword">THEN</span>
+        <span class="sql-keyword">UPDATE</span> users
+        <span class="sql-keyword">SET</span> trust_score = <span class="sql-func">LEAST</span>(<span class="sql-string">100</span>, trust_score + <span class="sql-string">2</span>),
+            verified_count = verified_count + <span class="sql-string">1</span>
+        <span class="sql-keyword">WHERE</span> id = <span class="sql-keyword">NEW</span>.reporter_user_id;
+    <span class="sql-keyword">ELSIF</span> <span class="sql-keyword">NEW</span>.status = <span class="sql-string">'rejected'</span> <span class="sql-keyword">THEN</span>
+        <span class="sql-keyword">UPDATE</span> users
+        <span class="sql-keyword">SET</span> trust_score = <span class="sql-func">GREATEST</span>(<span class="sql-string">0</span>, trust_score - <span class="sql-string">5</span>),
+            rejected_count = rejected_count + <span class="sql-string">1</span>
+        <span class="sql-keyword">WHERE</span> id = <span class="sql-keyword">NEW</span>.reporter_user_id;
+    <span class="sql-keyword">END IF</span>;
+    <span class="sql-keyword">RETURN NEW</span>;
+<span class="sql-keyword">END</span>;
+$$ <span class="sql-keyword">LANGUAGE</span> plpgsql;
+
+<span class="sql-keyword">CREATE TRIGGER</span> trg_price_report_update_trust
+    <span class="sql-keyword">AFTER UPDATE OF</span> status <span class="sql-keyword">ON</span> price_reports
+    <span class="sql-keyword">FOR EACH ROW</span>
+    <span class="sql-keyword">WHEN</span> (<span class="sql-keyword">OLD</span>.status = <span class="sql-string">'pending'</span>
+          <span class="sql-keyword">AND</span> <span class="sql-keyword">NEW</span>.status <span class="sql-keyword">IN</span> (<span class="sql-string">'verified'</span>, <span class="sql-string">'rejected'</span>))
+    <span class="sql-keyword">EXECUTE FUNCTION</span> fn_update_user_trust();</pre>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 3. USSD SESSION FLOW                                         -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="s3">3. USSD Stateful Session Logic Flow</h2>
+<p>Redis-backed state machine for USSD menu navigation (<code>*284*X#</code>). Total response must complete in <strong>&lt; 4,000ms</strong> to comply with MTN and Airtel Uganda carrier timeouts.</p>
+
+<h3>3.1 Redis Key Namespace Convention</h3>
+<pre>session:{msisdn_hash}                          → HASH (active session)
+session:{msisdn_hash}:history                  → LIST (last 10 user inputs)
+session:{msisdn_hash}:lock                     → STRING (distributed lock, TTL 30s)
+price_report:draft:{msisdn_hash}               → HASH (in-progress report)
+rate_limit:{msisdn_hash}:{endpoint}:{window}   → STRING (sliding window count)</pre>
+
+<h3>3.2 Session Hash Fields</h3>
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Example</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>state</code></td><td>string</td><td><code>"SELECT_DISTRICT"</code></td><td>Current USSD menu state</td></tr>
+<tr><td><code>last_state</code></td><td>string</td><td><code>"SELECT_REGION"</code></td><td>Previous state for back nav</td></tr>
+<tr><td><code>region_id</code></td><td>int</td><td><code>1</code></td><td>Selected region</td></tr>
+<tr><td><code>district_id</code></td><td>int</td><td><code>12</code></td><td>Selected district</td></tr>
+<tr><td><code>station_id</code></td><td>int</td><td><code>342</code></td><td>Selected station</td></tr>
+<tr><td><code>fuel_type</code></td><td>string</td><td><code>"petrol"</code></td><td>Fuel being reported</td></tr>
+<tr><td><code>reported_price</code></td><td>float</td><td><code>5650.00</code></td><td>Price input</td></tr>
+<tr><td><code>locale</code></td><td>string</td><td><code>"lg"</code></td><td>Language (en/lg/ny)</td></tr>
+<tr><td><code>sequence</code></td><td>int</td><td><code>3</code></td><td>Menu step number</td></tr>
+<tr><td><code>ttl</code></td><td>int</td><td><code>120</code></td><td>Session expiry (seconds)</td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-states">3.3 State Transition Diagram</h3>
+<div class="state-machine">                        ┌──────────────┐
+                        │    ENTRY     │
+                        │  (*284*X#)   │
+                        └──────┬───────┘
+                               │
+                               ▼
+                        ┌──────────────┐
+                 ┌──────│   WELCOME    │◄───────┐
+                 │      │  1. Report   │        │
+                 │      │  2. View     │        │
+                 │      │  3. Lang     │        │
+                 │      └──────┬───────┘        │
+                 │             │                 │
+                 │    ┌────────┴────────┐       │
+                 │    ▼                 ▼       │
+                 │  [1. Report]      [2. View]  │
+                 │    │                 │       │
+                 │    ▼                 ▼       │
+           ┌──────────────┐     ┌──────────────┐│
+           │SELECT_REGION │     │SELECT_REGION ││
+           │(Report flow) │     │ (View flow)  ││
+           └──────┬───────┘     └──────┬───────┘│
+                  │                    │        │
+                  ▼                    ▼        │
+           ┌──────────────┐     ┌──────────────┐│
+           │SELECT_       │     │SELECT_       ││
+           │DISTRICT      │     │DISTRICT      ││
+           └──────┬───────┘     └──────┬───────┘│
+                  │                    │        │
+                  ▼                    ▼        │
+           ┌──────────────┐     ┌──────────────┐│
+           │SELECT_       │     │VIEW_STATIONS ││
+           │STATION       │     │(Top 3 cheap) ││
+           └──────┬───────┘     └──────┬───────┘│
+                  │                    │        │
+                  ▼                    └────────┘
+           ┌──────────────┐
+           │SELECT_FUEL   │
+           └──────┬───────┘
+                  │
+                  ▼
+           ┌──────────────┐
+           │ENTER_PRICE   │
+           └──────┬───────┘
+                  │
+                  ▼
+           ┌──────────────┐
+           │CONFIRM       │
+           └──────┬───────┘
+                  │
+          ┌───────┴───────┐
+          ▼               ▼
+   ┌──────────────┐ ┌──────────────┐
+   │SUBMITTED     │ │WELCOME       │
+   │(CON success) │ │(retry/report)│
+   └──────────────┘ └──────────────┘</div>
+
+<h3 id="s3-engine">3.4 Core State Machine Engine</h3>
+<pre><span class="sql-comment">// Node.js 20+ or Go 1.22+</span>
+<span class="sql-comment">// Constraint: Total response &lt; 4,000ms</span>
+
+const STATES = {
+    WELCOME:           { menu: true,  ttl: 120 },
+    SELECT_REGION:     { menu: true,  ttl: 120 },
+    SELECT_DISTRICT:   { menu: true,  ttl: 120 },
+    SELECT_SUBCOUNTY:  { menu: true,  ttl: 120 },
+    SELECT_STATION:    { menu: true,  ttl: 120 },
+    SELECT_FUEL:       { menu: true,  ttl: 120 },
+    ENTER_PRICE:       { prompt: true, ttl: 120 },
+    CONFIRM:           { menu: true,  ttl: 60  },
+    VIEW_STATIONS:     { display: true, ttl: 120 },
+    SUBMITTED:         { terminal: true, ttl: 30  },
+    ERROR:             { terminal: true, ttl: 30  },
+};
+
+async function handleUSSDRequest(msisdn, sessionId, inputText) {
+    const msisdnHash = crypto.createHash('sha256')
+        .update(APP_SALT + msisdn).digest('hex');
+    const sessionKey = `session:${msisdnHash}`;
+    const lockToken = uuidv4();
+
+    // Acquire distributed lock
+    const locked = await redis.set(
+        `session:${msisdnHash}:lock`, lockToken, 'NX', 'EX', 30);
+    if (!locked) return composeResponse('END', 'Please try again.');
+
+    try {
+        let session = await redis.hgetall(sessionKey);
+        if (!session || isEmpty(session)) {
+            session = { state: 'WELCOME', sequence: 0,
+                        channel: 'ussd', locale: detectLocale(msisdn) };
+            await redis.hset(sessionKey, session);
+            await redis.expire(sessionKey, STATES.WELCOME.ttl);
+            return composeResponse('CON', formatWelcome(session.locale));
+        }
+
+        const input = inputText.trim();
+        if (input === '0')
+            return handleBackNavigation(session, sessionKey);
+        if (input === '000') {
+            session.state = 'WELCOME';
+            await redis.hset(sessionKey, session);
+            return composeResponse('CON', formatWelcome(session.locale));
+        }
+
+        let response;
+        switch (session.state) {
+            case 'WELCOME':
+                response = await handleWelcome(session, sessionKey, input);
+                break;
+            case 'SELECT_REGION':
+                response = await handleSelectRegion(session, sessionKey, input);
+                break;
+            case 'SELECT_DISTRICT':
+                response = await handleSelectDistrict(session, sessionKey, input);
+                break;
+            case 'SELECT_STATION':
+                response = await handleSelectStation(session, sessionKey, input);
+                break;
+            case 'SELECT_FUEL':
+                response = await handleSelectFuel(session, sessionKey, input);
+                break;
+            case 'ENTER_PRICE':
+                response = await handleEnterPrice(session, sessionKey, input);
+                break;
+            case 'CONFIRM':
+                response = await handleConfirm(session, sessionKey, input);
+                break;
+            case 'VIEW_STATIONS':
+                response = await handleViewStations(session, sessionKey, input);
+                break;
+            default:
+                response = await handleError(session, sessionKey);
+        }
+
+        await redis.hset(sessionKey, 'sequence', ++session.sequence);
+        await redis.expire(sessionKey,
+            STATES[session.state]?.ttl ?? 120);
+
+        kafka.produce('ussd.session.logs', {
+            msisdn_hash: msisdnHash, session_id: sessionId,
+            state: session.state, sequence: session.sequence,
+            user_input: maskInput(session.state, input),
+        });
+        return response;
+    } finally {
+        await redis.eval(
+            'if redis.call("get", KEYS[1]) == ARGV[1] ' +
+            'then redis.call("del", KEYS[1]) end',
+            1, `session:${msisdnHash}:lock`, lockToken);
+    }
+}</pre>
+
+<h3 id="s3-handlers">3.5 Price Entry &amp; Confirmation Handlers</h3>
+<pre>async function handleEnterPrice(session, sessionKey, input) {
+    const price = parseFloat(input.replace(/\s/g, ''));
+    if (isNaN(price) || price <= 0)
+        return composeResponse('CON', formatText(session.locale, 'INVALID_PRICE'));
+
+    const bounds = getPriceBounds(session.fuel_type);
+    if (price &lt; bounds.min || price > bounds.max)
+        return composeResponse('CON', formatText(session.locale,
+            'PRICE_OUT_OF_RANGE', { min: bounds.min, max: bounds.max }));
+
+    // Check against 48h moving median
+    const median = await getMovingMedian(session.station_id, session.fuel_type);
+    if (median !== null) {
+        const deviation = Math.abs(price - median) / median * 100;
+        if (deviation > DEVIATION_THRESHOLD_PCT)
+            session.anomaly_flagged = true;
+    }
+
+    session.reported_price = price;
+    session.state = 'CONFIRM';
+    await redis.hset(sessionKey, session);
+
+    return composeResponse('CON', formatText(session.locale, 'CONFIRM_PROMPT',
+        { station: session.station_code, fuel: session.fuel_type,
+          price: price.toLocaleString() }));
+}
+
+async function handleConfirm(session, sessionKey, input) {
+    if (input !== '1') {
+        session.state = 'WELCOME';
+        await redis.hset(sessionKey, session);
+        return composeResponse('CON', formatText(session.locale, 'REPORT_CANCELLED'));
+    }
+
+    // Publish to Kafka for async verification
+    await kafka.produce('price.reports', {
+        station_id: session.station_id,
+        reporter_msisdn_hash: sessionKey.replace('session:', ''),
+        fuel_type: session.fuel_type,
+        reported_price: session.reported_price,
+        channel: 'ussd',
+        anomaly_flagged: session.anomaly_flagged || false,
+    });
+
+    session.state = 'SUBMITTED';
+    await redis.hset(sessionKey, session);
+    return composeResponse('END', formatText(session.locale, 'REPORT_SUCCESS'));
+}
+
+async function handleViewStations(session, sessionKey, input) {
+    const top = await getTopCheapestStations(
+        session.region_id, session.district_id, 'petrol', 3);
+
+    if (top.length === 0)
+        return composeResponse('END', 'No stations found in this area.');
+
+    const lines = top.map((s, i) =>
+        `${i+1}. ${s.name} — UGX ${s.price.toLocaleString()}/L`);
+    return composeResponse('END', 'TOP 3 CHEAPEST\n' + lines.join('\n'));
+}</pre>
+
+<h3 id="s3-budget">3.6 Performance Budget</h3>
+<table>
+<thead><tr><th>Operation</th><th>Max Budget</th><th>Strategy</th></tr></thead>
+<tbody>
+<tr><td>Session fetch/restore</td><td>300ms</td><td>Redis HGETALL</td></tr>
+<tr><td>Region list fetch</td><td>400ms</td><td>Cached JSON, TTL 3600s</td></tr>
+<tr><td>District list fetch</td><td>400ms</td><td>Cached query, TTL 1800s</td></tr>
+<tr><td>Station list fetch</td><td>500ms</td><td>Cached query, TTL 300s</td></tr>
+<tr><td>Top 3 cheapest query</td><td>800ms</td><td>PostGIS + Redis cache, TTL 60s</td></tr>
+<tr><td>Price submission (Kafka)</td><td>300ms</td><td>Fire-and-forget async</td></tr>
+<tr><td>48h median fetch</td><td>500ms</td><td>Redis sorted set, updated 5min</td></tr>
+<tr><td>Response composition</td><td>200ms</td><td>In-memory</td></tr>
+<tr><td><strong>Total budget</strong></td><td><strong>~3,400ms</strong></td><td><strong>Under 4,000ms ✓</strong></td></tr>
+</tbody>
+</table>
+
+<h3 id="s3-whatsapp">3.7 WhatsApp GeoJSON Location Parsing</h3>
+<pre>function parseLocationPayload(payload) {
+    const loc = payload.message.location;
+    return {
+        type: 'Point',
+        coordinates: [loc.longitude, loc.latitude],
+        crs: { type: 'name', properties: { name: 'EPSG:4326' } }
+    };
+}
+
+async function findNearestStations(geoJsonPoint, radiusMeters = 5000) {
+    const result = await pool.query(`
+        SELECT s.id, s.name, s.station_code, fo.name AS operator,
+               vp.price, vp.fuel_type,
+               ST_Distance(s.location,
+                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+               ) AS distance_meters
+        FROM stations s
+        JOIN fuel_operators fo ON fo.id = s.operator_id
+        JOIN verified_prices vp
+            ON vp.station_id = s.id AND vp.effective_until IS NULL
+        WHERE s.is_active = TRUE
+          AND ST_DWithin(s.location,
+              ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+        ORDER BY vp.price ASC, distance_meters ASC
+        LIMIT 5
+    `, [geoJsonPoint.coordinates[0], geoJsonPoint.coordinates[1], radiusMeters]);
+    return result.rows;
+}</pre>
+
+<h3>3.8 Localized Menu Templates (Luganda Example)</h3>
+<pre>Stored in Redis: i18n:{locale}:{state}  (hot-reloadable without deployment)
+
+i18n:lg:WELCOME -> "Matano-Meters!\n1. Teeka omuwendo\n2. Kebera\n3. Olulimi"
+i18n:lg:SELECT_REGION_PROMPT -> "Londa essaza lyo:\n{regions}"
+i18n:lg:SELECT_DISTRICT_PROMPT -> "Londa disitulikiti:\n{districts}"
+i18n:lg:CONFIRM_PROMPT -> "Kakasa:\n{station}\n{fuel}\nUGX {price}/L\n1. Kakasa\n0. Ddayo"
+i18n:lg:REPORT_SUCCESS -> "Webale! Omuwendo gw'efuwa gusomeseddwa."
+i18n:lg:TOP_CHEAPEST_HEADER -> "Ew'obuwanguzi esinga obusungu:"</pre>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 4. SECURITY FRAMEWORK                                       -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="s4">4. Security Framework — Sybil Attack Mitigation</h2>
+
+<h3>4.1 Threat Model</h3>
+<table>
+<thead><tr><th>Profile</th><th>Resources</th><th>Volume</th></tr></thead>
+<tbody>
+<tr><td>Individual rider</td><td>1 SIM, 1 phone</td><td>~10 reports/day</td></tr>
+<tr><td>Boda stage (coordinated)</td><td>5-20 SIMs</td><td>~100 reports/day</td></tr>
+<tr><td>SIM farm operator</td><td>100-1000 SIMs</td><td>~5,000 reports/day</td></tr>
+<tr><td>Competitor station</td><td>50-200 SIMs + proxies</td><td>~2,000 reports/day</td></tr>
+<tr><td>Nation-state / organized crime</td><td>Unlimited</td><td>10,000+ reports/day</td></tr>
+</tbody>
+</table>
+
+<p><strong>Primary Attack Goals:</strong> Price manipulation, convoy rerouting, competitive sabotage, extortion.</p>
+
+<h3 id="s4-layers">4.2 Defense-in-Depth Architecture</h3>
+
+<div class="layer-stack">
+  <div class="layer"><span class="num">1</span> Access Control — Rate limiting, IP reputation, PoW challenge</div>
+  <div class="layer"><span class="num">2</span> Trust System — Score (0-100), 6 tiers, consensus requirement</div>
+  <div class="layer"><span class="num">3</span> Statistical Verification — 48h moving median, Z-score anomaly</div>
+  <div class="layer"><span class="num">4</span> Behavioral Detection — Inter-arrival analysis, geo DBSCAN clustering</div>
+  <div class="layer"><span class="num">5</span> Incident Response — Price freeze, auto-rollback, law enforcement escalation</div>
+</div>
+
+<h3 id="s4-access">4.3 Access Control</h3>
+
+<h4>Rate Limiting</h4>
+<table>
+<thead><tr><th>Endpoint</th><th>Window</th><th>Max Requests</th><th>Escalation</th></tr></thead>
+<tbody>
+<tr><td><code>price.submit</code></td><td>1 hour</td><td>5</td><td>1h → 24h → 7d → 30d</td></tr>
+<tr><td><code>ussd.dial</code></td><td>1 minute</td><td>10</td><td>1h block</td></tr>
+<tr><td><code>station.view</code></td><td>1 minute</td><td>30</td><td>Throttle 10s</td></tr>
+<tr><td><code>auth.otp</code></td><td>15 minutes</td><td>3</td><td>Permanent block</td></tr>
+</tbody>
+</table>
+
+<pre>async function checkRateLimit(msisdnHash, endpoint) {
+    const config = RATE_LIMITS[endpoint];
+    const windowKey = `ratelimit:${msisdnHash}:${endpoint}:${
+        Math.floor(Date.now() / config.window_ms)}`;
+    const count = await redis.incr(windowKey);
+    if (count === 1) await redis.pexpire(windowKey, config.window_ms);
+    if (count > config.max_requests) {
+        const duration = getEscalatingBlock(msisdnHash, endpoint);
+        await redis.set(`blocked:${msisdnHash}`, '1', 'EX', duration);
+        return { allowed: false, reason: 'RATE_LIMITED', duration };
+    }
+    return { allowed: true };
+}</pre>
+
+<h4>IP Reputation &amp; Carrier ASN Whitelist</h4>
+<pre>const UGANDA_CARRIER_ASNS = [
+    'AS36936',   // MTN Uganda
+    'AS36935',   // Airtel Uganda
+    'AS37277',   // Uganda Telecom
+    'AS328167',  // Lycamobile Uganda
+    'AS328222',  // Roke Telkom
+];
+
+function scoreIPReputation(ipAddress) {
+    const score = [
+        checkKnownProxyList(ipAddress),
+        checkResidentialProxy(ipAddress),
+        checkASNCarrierMatch(ipAddress),
+        checkHistoricalFraud(ipAddress),
+        checkGeoVelocity(ipAddress),
+    ].reduce((sum, c) => sum + c.weight, 0);
+
+    if (score > 80) return { action: 'block', reason: 'HIGH_RISK_IP' };
+    if (score > 50) return { action: 'challenge', reason: 'SUSPICIOUS_IP' };
+    if (score > 20) return { action: 'tag', reason: 'LOW_REPUTATION' };
+    return { action: 'allow' };
+}</pre>
+
+<h4>USSD Proof-of-Work Challenge</h4>
+<pre>const CHALLENGES = {
+    en: [
+        { q: "What is 12 + 7?", a: "19" },
+        { q: "How many wheels on 3 bodas?", a: "6" },
+    ],
+    lg: [
+        { q: "Boda bbiri zina magudugudu meka?", a: "6" },
+    ],
+};
+
+async function shouldChallengeUser(msisdnHash, session) {
+    if (session.trust_score >= 50) return false;
+    const recent = await redis.get(`count:${msisdnHash}:1h`) || 0;
+    if (recent >= 3) return true;
+    if (session.trust_score &lt; 20 && Math.random() &lt; 0.1) return true;
+    return false;
+}</pre>
+
+<h3 id="s4-trust">4.4 Trust System</h3>
+
+<h4>Trust Tiers</h4>
+<table>
+<thead><tr><th>Tier</th><th>Min Score</th><th>Consensus Required</th><th>Direct Reporting</th></tr></thead>
+<tbody>
+<tr><td>Unverified</td><td>0</td><td>3 votes</td><td>No</td></tr>
+<tr><td>Basic</td><td>20</td><td>3 votes</td><td>No</td></tr>
+<tr><td>Trusted</td><td>50</td><td>—</td><td>Yes</td></tr>
+<tr><td>Verified Reporter</td><td>80</td><td>—</td><td>Yes</td></tr>
+<tr><td>Station Official</td><td>95</td><td>—</td><td>Yes (+ OTP)</td></tr>
+<tr><td>Association Leader</td><td>100</td><td>—</td><td>Yes</td></tr>
+</tbody>
+</table>
+
+<h4>Consensus-Based Verification</h4>
+<pre>async function processPriceReport(report) {
+    const user = await getUser(report.reporter_user_id);
+    const tierConfig = TIER_CONFIG[user.tier];
+
+    if (tierConfig.canReportDirect) {
+        const check = await verifyAgainstMedian(report);
+        if (check.passed) {
+            await publishVerifiedPrice(report);
+            return { status: 'verified', method: 'high_trust_direct' };
+        }
+        return { status: 'rejected', reason: 'extreme_deviation' };
+    }
+
+    // Low-trust: need 3 matching reports in 15 min window
+    let group = await findOpenConsensusGroup(
+        report.station_id, report.fuel_type);
+    if (!group) {
+        group = await createConsensusGroup(report); // TTL 15 min
+        return { status: 'pending', method: 'consensus_initiated' };
+    }
+
+    await addVoteToGroup(group.id, report);
+    if (group.current_votes + 1 >= group.min_required_votes) {
+        const price = calculateGroupMedian(group.id);
+        await publishVerifiedPrice({ ...report, reported_price: price });
+        return { status: 'verified', method: 'consensus_achieved' };
+    }
+    return { status: 'pending', method: 'consensus_waiting' };
+}</pre>
+
+<h3 id="s4-anticheat">4.5 Moving Median Anti-Cheat Engine</h3>
+<pre>const MEDIAN_WINDOW_HOURS = 48;
+const MAX_DEVIATION_PCT = 25;
+
+async function computeMovingMedian(stationId, fuelType) {
+    const cacheKey = `median:${stationId}:${fuelType}:48h`;
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
+    const result = await db.query(`
+        SELECT percentile_cont(0.5) WITHIN GROUP
+                 (ORDER BY reported_price) AS median,
+               percentile_cont(0.25) WITHIN GROUP
+                 (ORDER BY reported_price) AS q1,
+               COUNT(*) AS sample_count
+        FROM price_reports
+        WHERE station_id = $1 AND fuel_type = $2
+          AND created_at >= NOW() - $3::INTERVAL
+          AND status IN ('verified', 'pending')
+    `, [stationId, fuelType, MEDIAN_WINDOW_HOURS + ' hours']);
+
+    await redis.setex(cacheKey, 300, JSON.stringify(result.rows[0]));
+    return result.rows[0];
+}
+
+async function verifyAgainstMedian(report) {
+    const stats = await computeMovingMedian(
+        report.station_id, report.fuel_type);
+    if (!stats || stats.sample_count &lt; 5)
+        return { passed: true, confidence: 'low' };
+
+    const deviation = Math.abs(report.reported_price - stats.median)
+                      / stats.median * 100;
+    if (deviation > MAX_DEVIATION_PCT)
+        return { passed: false, reason: 'extreme_deviation',
+                 deviation_pct: deviation };
+    return { passed: true, deviation_pct: deviation };
+}</pre>
+
+<h4>Z-Score Time-Series Anomaly</h4>
+<pre>async function detectPriceAnomaly(stationId, fuelType) {
+    const prices = (await db.query(`
+        SELECT reported_price FROM price_reports
+        WHERE station_id = $1 AND fuel_type = $2
+          AND created_at >= NOW() - INTERVAL '6 hours'
+          AND status = 'verified'
+        ORDER BY created_at DESC
+    `, [stationId, fuelType])).rows.map(r => parseFloat(r.reported_price));
+
+    if (prices.length &lt; 3) return null;
+
+    const mean = prices.reduce((a, b) => a + b) / prices.length;
+    const stddev = Math.sqrt(
+        prices.reduce((s, p) => s + Math.pow(p - mean, 2), 0) / prices.length);
+    const zScore = Math.abs(prices[0] - mean) / (stddev || 1);
+
+    if (zScore > 3.0) {
+        await db.anomaly_alerts.create({
+            alert_type: 'price_spike',
+            severity: zScore > 4 ? 'critical' : 'warning',
+            station_id: stationId, fuel_type: fuelType,
+            reported_price: prices[0], median_baseline: mean,
+            deviation_pct: Math.abs(prices[0] - mean) / mean * 100,
+        });
+        return { anomaly: true, zScore,
+                 severity: zScore > 4 ? 'critical' : 'warning' };
+    }
+    return { anomaly: false, zScore };
+}</pre>
+
+<h3 id="s4-behavioral">4.6 Behavioral Detection</h3>
+
+<h4>Inter-arrival Time Analysis</h4>
+<pre>async function analyzeSubmissionPattern(msisdnHash) {
+    const timestamps = await redis.lrange(
+        `timestamps:${msisdnHash}`, 0, 49);
+    if (timestamps.length &lt; 10) return null;
+
+    const intervals = [];
+    for (let i = 1; i &lt; timestamps.length; i++)
+        intervals.push(timestamps[i-1] - timestamps[i]);
+
+    const mean = intervals.reduce((a, b) => a + b) / intervals.length;
+    const stddev = Math.sqrt(intervals.reduce(
+        (s, i) => s + Math.pow(i - mean, 2), 0) / intervals.length);
+    const cv = stddev / mean;  // Coefficient of variation
+
+    // Human CV >= 0.5, Bot CV &lt; 0.2
+    if (cv &lt; 0.2 && mean &lt; 30000)
+        return { pattern: 'automated', confidence: 'high',
+                 coefficient_variation: cv };
+    return { pattern: 'human_like', coefficient_variation: cv };
+}</pre>
+
+<h4>Geospatial DBSCAN Cluster Detection</h4>
+<pre>async function detectGeospatialSybil(windowMinutes = 60) {
+    const clusters = await db.query(`
+        SELECT ST_ClusterDBSCAN(
+                 location_lat || ',' || location_lng, 0.001, 5
+               ) OVER () AS cluster_id,
+               COUNT(*) AS report_count,
+               COUNT(DISTINCT reporter_user_id) AS unique_reporters,
+               ARRAY_AGG(DISTINCT reporter_user_id) AS reporter_ids
+        FROM price_reports
+        WHERE created_at >= NOW() - $1::INTERVAL
+          AND location_lat IS NOT NULL
+        GROUP BY cluster_id
+        HAVING COUNT(DISTINCT reporter_user_id) >= 5
+           AND COUNT(*) >= 10
+    `, [windowMinutes + ' minutes']);
+
+    for (const c of clusters.rows) {
+        const scores = await getTrustScores(c.reporter_ids);
+        const avg = scores.reduce((a, b) => a + b) / scores.length;
+        if (avg &lt; 20 && c.report_count > 20) {
+            for (const uid of c.reporter_ids)
+                await blacklistUser(uid, 'sybil_geo_cluster');
+        }
+    }
+}</pre>
+
+<h3 id="s4-incident">4.7 Incident Response</h3>
+
+<table>
+<thead><tr><th>Severity</th><th>Example</th><th>Response Time</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td><span class="badge-blue">Info</span></td><td>Single deviation 15-25%</td><td>Next business day</td><td>Log + monitor</td></tr>
+<tr><td><span class="badge-yellow">Warning</span></td><td>Moderate deviation cluster</td><td>1 hour</td><td>Flag stations, alert team</td></tr>
+<tr><td><span class="badge-red">Critical</span></td><td>Active price manipulation</td><td>15 minutes</td><td>Price freeze, auto-rollback</td></tr>
+</tbody>
+</table>
+
+<h4>Emergency Price Freeze</h4>
+<pre>async function emergencyPriceFreeze(stationId, reason) {
+    // Close current active price
+    await db.verified_prices.update(
+        { effective_until: NOW() },
+        { where: { station_id: stationId, effective_until: null } }
+    );
+    // Freeze at last known price for 24 hours
+    const lastPrice = (await db.stations.findById(stationId)).last_known_price;
+    await db.verified_prices.create({
+        station_id: stationId, price: lastPrice,
+        verification_method: 'emergency_freeze',
+        effective_from: NOW(), effective_until: NOW() + INTERVAL '24 hours',
+    });
+    await notifyStationOperator(station.operator_id, {
+        type: 'price_freeze', station_id: stationId,
+        reason, frozen_price: lastPrice, duration: '24 hours',
+    });
+    await invalidateStationCache(stationId);
+}</pre>
+
+<h3 id="s4-compliance">4.8 Data Protection Compliance (Uganda DPA 2019)</h3>
+
+<table>
+<thead><tr><th>Requirement</th><th>Implementation</th></tr></thead>
+<tbody>
+<tr><td><strong>Section 14</strong> — Data minimization</td><td>MSISDN salted SHA-256 hashed at rest; per-user random salt; raw MSISDN purged from staging after 24h</td></tr>
+<tr><td><strong>Section 19</strong> — Storage limitation</td><td>Price reports: 12mo active → archive; USSD logs: 6mo; Audit logs: 3yr (legal)</td></tr>
+<tr><td><strong>Section 8</strong> — Consent</td><td>Recorded on first USSD dial; opt-out via <code>*284*0#</code></td></tr>
+<tr><td><strong>Section 15</strong> — Right of access</td><td><code>GET /api/v1/user/data</code> returns all personal data in machine-readable format within 30 days</td></tr>
+<tr><td><strong>Section 21</strong> — Breach notification</td><td>DPO alerted within 24h; affected users within 48h; NITA-U notified</td></tr>
+</tbody>
+</table>
+
+<h3>4.9 Tunable Security Parameters</h3>
+<table>
+<thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>CONSENSUS_MIN_VOTES</code></td><td>3</td><td>Min matching reports for low-trust verification</td></tr>
+<tr><td><code>CONSENSUS_WINDOW_MINUTES</code></td><td>15</td><td>Time window for consensus group</td></tr>
+<tr><td><code>MEDIAN_WINDOW_HOURS</code></td><td>48</td><td>Rolling baseline window</td></tr>
+<tr><td><code>MAX_DEVIATION_PCT</code></td><td>25</td><td>Hard rejection threshold from median</td></tr>
+<tr><td><code>MAX_HOURLY_REPORTS</code></td><td>5</td><td>Max price reports per user per hour</td></tr>
+<tr><td><code>MAX_DAILY_TRUST_GAIN</code></td><td>6</td><td>Max trust score increase per day</td></tr>
+<tr><td><code>ANOMALY_ZSCORE_THRESHOLD</code></td><td>3.0</td><td>Z-score triggering anomaly alert</td></tr>
+<tr><td><code>SYBIL_CLUSTER_MIN_USERS</code></td><td>5</td><td>Min users for geo cluster alert</td></tr>
+</tbody>
+</table>
+
+<div class="note">
+  <strong>ⓘ Architecture v1.0</strong> — Commissioned by the Ministry of Works and Transport &amp; Ministry of Energy and Mineral Development, Republic of Uganda. May 2026.
+</div>
+
+</div><!-- /content -->
+</div><!-- /main -->
+
+<script>
+  // Highlight active sidebar link on scroll
+  const sidebarLinks = document.querySelectorAll('.sidebar-nav a');
+  const sections = [];
+
+  document.querySelectorAll('h2[id], h3[id]').forEach(el => {
+    sections.push({ id: el.id, top: el.offsetTop });
+  });
+
+  function updateActiveLink() {
+    const scrollY = window.scrollY + 120;
+    let activeId = null;
+    for (const s of sections) {
+      if (scrollY >= s.top) activeId = s.id;
+    }
+    sidebarLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + activeId);
+    });
+  }
+  window.addEventListener('scroll', updateActiveLink);
+  updateActiveLink();
+
+  // Mobile sidebar toggle
+  const toggle = document.getElementById('menuToggle');
+  const sidebar = document.getElementById('sidebar');
+  toggle.addEventListener('click', () => {
+    sidebar.classList.toggle('show');
+    sidebar.classList.toggle('collapsed');
+  });
+  document.querySelectorAll('.sidebar-nav a').forEach(a => {
+    a.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        sidebar.classList.remove('show');
+        sidebar.classList.add('collapsed');
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0A251C">
+<meta name="description" content="Matano-Meters — National Fuel Price Transparency Platform. Real-time fuel prices across Uganda.">
+<title>Matano-Meters — Driving Transparency in Uganda's Fuel Market</title>
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://unpkg.com">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ─── NAVBAR ─── -->
+<nav class="navbar" id="navbar">
+  <div class="navbar-brand">
+    <span class="flag">🇺🇬</span>
+    <div>Matano-Meters <small>Fuel Price Transparency</small></div>
+  </div>
+  <div class="navbar-links">
+    <span class="trust-score show" id="trustBadge">Trust: 0</span>
+    <button class="notif-btn" id="notifPanel"><span>🔔</span><span class="badge" id="notifBadge">0</span></button>
+    <a href="#hero" onclick="event.preventDefault();switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Map</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('stations');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Stations</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('planner');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Trip</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('report');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Report</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('activity');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Activity</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('operator');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Operator</a>
+    <a href="#hero" onclick="event.preventDefault();switchPage('admin');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Admin</a>
+    <button class="hamburger" onclick="document.querySelector('.navbar-links').classList.toggle('open')">☰</button>
+  </div>
+</nav>
+
+<!-- ─── HERO ─── -->
+<section class="hero" id="hero">
+  <div class="section-inner">
+    <div class="hero-left">
+      <div class="badge">🇺🇬 National Fuel Price Platform</div>
+      <h1>Driving Transparency in <span class="highlight">Uganda's Fuel Market</span></h1>
+      <p>Real-time, crowdsourced fuel prices across all licensed stations. Compare, report, and save — because every Ugandan deserves fair fuel.</p>
+      <div class="hero-actions">
+        <button class="btn-neon" onclick="switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">
+          Find Cheapest Fuel Near Me <span class="arrow">↗</span>
+        </button>
+        <button class="btn-outline-neon" onclick="switchPage('report');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">
+          Report a Price
+        </button>
+      </div>
+    </div>
+    <div class="hero-right">
+      <div class="hero-stats-card">
+        <div class="big" id="heroVerifiedCount">1,200+</div>
+        <div class="label">active fuel pump prices verified today</div>
+        <div class="micro-item"><span>📍 Stations monitored</span><span class="val" id="heroStationsCount">56</span></div>
+        <div class="micro-item"><span>👥 Daily active users</span><span class="val">150k+</span></div>
+        <div class="micro-item"><span>💰 Avg savings per tank</span><span class="val">UGX 12k+</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── VALUE PROPS ─── -->
+<section class="section value-section">
+  <div class="section-inner">
+    <div class="section-tag"><span class="dot"></span> Core Utilities</div>
+    <h2 class="section-title">Built for Uganda's Transport Economy</h2>
+    <p class="section-sub">Three powerful tools — one platform. Empowering everyone from boda riders to fleet operators.</p>
+    <div class="value-grid">
+      <div class="value-card">
+        <div class="icon-circle">🗺️</div>
+        <h3>Real-Time Mapping</h3>
+        <p>Interactive map of every licensed fuel station in Uganda, color-coded by price. Find the cheapest petrol or diesel near you instantly.</p>
+      </div>
+      <div class="value-card highlight">
+        <div class="icon-circle">👥</div>
+        <h3>Crowdsourced Logic</h3>
+        <p>Every price is validated by consensus. Three matching reports from independent users unlock automatic publication — no central authority needed.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon-circle">📱</div>
+        <h3>SMS & WhatsApp Alerts</h3>
+        <p>Subscribe to station-specific price alerts. Get notified when prices drop — via SMS, WhatsApp, or in-app notification. Coming soon to USSD.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── METRICS ─── -->
+<section class="metrics-section">
+  <div class="section-inner">
+    <div class="section-tag" style="color: var(--green-dark);"><span class="dot" style="background: var(--green-dark);"></span> Impact</div>
+    <h2 class="section-title" style="color: var(--green-dark);">Trusted by Transporters Across Uganda</h2>
+    <p class="section-sub" style="color: var(--text-dim);">Since launch, the community has driven measurable impact.</p>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="num">150<span class="neon">k+</span></div>
+        <div class="lbl">Daily Active Transporters</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">45<span class="neon">+</span></div>
+        <div class="lbl">Districts Monitored</div>
+      </div>
+      <div class="metric-card">
+        <div class="num">UGX 12<span class="neon">M+</span></div>
+        <div class="lbl">Combined Capital Saved</div>
+      </div>
+    </div>
+    <div class="dual-ctas">
+      <div class="dual-cta dark">
+        <div class="icon-circle">🧑‍💼</div>
+        <div class="cta-content">
+          <h3>Retail Motorists</h3>
+          <p>Find cheapest fuel near you, plan trips, report prices.</p>
+        </div>
+        <div class="cta-arrow" onclick="switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">↗</div>
+      </div>
+      <div class="dual-cta light">
+        <div class="icon-circle">🏪</div>
+        <div class="cta-content">
+          <h3>Station Operators</h3>
+          <p>Update official prices, monitor crowd reports, build trust.</p>
+        </div>
+        <div class="cta-arrow" onclick="switchPage('operator');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">↗</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── PARTNERS ─── -->
+<section class="partners-section">
+  <div class="section-inner">
+    <div style="text-align:center;margin-bottom:16px;font-size:0.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Trusted by leading fuel operators nationwide</div>
+    <div class="partners-track">
+      <span class="partner-logo">⛽ Shell Uganda</span>
+      <span class="partner-logo">⛽ TotalEnergies</span>
+      <span class="partner-logo">⛽ Stabex Uganda</span>
+      <span class="partner-logo">⛽ Petrocity Uganda</span>
+      <span class="partner-logo">⛽ Hash Energy</span>
+      <span class="partner-logo">⛽ Engen Uganda</span>
+      <span class="partner-logo">⛽ Vivo Energy</span>
+      <span class="partner-logo">⛽ Kobil Uganda</span>
+      <span class="partner-logo">⛽ MOIL Uganda</span>
+      <span class="partner-logo">⛽ Lake Oil</span>
+      <span class="partner-logo">⛽ Galana Oil</span>
+      <span class="partner-logo">⛽ Rocket Fuel</span>
+      <span class="partner-logo">⛽ Shell Uganda</span>
+      <span class="partner-logo">⛽ TotalEnergies</span>
+      <span class="partner-logo">⛽ Stabex Uganda</span>
+      <span class="partner-logo">⛽ Petrocity Uganda</span>
+      <span class="partner-logo">⛽ Hash Energy</span>
+      <span class="partner-logo">⛽ Engen Uganda</span>
+      <span class="partner-logo">⛽ Vivo Energy</span>
+      <span class="partner-logo">⛽ Kobil Uganda</span>
+      <span class="partner-logo">⛽ MOIL Uganda</span>
+      <span class="partner-logo">⛽ Lake Oil</span>
+      <span class="partner-logo">⛽ Galana Oil</span>
+      <span class="partner-logo">⛽ Rocket Fuel</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─── LIVE ANALYTICS ─── -->
+<section class="section" style="background: var(--green-mid);">
+  <div class="section-inner">
+    <div class="section-tag"><span class="dot"></span> Live Analytics</div>
+    <h2 class="section-title">Regional Price Hotspots</h2>
+    <p class="section-sub">Real-time average fuel prices across Uganda's major economic corridors.</p>
+    <div class="value-grid" style="margin-top:40px;" id="regionCards">
+      <!-- filled by JS -->
+    </div>
+    <div class="map-wrapper" style="margin-top:24px;height:320px;" id="analyticsMiniMap">
+      <!-- mini leaflet map showing all stations -->
+    </div>
+  </div>
+</section>
+
+<!-- ─── APP / TOOLS ─── -->
+<section class="section tools-section" id="appSection">
+  <div class="section-inner">
+    <div class="section-tag"><span class="dot"></span> Platform Tools</div>
+    <h2 class="section-title">All Tools & Data</h2>
+    <p class="section-sub">Explore stations, plan routes, report prices, and manage operations.</p>
+
+    <div class="tools-tabs">
+      <button class="tools-tab active" id="mapPaneBtn" data-pane="map">🗺️ Map</button>
+      <button class="tools-tab" id="stationsPaneBtn" data-pane="stations">⛽ Stations</button>
+      <button class="tools-tab" id="tripPaneBtn" data-pane="planner">🚗 Trip</button>
+      <button class="tools-tab" id="reportPaneBtn" data-pane="report">📝 Report</button>
+      <button class="tools-tab" id="activityPaneBtn" data-pane="activity">📊 Activity</button>
+      <button class="tools-tab" id="opPaneBtn" data-pane="operator">🏪 Operator</button>
+      <button class="tools-tab" id="adminPaneBtn" data-pane="admin">🏛️ Admin</button>
+    </div>
+
+    <div class="tools-content" id="mainContent">
+
+      <!-- MAP -->
+      <div class="tools-pane active" id="page-map">
+        <div class="map-wrapper" id="mapWrapper" style="height:600px;">
+          <div id="map"></div>
+          <div class="map-top-controls">
+            <select id="mapFuel"><option value="all">All Fuel</option><option value="petrol">Petrol</option><option value="diesel">Diesel</option></select>
+            <select id="mapRadius"><option value="0">Any distance</option><option value="1">Within 1 km</option><option value="3">Within 3 km</option><option value="5">Within 5 km</option></select>
+            <input type="text" id="mapSearch" placeholder="Search station or area..." style="flex:1;padding:8px 12px;border:none;border-radius:8px;background:var(--green-dark);color:var(--white);border:1px solid var(--green-border);font-size:12px;font-family:var(--font);min-width:80px;">
+            <button class="btn-filter" id="mapRadiusClear">✕ Clear</button>
+          </div>
+          <div class="map-result-count" id="mapResultCount">0 stations</div>
+          <button class="map-locate-btn" id="mapLocateBtn" title="Find my location">📍</button>
+        </div>
+      </div>
+
+      <!-- STATIONS -->
+      <div class="tools-pane" id="page-stations">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input type="text" id="listSearch" placeholder="Search station or area..." autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--green-border);border-radius:8px;font-size:13px;font-family:var(--font);background:var(--green-dark);color:var(--white);">
+            <select id="listFuel" style="padding:9px;border:1px solid var(--green-border);border-radius:8px;font-size:13px;font-family:var(--font);background:var(--green-dark);color:var(--white);">
+              <option value="all">All</option><option value="petrol">Petrol</option><option value="diesel">Diesel</option>
+            </select>
+          </div>
+          <div id="stationList"></div>
+
+          <!-- REVIEWS -->
+          <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--green-border);" id="reviewSection">
+            <h3 style="font-size:1rem;color:var(--neon);margin-bottom:4px;">⭐ Station Reviews & Issues</h3>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Help others — report station conditions.</p>
+            <div class="form-group">
+              <label>Station</label>
+              <select id="reviewStation"><option value="">Select a station...</option></select>
+            </div>
+            <div class="form-group">
+              <label>Rating</label>
+              <div class="star-rating stars" data-rating="0" style="display:flex;gap:2px;font-size:1.5rem;">
+                <span class="star" data-val="1">★</span>
+                <span class="star" data-val="2">★</span>
+                <span class="star" data-val="3">★</span>
+                <span class="star" data-val="4">★</span>
+                <span class="star" data-val="5">★</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Issues (select all that apply)</label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:0.82rem;">
+                <label><input type="checkbox" id="issueLines"> Long queues / wait times</label>
+                <label><input type="checkbox" id="issuePumps"> Malfunctioning pumps</label>
+                <label><input type="checkbox" id="issueFuel"> ⚠ Suspected adulterated fuel</label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Comments (optional)</label>
+              <textarea id="reviewText" rows="2" placeholder="Describe your experience..." style="width:100%;padding:9px 12px;border:1px solid var(--green-border);border-radius:8px;font-family:var(--font);font-size:13px;resize:vertical;background:var(--green-dark);color:var(--white);"></textarea>
+            </div>
+            <button class="btn-tool btn-tool-primary btn-tool-full" onclick="submitReview()">Submit Review</button>
+            <h4 style="margin-top:16px;font-size:0.9rem;">Recent Reviews</h4>
+            <div id="recentReviews"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRIP PLANNER -->
+      <div class="tools-pane" id="page-planner">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <div class="tool-card">
+            <h3>🚗 Trip Cost Planner</h3>
+            <div class="sub">Calculate fuel costs and find cheapest stations on your route.</div>
+            <div class="form-group"><label>Start Location</label>
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="tripFrom" placeholder="e.g. Kampala Post Office" style="flex:1;" list="locList">
+                <button class="btn-tool btn-tool-outline btn-tool-sm" id="useGpsTripFrom">📍</button>
+              </div>
+            </div>
+            <div class="form-group"><label>Destination</label>
+              <input type="text" id="tripTo" placeholder="e.g. Mukono Town" list="locList"></div>
+            <datalist id="locList"></datalist>
+            <div class="form-group"><label>Vehicle Type</label>
+              <select id="tripVehicle"></select>
+            </div>
+            <button class="btn-tool btn-tool-primary btn-tool-full" id="calcTripBtn">Calculate Trip Cost</button>
+          </div>
+          <div id="tripResult" class="route-result" style="display:none;"></div>
+          <div style="margin-top:16px;">
+            <h4 style="font-size:0.85rem;margin-bottom:8px;">📍 Common Destinations</h4>
+            <div id="commonDests" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- REPORT -->
+      <div class="tools-pane" id="page-report">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <div class="tool-card" style="background:var(--neon-dim);border-color:rgba(118,255,3,0.2);">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="font-size:1.5rem;">ℹ️</span>
+              <div style="font-size:0.78rem;">If you have Trust Score ≥50, your price is published instantly. New reporters need 3 matching inputs.</div>
+            </div>
+          </div>
+          <div class="tool-card">
+            <h3>📝 Report Fuel Price</h3>
+            <div class="sub">See a price? Report it. Help every Ugandan save.</div>
+            <div class="form-group"><label>Station</label><select id="reportStation"></select></div>
+            <div class="form-row">
+              <div class="form-group"><label>Fuel Type</label><select id="reportFuel"><option value="petrol">Petrol</option><option value="diesel">Diesel</option><option value="kerosene">Kerosene</option></select></div>
+              <div class="form-group"><label>Price (UGX/L)</label><input type="number" id="reportPrice" placeholder="5500" min="2000" max="10000" step="50"></div>
+            </div>
+            <div class="form-group">
+              <label>Your Location <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+              <div style="display:flex;gap:8px;"><input type="text" id="reportLocation" placeholder="e.g. Kampala, Nakawa" style="flex:1;"><button class="btn-tool btn-tool-outline btn-tool-sm" id="reportGpsBtn">📍 GPS</button></div>
+            </div>
+            <button class="btn-tool btn-tool-primary btn-tool-full" id="submitReportBtn" style="margin-top:4px;">Submit Price Report</button>
+          </div>
+          <div id="recentStationReports" style="margin-top:16px;"></div>
+        </div>
+      </div>
+
+      <!-- ACTIVITY -->
+      <div class="tools-pane" id="page-activity">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <div class="dash-grid">
+            <div class="dash-card"><div class="num" id="statTotal">0</div><div class="lbl">Reports</div></div>
+            <div class="dash-card"><div class="num" style="color:var(--neon)" id="statVerified">0</div><div class="lbl">Verified</div></div>
+          </div>
+          <div class="dash-card" style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:0.85rem;color:var(--text-muted);">Trust Score</span>
+              <span class="num" id="statTrust" style="font-size:1.4rem;color:var(--neon);">0</span>
+            </div>
+          </div>
+          <h4 style="font-size:0.9rem;margin-bottom:8px;">Report History</h4>
+          <div id="activityList"></div>
+        </div>
+      </div>
+
+      <!-- OPERATOR -->
+      <div class="tools-pane" id="page-operator">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <!-- Login -->
+          <div id="opLogin" class="auth-box" style="display:block;">
+            <div class="icon-big">⛽</div>
+            <h3>Operator Login</h3>
+            <div class="sub">Enter your registered phone number to receive an OTP.</div>
+            <div class="form-group"><label>Phone Number (MTN/Airtel)</label>
+              <input type="tel" id="opPhone" placeholder="+256 7XX XXX XXX" style="text-align:center;"></div>
+            <button class="btn-tool btn-tool-primary btn-tool-full" id="opLoginBtn">Send OTP</button>
+            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Demo: enter any number, use OTP: 123456</p>
+          </div>
+          <!-- Dashboard -->
+          <div id="opDashboard" style="display:none;">
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+              <select id="opStation" style="flex:1;padding:9px;border:1px solid var(--green-border);border-radius:8px;font-family:var(--font);background:var(--green-dark);color:var(--white);"></select>
+            </div>
+            <div class="dash-grid">
+              <div class="dash-card"><div class="num" id="opCurrentPetrol">—</div><div class="lbl">Current Petrol</div></div>
+              <div class="dash-card"><div class="num" id="opCurrentDiesel">—</div><div class="lbl">Current Diesel</div></div>
+            </div>
+            <p style="font-size:0.7rem;color:var(--text-dim);margin-bottom:12px;">Last updated: <span id="opLastUpdate">Never</span></p>
+            <div id="opConsistencyAlert" style="display:none;"></div>
+            <div class="tool-card">
+              <h4 style="font-size:0.9rem;margin-bottom:8px;">Update Pump Price</h4>
+              <div class="form-row">
+                <div class="form-group"><label>Fuel</label><select id="opFuel"><option value="petrol">Petrol</option><option value="diesel">Diesel</option></select></div>
+                <div class="form-group"><label>New Price (UGX)</label><input type="number" id="opPrice" placeholder="e.g. 5400" min="2000" max="10000" step="50"></div>
+              </div>
+              <button class="btn-tool btn-tool-primary btn-tool-full" id="opUpdatePriceBtn">Update Official Price</button>
+              <p style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;text-align:center;">Changes are logged and audited.</p>
+            </div>
+            <h4 style="font-size:0.85rem;margin-bottom:6px;">Crowd-Sourced Reports</h4>
+            <div id="opReports"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADMIN -->
+      <div class="tools-pane" id="page-admin">
+        <div style="max-height:70vh;overflow-y:auto;">
+          <div id="adminLogin" class="auth-box" style="display:block;">
+            <div class="icon-big">🏛️</div>
+            <h3>Admin Access</h3>
+            <div class="sub">Authorized MEMD & URA personnel only.</div>
+            <div class="form-group"><label>Access Code</label>
+              <input type="password" id="adminPass" placeholder="Enter admin code" style="text-align:center;"></div>
+            <button class="btn-tool btn-tool-primary btn-tool-full" id="adminLoginBtn">Access Dashboard</button>
+            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Demo code: admin123</p>
+          </div>
+          <div id="adminDash" style="display:none;">
+
+            <!-- Admin Sub-Nav -->
+            <div class="admin-subnav">
+              <button class="admin-tab active" data-admin-tab="dashboard">📊 Dashboard</button>
+              <button class="admin-tab" data-admin-tab="fraud">🚨 Fraud Queue</button>
+              <button class="admin-tab" data-admin-tab="stations">🏪 Station Mgmt</button>
+              <button class="admin-tab" data-admin-tab="audit">📋 Audit Trail</button>
+              <button class="admin-tab" data-admin-tab="config">⚙️ System Config</button>
+              <button class="admin-tab" data-admin-tab="api">🔑 API Console</button>
+            </div>
+
+            <!-- ── DASHBOARD ── -->
+            <div class="admin-pane active" id="adminPane-dashboard">
+              <!-- Bento-grid metrics -->
+              <div class="bento-grid">
+                <div class="bento-card bento-wide">
+                  <div class="bento-icon">📊</div>
+                  <div class="bento-num" id="adminTotalReports">0</div>
+                  <div class="bento-label">Total Reports</div>
+                </div>
+                <div class="bento-card">
+                  <div class="bento-icon">✅</div>
+                  <div class="bento-num" id="adminVerified" style="color:var(--neon)">0</div>
+                  <div class="bento-label">Verified</div>
+                </div>
+                <div class="bento-card bento-alert">
+                  <div class="bento-icon">🚨</div>
+                  <div class="bento-num" id="adminFraud" style="color:#fcd34d">0</div>
+                  <div class="bento-label">Active Flags</div>
+                </div>
+                <div class="bento-card">
+                  <div class="bento-icon">🗺️</div>
+                  <div class="bento-num" id="adminOperators" style="color:var(--neon)">12</div>
+                  <div class="bento-label">Active API Stations</div>
+                </div>
+                <div class="bento-card">
+                  <div class="bento-icon">👥</div>
+                  <div class="bento-num" id="adminDAU" style="color:var(--neon)">0</div>
+                  <div class="bento-label">Daily Active Users</div>
+                </div>
+                <div class="bento-card bento-alert">
+                  <div class="bento-icon">⚠️</div>
+                  <div class="bento-num" id="adminRejected" style="color:#fca5a5">0</div>
+                  <div class="bento-label">Rejected</div>
+                </div>
+              </div>
+              <div class="chart-wrap">
+                <h4>📈 National Average Petrol Price (30-Day Trend)</h4>
+                <canvas id="priceChart" style="height:180px;"></canvas>
+              </div>
+              <div class="chart-wrap">
+                <h4>📍 Regional Price Comparison</h4>
+                <div id="adminRegions"></div>
+              </div>
+              <div style="margin-top:12px;">
+                <button class="btn-tool btn-tool-outline btn-tool-full" onclick="this.nextElementSibling.classList.toggle('active')" style="font-size:0.78rem;justify-content:center;">
+                  📋 View System Architecture & API Specifications ↕
+                </button>
+                <div style="display:none;" id="systemDocs">
+                  <div class="route-map">
+                    <div class="route-section">
+                      <h5>🏛️ Dashboard Route Map</h5>
+                      <code>/admin/dashboard</code> <span class="arrow">→</span> Bento-grid metrics + price trend chart + region comparison<br>
+                      <code>/admin/fraud-queue</code> <span class="arrow">→</span> Moving Median Engine flag table + approve/dismiss/throttle actions<br>
+                      <code>/admin/station-management</code> <span class="arrow">→</span> KYC pipeline (pending apps) + whitelist view<br>
+                      <code>/admin/audit-trail</code> <span class="arrow">→</span> Immutable ledger with channel/type filters<br>
+                      <code>/admin/system-config</code> <span class="arrow">→</span> Channel content hierarchy + emergency broadcast console<br>
+                      <code>/admin/api-console</code> <span class="arrow">→</span> Bearer token generation, cycling, and revocation<br>
+                    </div>
+                    <div class="route-section">
+                      <h5>🔌 API Payload Specification — Fraud Moderation</h5>
+                      <strong>POST /v2/fraud/action</strong><br>
+                      <pre style="background:var(--green-dark);padding:8px;border-radius:6px;font-size:0.7rem;margin-top:4px;overflow-x:auto;">{
+  "action": "approve" | "dismiss" | "throttle",
+  "flagId": "integer — fraud queue entry ID",
+  "moderatorId": "string — admin user ID",
+  "reason": "string — optional moderation note",
+  "blacklistUser": boolean,   // only when action=throttle
+  "blacklistDuration": "string" // e.g. "permanent", "30d"
+}</pre>
+                    </div>
+                    <div class="route-section">
+                      <h5>📡 API Payload Specification — Station Operator Auth</h5>
+                      <strong>PATCH /v2/operators/authorize</strong><br>
+                      <pre style="background:var(--green-dark);padding:8px;border-radius:6px;font-size:0.7rem;margin-top:4px;overflow-x:auto;">{
+  "applicationId": "integer — KYC application ID",
+  "status": "approved" | "rejected",
+  "tokenName": "string — for auto-generated API token",
+  "rateLimit": "string — e.g. '500 req/min'",
+  "authorizedBy": "string — admin user ID"
+}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── FRAUD QUEUE ── -->
+            <div class="admin-pane" id="adminPane-fraud">
+              <div class="admin-section-header">
+                <div>
+                  <h4 style="font-size:1rem;font-weight:700;">🚨 Real-Time Fraud Queue</h4>
+                  <p style="font-size:0.75rem;color:var(--text-dim);">Outliers caught by the Moving Median Engine. Prices ±25% from regional baselines are flagged.</p>
+                </div>
+                <span class="badge badge-red" id="fraudQueueCount">0 flagged</span>
+              </div>
+              <div id="fraudTableContainer">
+                <table class="fraud-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Station</th>
+                      <th>User ID</th>
+                      <th>Reported Price</th>
+                      <th>Current Price</th>
+                      <th>Deviation</th>
+                      <th>Confidence</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="fraudTableBody"></tbody>
+                </table>
+              </div>
+              <div style="margin-top:8px;text-align:right;font-size:0.7rem;color:var(--text-dim);">
+                Moving Median Engine v2.1 · Last scan: <span id="fraudLastScan">just now</span>
+              </div>
+            </div>
+
+            <!-- ── STATION MGMT ── -->
+            <div class="admin-pane" id="adminPane-stations">
+              <div class="admin-sub-tabs" style="margin-bottom:12px;">
+                <button class="admin-sub-tab active" data-station-tab="kyc">📄 KYC Pipeline</button>
+                <button class="admin-sub-tab" data-station-tab="whitelist">✅ Whitelisted</button>
+              </div>
+              <div id="kycPipeline">
+                <div class="admin-section-header">
+                  <div>
+                    <h4 style="font-size:1rem;font-weight:700;">📄 Corporate KYC Pipeline</h4>
+                    <p style="font-size:0.75rem;color:var(--text-dim);">Pending operator applications awaiting authorization.</p>
+                  </div>
+                  <span class="badge badge-yellow" id="kycPendingCount">0 pending</span>
+                </div>
+                <div id="kycCardList"></div>
+              </div>
+              <div id="whitelistContainer" style="display:none;">
+                <div style="margin-bottom:12px;">
+                  <input type="text" id="whitelistSearch" placeholder="Search whitelisted operators..." style="width:100%;padding:9px 12px;border:1px solid var(--green-border);border-radius:8px;font-size:13px;font-family:var(--font);background:var(--green-dark);color:var(--white);">
+                </div>
+                <div id="whitelistTableBody"></div>
+              </div>
+            </div>
+
+            <!-- ── AUDIT TRAIL ── -->
+            <div class="admin-pane" id="adminPane-audit">
+              <div class="admin-section-header">
+                <div>
+                  <h4 style="font-size:1rem;font-weight:700;">📋 Immutable System Ledger</h4>
+                  <p style="font-size:0.75rem;color:var(--text-dim);">Read-only historical timeline of pricing alterations across the network.</p>
+                </div>
+                <button class="btn-tool btn-tool-outline btn-tool-sm" id="auditRefreshBtn">🔄 Refresh</button>
+              </div>
+              <div class="audit-controls" style="display:flex;gap:8px;margin-bottom:10px;">
+                <select id="auditChannelFilter" style="flex:1;padding:7px 10px;border:1px solid var(--green-border);border-radius:6px;font-size:12px;font-family:var(--font);background:var(--green-dark);color:var(--white);">
+                  <option value="all">All Channels</option>
+                  <option value="web">Web</option>
+                  <option value="ussd">USSD (*284*X#)</option>
+                  <option value="wa">WhatsApp</option>
+                  <option value="api">API</option>
+                  <option value="operator">Operator Console</option>
+                  <option value="admin">Admin Panel</option>
+                </select>
+                <select id="auditTypeFilter" style="flex:1;padding:7px 10px;border:1px solid var(--green-border);border-radius:6px;font-size:12px;font-family:var(--font);background:var(--green-dark);color:var(--white);">
+                  <option value="all">All Types</option>
+                  <option value="price_update">Price Update</option>
+                  <option value="fraud_dismiss">Fraud Dismiss</option>
+                  <option value="operator_auth">Operator Auth</option>
+                  <option value="broadcast">Broadcast</option>
+                </select>
+              </div>
+              <div id="auditLedgerContainer">
+                <table class="fraud-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Station ID</th>
+                      <th>Modified By</th>
+                      <th>Previous Price</th>
+                      <th>New Price</th>
+                      <th>Channel</th>
+                    </tr>
+                  </thead>
+                  <tbody id="auditLedgerBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- ── SYSTEM CONFIG ── -->
+            <div class="admin-pane" id="adminPane-config">
+              <div class="admin-sub-tabs" style="margin-bottom:12px;">
+                <button class="admin-sub-tab active" data-config-tab="hierarchy">🌳 Channel Hierarchy</button>
+                <button class="admin-sub-tab" data-config-tab="broadcast">📢 Broadcast Console</button>
+              </div>
+              <div id="configHierarchy">
+                <div class="admin-section-header">
+                  <div>
+                    <h4 style="font-size:1rem;font-weight:700;">🌳 Channel Content Management</h4>
+                    <p style="font-size:0.75rem;color:var(--text-dim);">Manage regions, districts, and station nodes. Changes auto-sync to USSD (*284*X#) and WhatsApp Bot menus.</p>
+                  </div>
+                  <button class="btn-tool btn-tool-primary btn-tool-sm" id="addRegionBtn">+ Add Region</button>
+                </div>
+                <div id="hierarchyTree"></div>
+              </div>
+              <div id="configBroadcast" style="display:none;">
+                <div class="tool-card" style="background:var(--neon-dim);border-color:rgba(118,255,3,0.2);margin-bottom:12px;">
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <span style="font-size:1.5rem;">📢</span>
+                    <div style="font-size:0.78rem;">Emergency broadcast reaches all platform channels (Web, WhatsApp, USSD) within seconds.</div>
+                  </div>
+                </div>
+                <div class="form-group"><label>Alert Title</label><input type="text" id="broadcastTitle" placeholder="e.g. National Fuel Supply Update"></div>
+                <div class="form-group"><label>Message</label><textarea id="broadcastMsg" rows="3" placeholder="Official message from MEMD..." style="width:100%;padding:9px 12px;border:1px solid var(--green-border);border-radius:8px;font-family:var(--font);font-size:13px;resize:vertical;background:var(--green-dark);color:var(--white);"></textarea></div>
+                <div class="form-group"><label>Target Audience</label>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;"><input type="checkbox" id="targetWeb" checked> All Web Users</label>
+                    <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;"><input type="checkbox" id="targetWA" checked> WhatsApp Transporters</label>
+                    <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;"><input type="checkbox" id="targetUSSD" checked> USSD Users</label>
+                  </div>
+                </div>
+                <div class="form-group"><label>Specific Districts (optional)</label>
+                  <input type="text" id="broadcastDistricts" placeholder="Leave blank for all districts, or enter comma-separated: Kampala, Wakiso, Mukono"></div>
+                <button class="btn-tool btn-tool-primary btn-tool-full" id="sendBroadcastBtn">📢 Send Emergency Broadcast</button>
+                <div id="broadcastList" style="margin-top:12px;"></div>
+              </div>
+            </div>
+
+            <!-- ── API CONSOLE ── -->
+            <div class="admin-pane" id="adminPane-api">
+              <div class="admin-section-header">
+                <div>
+                  <h4 style="font-size:1rem;font-weight:700;">🔑 API Credentials Console</h4>
+                  <p style="font-size:0.75rem;color:var(--text-dim);">Generate and manage secure Bearer tokens for operator IT departments syncing forecourt pumps.</p>
+                </div>
+                <button class="btn-tool btn-tool-primary" id="generateTokenBtn">+ Generate New Token</button>
+              </div>
+              <div id="apiTokenList"></div>
+              <div class="tool-card" style="margin-top:16px;">
+                <h4 style="font-size:0.9rem;margin-bottom:4px;">📋 API Quick Reference</h4>
+                <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:10px;">Endpoint base: <code style="background:var(--green-dark);padding:2px 6px;border-radius:4px;font-size:0.75rem;">https://api.matano-meters.ug/v2</code></p>
+                <div style="font-size:0.78rem;">
+                  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--green-border);"><span><span class="badge badge-green">GET</span> /prices</span><span style="color:var(--text-dim);">Fetch live prices</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--green-border);"><span><span class="badge badge-yellow">POST</span> /prices/report</span><span style="color:var(--text-dim);">Submit price report</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--green-border);"><span><span class="badge badge-yellow">POST</span> /stations/sync</span><span style="color:var(--text-dim);">Auto-sync forecourt prices</span></div>
+                  <div style="display:flex;justify-content:space-between;padding:6px 0;"><span><span class="badge badge-red">PATCH</span> /fraud/action</span><span style="color:var(--text-dim);">Moderate flagged entry</span></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="flags">🇺🇬 🇰🇪 🇹🇿 🇷🇼 🇧🇮 🇸🇸 🇨🇩</div>
+  <p>Matano-Meters — National Fuel Price Transparency Platform</p>
+  <p style="margin-top:4px;">Data powered by crowdsourced reports & licensed station operators.</p>
+  <p style="margin-top:4px;">© 2025 · Ministry of Energy & Mineral Development (Demo)</p>
+</footer>
+
+<!-- STATION MODAL -->
+<div class="modal-overlay" id="stationModal">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modalTitle">Station Name</div>
+    <div class="modal-sub" id="modalSub">Operator · Area</div>
+    <div id="modalPrices"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;">
+      <button class="btn-tool btn-tool-primary btn-tool-sm" id="modalReportBtn" style="flex:1;">📝 Report Price</button>
+      <button class="btn-tool btn-tool-outline btn-tool-sm" id="modalReviewBtn" style="flex:1;">⭐ Write Review</button>
+      <button class="btn-tool btn-tool-outline btn-tool-sm" id="modalSubBtn" style="flex:1;">🔔 Alert Me</button>
+    </div>
+    <div style="margin-top:12px;">
+      <h4 style="font-size:0.85rem;margin-bottom:6px;">⭐ Recent Reviews</h4>
+      <div id="modalReviews"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
