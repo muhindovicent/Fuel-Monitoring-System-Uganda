@@ -3,722 +3,246 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#0A251C">
+<meta name="theme-color" content="#1A1A1A">
 <meta name="description" content="MafutaWatch Uganda — National Fuel Price Transparency Platform. Real-time fuel prices across Uganda.">
-<title>MafutaWatch Uganda — Driving Transparency in Uganda's Fuel Market</title>
+<title>MafutaWatch Uganda — Driving Market Transparency & Consumer Protection</title>
 <link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://unpkg.com">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="css/style.css">
-<style>
-/* ─── GOVERNMENT DIRECTORY INSTITUTIONAL OVERLAYS ─── */
-:root {
-  --gov-gold: #D4A843;
-  --gov-gold-dim: rgba(212,168,67,0.12);
-  --gov-cream: #F5F0E8;
-  --gov-stone: #E8E0D0;
-  --gov-seal: #1B3A2D;
-  --gov-divider: rgba(255,255,255,0.06);
-  --heading-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-}
-
-.gov-breadcrumb {
-  background: rgba(10,37,28,0.95);
-  border-bottom: 1px solid var(--gov-divider);
-  padding: 8px 24px;
-  font-size: 0.72rem;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  position: fixed;
-  top: 64px;
-  left: 0;
-  right: 0;
-  z-index: 999;
-  backdrop-filter: blur(8px);
-}
-.gov-breadcrumb a { color: var(--neon); text-decoration: none; }
-.gov-breadcrumb a:hover { text-decoration: underline; }
-.gov-breadcrumb .sep { color: var(--text-dim); margin: 0 2px; user-select: none; }
-.gov-breadcrumb .current { color: var(--gov-gold); font-weight: 600; }
-
-.gov-institutional {
-  padding: 100px 24px 40px;
-  background: linear-gradient(180deg, rgba(10,37,28,0.6) 0%, var(--green-dark) 100%);
-  border-bottom: 2px solid var(--gov-gold-dim);
-}
-.gov-institutional-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.gov-entity-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 32px;
-  margin-bottom: 32px;
-}
-.gov-entity-title {
-  flex: 1;
-  min-width: 280px;
-}
-.gov-entity-title h1 {
-  font-size: 1.6rem;
-  font-weight: 700;
-  color: var(--white);
-  line-height: 1.3;
-  letter-spacing: -0.02em;
-}
-.gov-entity-title h1 span {
-  color: var(--gov-gold);
-}
-.gov-entity-title .gov-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--gov-gold-dim);
-  color: var(--gov-gold);
-  font-size: 0.65rem;
-  font-weight: 600;
-  padding: 4px 12px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 10px;
-  border: 1px solid rgba(212,168,67,0.2);
-}
-.gov-entity-seal {
-  width: 80px;
-  height: 80px;
-  background: var(--gov-gold-dim);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.4rem;
-  flex-shrink: 0;
-  border: 2px solid var(--gov-gold);
-}
-.gov-contact-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--gov-divider);
-  border: 1px solid var(--gov-divider);
-  border-radius: 12px;
-  overflow: hidden;
-  margin-top: 24px;
-}
-.gov-contact-block {
-  background: var(--green-mid);
-  padding: 20px 24px;
-}
-.gov-contact-block h4 {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-  font-weight: 600;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--gov-divider);
-  padding-bottom: 8px;
-}
-.gov-contact-item {
-  display: flex;
-  gap: 8px;
-  font-size: 0.82rem;
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
-.gov-contact-item .label {
-  color: var(--text-dim);
-  font-weight: 600;
-  min-width: 90px;
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.gov-contact-item .value {
-  color: var(--white);
-  word-break: break-word;
-}
-
-.gov-leadership {
-  padding: 48px 24px;
-  border-bottom: 2px solid var(--gov-gold-dim);
-}
-.gov-leadership-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.gov-leadership h2 {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--gov-gold);
-  margin-bottom: 28px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.gov-leadership h2::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--gov-divider);
-}
-.gov-leader-card {
-  background: var(--green-mid);
-  border: 1px solid var(--gov-divider);
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 20px;
-}
-.gov-leader-card h3 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--white);
-  margin-bottom: 2px;
-}
-.gov-leader-card .leader-role {
-  font-size: 0.7rem;
-  color: var(--gov-gold);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-  margin-bottom: 16px;
-}
-.gov-leader-details {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--gov-divider);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.gov-leader-details .detail-item {
-  background: rgba(10,37,28,0.4);
-  padding: 10px 16px;
-  display: flex;
-  gap: 6px;
-  font-size: 0.8rem;
-}
-.gov-leader-details .detail-item .ld-label {
-  color: var(--text-dim);
-  font-weight: 600;
-  min-width: 60px;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.gov-leader-details .detail-item .ld-value {
-  color: var(--white);
-}
-
-.gov-price-cap {
-  padding: 48px 24px;
-  border-bottom: 2px solid var(--gov-gold-dim);
-}
-.gov-price-cap-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.gov-price-cap h2 {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--gov-gold);
-  margin-bottom: 6px;
-}
-.gov-price-cap .price-cap-sub {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  margin-bottom: 24px;
-}
-.gov-table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--gov-divider);
-  border-radius: 12px;
-}
-.gov-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.82rem;
-  min-width: 600px;
-}
-.gov-table thead {
-  background: var(--gov-seal);
-}
-.gov-table thead th {
-  padding: 12px 16px;
-  text-align: left;
-  font-weight: 600;
-  color: var(--gov-gold);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 2px solid var(--gov-gold-dim);
-}
-.gov-table tbody td {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--gov-divider);
-  color: var(--white);
-}
-.gov-table tbody tr:last-child td {
-  border-bottom: none;
-}
-.gov-table tbody tr:hover {
-  background: rgba(212,168,67,0.04);
-}
-.gov-table tbody .region-label {
-  font-weight: 700;
-  color: var(--gov-gold);
-  font-size: 0.78rem;
-}
-.gov-table .cap-val {
-  font-family: var(--font);
-  font-weight: 600;
-  color: var(--neon);
-}
-.gov-table .updated-badge {
-  display: inline-block;
-  background: var(--green-mid);
-  color: var(--text-muted);
-  font-size: 0.65rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.gov-sla-section {
-  margin-top: 16px;
-  margin-bottom: 16px;
-}
-.gov-sla-section h4 {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--gov-gold);
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.gov-sla-grid {
-  display: grid;
-  gap: 8px;
-}
-.gov-sla-card {
-  background: var(--green-mid);
-  border: 1px solid var(--gov-divider);
-  border-radius: 10px;
-  padding: 14px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.gov-sla-card .sla-ticket-id {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--gov-gold);
-  font-family: var(--font-mono);
-}
-.gov-sla-card .sla-station {
-  font-size: 0.82rem;
-  color: var(--white);
-}
-.gov-sla-card .sla-timer {
-  font-size: 0.85rem;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--neon);
-}
-.gov-sla-card .sla-timer.warning {
-  color: var(--yellow);
-}
-.gov-sla-card .sla-timer.critical {
-  color: var(--red);
-  animation: slaPulse 1s ease-in-out infinite;
-}
-@keyframes slaPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-.gov-sla-card .sla-badge {
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.gov-sla-card .sla-badge.active {
-  background: var(--neon-dim);
-  color: var(--neon);
-}
-.gov-sla-card .sla-badge.breached {
-  background: rgba(239,68,68,0.15);
-  color: var(--red);
-}
-
-/* Enhanced file upload */
-.evidence-upload-zone {
-  border: 2px dashed rgba(212,168,67,0.3);
-  border-radius: 10px;
-  padding: 24px 16px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: rgba(10,37,28,0.3);
-  position: relative;
-}
-.evidence-upload-zone:hover,
-.evidence-upload-zone.dragover {
-  border-color: var(--gov-gold);
-  background: var(--gov-gold-dim);
-}
-.evidence-upload-zone .upload-icon {
-  font-size: 2.2rem;
-  margin-bottom: 8px;
-}
-.evidence-upload-zone .upload-text {
-  font-size: 0.82rem;
-  color: var(--text-dim);
-}
-.evidence-upload-zone .upload-hint {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-.evidence-preview-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-.evidence-preview-item {
-  background: var(--green-mid);
-  border: 1px solid var(--gov-divider);
-  border-radius: 8px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  max-width: 100%;
-}
-.evidence-preview-item .ep-thumb {
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
-  object-fit: cover;
-  background: var(--green-dark);
-  flex-shrink: 0;
-}
-.evidence-preview-item .ep-info {
-  flex: 1;
-  min-width: 0;
-}
-.evidence-preview-item .ep-name {
-  color: var(--white);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.evidence-preview-item .ep-size {
-  color: var(--text-dim);
-  font-size: 0.65rem;
-}
-.evidence-preview-item .ep-remove {
-  background: none;
-  border: none;
-  color: var(--red);
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 0 4px;
-  line-height: 1;
-}
-
-/* Footer gov style */
-.footer-gov {
-  background: var(--green-mid);
-  border-top: 2px solid var(--gov-gold-dim);
-  padding: 32px 24px;
-  text-align: center;
-}
-.footer-gov .gov-footer-seal {
-  font-size: 2rem;
-  margin-bottom: 8px;
-}
-.footer-gov .gov-footer-name {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--gov-gold);
-}
-.footer-gov .gov-footer-sub {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  margin-top: 4px;
-}
-.footer-gov .gov-footer-motto {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  margin-top: 12px;
-  font-style: italic;
-}
-.footer-gov .gov-footer-motto::before,
-.footer-gov .gov-footer-motto::after {
-  content: ' — ';
-  color: var(--gov-gold-dim);
-}
-.footer-gov .gov-footer-divider {
-  width: 40px;
-  height: 2px;
-  background: var(--gov-gold-dim);
-  margin: 14px auto;
-  border-radius: 2px;
-}
-.footer-gov .gov-footer-legal {
-  font-size: 0.65rem;
-  color: var(--text-dim);
-  margin-top: 12px;
-}
-
-html { scroll-padding-top: 110px; }
-
-@media (max-width: 768px) {
-  .gov-contact-grid { grid-template-columns: 1fr; }
-  .gov-leader-details { grid-template-columns: 1fr; }
-  .gov-breadcrumb { font-size: 0.65rem; padding: 6px 12px; }
-  .gov-institutional { padding: 90px 12px 24px; }
-  .gov-leadership { padding: 32px 12px; }
-  .gov-price-cap { padding: 32px 12px; }
-  .gov-entity-title h1 { font-size: 1.2rem; }
-}
-</style>
 </head>
 <body>
 
-<!-- ─── NAVBAR ─── -->
-<nav class="navbar" id="navbar">
-  <div class="navbar-brand">
-    <span class="flag">🇺🇬</span>
-    <div>MafutaWatch Uganda <small>Fuel Price Transparency</small></div>
-  </div>
-  <div class="navbar-links">
-    <span class="trust-score show" id="trustBadge">Trust: 0</span>
-    <button class="notif-btn" id="notifPanel"><span>🔔</span><span class="badge" id="notifBadge">0</span></button>
+<header class="header-industrial">
+  <div class="header-inner">
+    <div class="header-logo">MAFUTAWATCH<br><span>UGANDA</span></div>
+    <nav class="header-nav">
+      <a href="#" class="nav-link" onclick="event.preventDefault();switchPage('map')">HOME</a>
+      <a href="#" class="nav-link" onclick="event.preventDefault();document.getElementById('welcome-section')?.scrollIntoView({behavior:'smooth'})">ABOUT</a>
+      <a href="#" class="nav-link" onclick="event.preventDefault();document.getElementById('priceCapMatrix')?.scrollIntoView({behavior:'smooth'})">PRICE CAPS</a>
+      <a href="#" class="nav-link" onclick="event.preventDefault();switchPage('c2g')">REPORT SPIKE</a>
+      <a href="#" class="nav-link" onclick="event.preventDefault();switchPage('p2p')">CONSUMER FORUM</a>
+      <a href="#" class="nav-link" onclick="event.preventDefault();document.getElementById('footer-industrial')?.scrollIntoView({behavior:'smooth'})">CONTACTS</a>
+      <span class="nav-link notif-btn-industrial" id="notifPanel" style="position:relative;cursor:pointer;">
+        <span>🔔</span>
+        <span class="notif-badge-industrial" id="notifBadge">0</span>
+      </span>
+    </nav>
     <div class="notif-dropdown" id="notifDropdown">
       <div class="notif-dropdown-header">Notifications</div>
       <div class="notif-dropdown-body" id="notifList"></div>
     </div>
-    <a href="#hero" onclick="event.preventDefault();switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Map</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('stations');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Stations</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('planner');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Trip</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('report');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Report</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('activity');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Activity</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('operator');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Operator</a>
-    <a href="#hero" onclick="event.preventDefault();switchPage('admin');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">Admin</a>
-    <button class="hamburger" onclick="document.querySelector('.navbar-links').classList.toggle('open')">☰</button>
+    <button class="hamburger-industrial">☰</button>
   </div>
-</nav>
+  <div class="hero-canvas">
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <h1 class="hero-headline">Driving Market Transparency<br><span class="hero-highlight">&amp; Consumer Protection.</span></h1>
+      <p class="hero-sub">Republic of Uganda — Ministry of Energy &amp; Mineral Development</p>
+    </div>
+  </div>
+</header>
 
-<!-- ─── BREADCRUMB ─── -->
-<div class="gov-breadcrumb">
-  <a href="#" id="breadcrumbHome">Home</a>
-  <span class="sep">›</span>
-  <a href="#" id="breadcrumbGov">About Government</a>
-  <span class="sep">›</span>
-  <a href="#" id="breadcrumbDirs">Regulatory Directories</a>
-  <span class="sep">›</span>
-  <span class="current">MafutaWatch Uganda</span>
+<section class="section-light" id="welcome-section">
+  <div class="section-inner">
+    <h2 class="section-title">Protecting Every Ugandan on the Move</h2>
+    <p class="section-desc">Real-time fuel price intelligence for Uganda's transport backbone.</p>
+    <div class="card-grid-3">
+      <div class="card-industrial">
+        <div class="card-img-placeholder" style="background:#e8e8e8;height:180px;display:flex;align-items:center;justify-content:center;font-size:3rem;">🛵</div>
+        <div class="card-body">
+          <h3>Boda Boda Operators</h3>
+          <p>Real-time price alerts and shortest queue info for daily riders.</p>
+          <button class="btn-orange" onclick="switchPage('map')">READ MORE</button>
+        </div>
+      </div>
+      <div class="card-industrial">
+        <div class="card-img-placeholder" style="background:#e8e8e8;height:180px;display:flex;align-items:center;justify-content:center;font-size:3rem;">🚚</div>
+        <div class="card-body">
+          <h3>Matatu &amp; Truck Drivers</h3>
+          <p>Corridor-based fuel pricing, turn-by-turn routing, and cost optimization.</p>
+          <button class="btn-orange" onclick="switchPage('planner')">READ MORE</button>
+        </div>
+      </div>
+      <div class="card-industrial">
+        <div class="card-img-placeholder" style="background:#e8e8e8;height:180px;display:flex;align-items:center;justify-content:center;font-size:3rem;">🚗</div>
+        <div class="card-body">
+          <h3>Private Motorists</h3>
+          <p>Verified station prices, fraud reporting, and consumer advocacy tools.</p>
+          <button class="btn-orange" onclick="switchPage('report')">READ MORE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section-orange">
+  <div class="orange-split">
+    <div class="orange-left">
+      <div class="tab-nav-industrial">
+        <button class="tab-industrial active" data-orange-tab="feedback">DRIVER FEEDBACK</button>
+        <button class="tab-industrial" data-orange-tab="station">STATION PORTAL</button>
+        <button class="tab-industrial" data-orange-tab="ministry">MINISTRY LEGISLATION</button>
+      </div>
+      <div class="tab-content-industrial active" id="orangeTab-feedback">
+        <p>Share real-time price observations and station conditions with fellow transporters. Your reports help keep the entire network accountable.</p>
+        <p style="margin-top:8px;"><button class="btn-white-outline" onclick="switchPage('p2p')">Join the Forum →</button></p>
+      </div>
+      <div class="tab-content-industrial" id="orangeTab-station">
+        <p>Licensed station operators can manage their live prices, view consumer reports, and sync forecourt data via the Operator Console.</p>
+        <p style="margin-top:8px;"><button class="btn-white-outline" onclick="switchPage('operator')">Operator Portal →</button></p>
+      </div>
+      <div class="tab-content-industrial" id="orangeTab-ministry">
+        <p>The Petroleum Supply Act, 2003 empowers the Ministry to enforce maximum retail prices. View the latest regulatory instruments and compliance frameworks.</p>
+        <p style="margin-top:8px;"><button class="btn-white-outline" onclick="switchPage('g2c')">View Advisories →</button></p>
+      </div>
+    </div>
+    <div class="orange-right">
+      <div class="orange-action-card" onclick="document.getElementById('partners-section')?.scrollIntoView({behavior:'smooth'})">
+        <span class="action-card-icon">👍</span>
+        <span class="action-card-text">Our Enforcement Partners</span>
+      </div>
+      <div class="orange-action-card" onclick="switchPage('c2g')">
+        <span class="action-card-icon">🚩</span>
+        <span class="action-card-text">Report Price Gouging</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section-image-break">
+  <div class="image-break-overlay"></div>
+  <div class="image-break-content">
+    <h2>WE ARE THE WATCHDOGS<br>OF THE TRANSIT INDUSTRY.</h2>
+  </div>
+</section>
+
+<section class="section-light">
+  <div class="section-inner">
+    <h2 class="section-title">Live Price Intelligence &amp; Services</h2>
+    <div class="services-grid">
+      <div class="service-node">
+        <div class="service-icon">⛽</div>
+        <div class="service-label">Live Petrol Cap</div>
+        <div class="service-value" id="heroPetrolCap">6,250 UGX</div>
+      </div>
+      <div class="service-node">
+        <div class="service-icon">🛢️</div>
+        <div class="service-label">Live Diesel Cap</div>
+        <div class="service-value" id="heroDieselCap">5,800 UGX</div>
+      </div>
+      <div class="service-node">
+        <div class="service-icon">🗺️</div>
+        <div class="service-label">Turn-by-Turn</div>
+        <div class="service-value">Navigation</div>
+      </div>
+      <div class="service-node">
+        <div class="service-icon">📊</div>
+        <div class="service-label">Regional Medians</div>
+        <div class="service-value" id="heroVerifiedCount">Verified</div>
+      </div>
+      <div class="service-node">
+        <div class="service-icon">🎫</div>
+        <div class="service-label">Compliance Tickets</div>
+        <div class="service-value" id="heroStationsCount">Active</div>
+      </div>
+      <div class="service-node">
+        <div class="service-icon">📱</div>
+        <div class="service-label">Mobile Money Rewards</div>
+        <div class="service-value">Coming Soon</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section-charcoal">
+  <div class="section-inner split-media">
+    <div class="media-left">
+      <div class="video-frame">
+        <div class="video-placeholder">
+          <span class="play-btn">▶</span>
+          <p style="font-size:0.85rem;margin-top:12px;color:var(--text-muted);">How to use *284*X# for instant price lookup</p>
+        </div>
+      </div>
+    </div>
+    <div class="media-right">
+      <h2 class="section-title" style="text-align:left;">What We Do</h2>
+      <p style="line-height:1.7;font-size:0.95rem;color:var(--text-muted);">The Ministry of Energy and Mineral Development, in partnership with NITA-U and the Uganda Revenue Authority, operates MafutaWatch Uganda to eliminate information asymmetry in the fuel sector. Our platform protects consumers from un-consented price manipulation by providing real-time price transparency, automated fraud detection, and direct government accountability channels.</p>
+      <p style="margin-top:12px;"><button class="btn-orange" onclick="switchPage('g2c')">Learn More →</button></p>
+    </div>
+  </div>
+</section>
+
+<section class="section-impact">
+  <div class="impact-overlay"></div>
+  <div class="impact-content">
+    <h2>Our reports track more than <span class="impact-num">1,400</span> retail stations daily.</h2>
+    <p>Across all 15 districts and 4 administrative regions of Uganda.</p>
+  </div>
+</section>
+
+<section class="section-light">
+  <div class="section-inner">
+    <h2 class="section-title">Official Advisories &amp; Alerts</h2>
+    <div class="card-grid-3">
+      <div class="card-industrial">
+        <div class="card-body">
+          <h3 style="color:#E67E22;">Latest Ministry Price Directives</h3>
+          <p>MEMD announces bi-weekly review of maximum retail pump prices effective June 2026. All operators must comply within 48 hours of publication.</p>
+          <button class="btn-orange" onclick="switchPage('g2c')">READ MORE</button>
+        </div>
+      </div>
+      <div class="card-industrial">
+        <div class="card-body">
+          <h3 style="color:#E67E22;">Border Supply Chain Status</h3>
+          <p>Enhanced monitoring at Mutukula, Busia, and Malaba border points. Real-time fuel import volumes and wholesale price trends now available on the dashboard.</p>
+          <button class="btn-orange" onclick="switchPage('map')">READ MORE</button>
+        </div>
+      </div>
+      <div class="card-industrial">
+        <div class="card-body">
+          <h3 style="color:#E67E22;">Consumer Protection Awareness</h3>
+          <p>National awareness campaign launching Q3 2026. Know your rights: every station must display a visible MEMD-approved price board. Report violations via *284*X#.</p>
+          <button class="btn-orange" onclick="switchPage('c2g')">READ MORE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section-charcoal">
+  <div class="section-inner">
+    <h2 class="section-title">Regional Hotspot Monitoring</h2>
+    <p style="text-align:center;color:var(--text-muted);margin-bottom:24px;">Hover for cheapest station &amp; live pump price</p>
+    <div class="hotspot-grid">
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Shell Kampala Central</span><span class="hotspot-price">UGX 5,280</span></div><div class="hotspot-label">Kampala Central</div></div>
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Total Masaka Road</span><span class="hotspot-price">UGX 5,340</span></div><div class="hotspot-label">Masaka Road</div></div>
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Shell Mbarara</span><span class="hotspot-price">UGX 5,450</span></div><div class="hotspot-label">Mbarara Hub</div></div>
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Shell Gulu Highway</span><span class="hotspot-price">UGX 5,600</span></div><div class="hotspot-label">Gulu Highway</div></div>
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Shell Jinja Main</span><span class="hotspot-price">UGX 5,330</span></div><div class="hotspot-label">Jinja Corridor</div></div>
+      <div class="hotspot-card"><div class="hotspot-overlay"><span class="hotspot-name">Total Fort Portal</span><span class="hotspot-price">UGX 5,450</span></div><div class="hotspot-label">Fort Portal</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- hidden preserved JS IDs -->
+<div style="display:none">
+  <div class="feed-ticker" id="feedTicker">
+    <div class="ticker-item">⚠️ <strong>Boda Stage Alert:</strong> Heavy traffic on Masaka Rd near Mpigi. <span class="station-tag">Shell Mpigi</span> has zero lines right now.</div>
+    <div class="ticker-item">📢 <strong>Fuel Watch:</strong> Petrol dropped to UGX 5,230 at <span class="station-tag">Total Ntinda</span>. 3 verified reports.</div>
+    <div class="ticker-item">🚨 <strong>Consumer Alert:</strong> Possible pump tampering reported at <span class="station-tag">Kobil Bombo Rd</span>. Investigation opened.</div>
+    <div class="ticker-item">✅ <strong>Verified:</strong> Diesel at UGX 5,450 at <span class="station-tag">Shell Jinja</span> — consensus confirmed by 5 riders.</div>
+    <div class="ticker-item">📍 <strong>Route Update:</strong> <span class="station-tag">Total Entebbe</span> has shortest queue times (avg 4 min) per rider reports.</div>
+  </div>
+  <input type="text" id="broadcastInput" maxlength="140" placeholder="Share a quick alert (140 chars) — e.g. 'Fuel price drop at Shell Jinja Main'" autocomplete="off">
+  <span class="char-count" id="charCount">0/140</span>
+  <button class="btn-entry" id="sendBroadcastBtnHero">📢 Broadcast ↗</button>
 </div>
 
-<!-- ─── INSTITUTIONAL PROFILE ─── -->
-<section class="gov-institutional">
-  <div class="gov-institutional-inner">
-    <div class="gov-entity-header">
-      <div class="gov-entity-title">
-        <div class="gov-badge">🏛️ Republic of Uganda — Ministry of Energy & Mineral Development</div>
-        <h1>MafutaWatch Uganda <span>— National Fuel Price Transparency Platform</span></h1>
-      </div>
-      <div class="gov-entity-seal">🇺🇬</div>
-    </div>
-
-    <div class="gov-contact-grid">
-      <div class="gov-contact-block">
-        <h4>Digital & Correspondence</h4>
-        <div class="gov-contact-item">
-          <span class="label">Website</span>
-          <span class="value"><a href="https://www.mafutawatch.go.ug" style="color:var(--neon);">www.mafutawatch.go.ug</a></span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Email</span>
-          <span class="value"><a href="mailto:info@mafutawatch.go.ug" style="color:var(--neon);">info@mafutawatch.go.ug</a></span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Twitter / X</span>
-          <span class="value"><a href="https://x.com/MafutaWatchUG" style="color:var(--neon);" target="_blank">@MafutaWatchUG</a></span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Postal Address</span>
-          <span class="value">P.O. Box 7270, Kampala, Uganda</span>
-        </div>
-      </div>
-      <div class="gov-contact-block">
-        <h4>Physical Location</h4>
-        <div class="gov-contact-item">
-          <span class="label">Street Address</span>
-          <span class="value">Plot 29/33, Lumumba Avenue, Amber House, 3rd Floor, Kampala, Uganda</span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Phone</span>
-          <span class="value">+256 (0) 417 892 500</span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Fax</span>
-          <span class="value">+256 (0) 414 230 370</span>
-        </div>
-        <div class="gov-contact-item">
-          <span class="label">Office Hours</span>
-          <span class="value">Mon–Fri, 08:00–17:00 (EAT)</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ─── LEADERSHIP FRAMEWORK ─── -->
-<section class="gov-leadership">
-  <div class="gov-leadership-inner">
-    <h2>🏛️ Leadership & Executive Framework</h2>
-
-    <div class="gov-leader-card">
-      <h3>Hon. Ruth Nankabirwa Ssentamu</h3>
-      <div class="leader-role">Minister of State for Energy</div>
-      <div class="gov-leader-details">
-        <div class="detail-item">
-          <span class="ld-label">Postal</span>
-          <span class="ld-value">P.O. Box 7270, Kampala, Uganda</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Street</span>
-          <span class="ld-value">Amber House, Plot 29/33 Lumumba Ave, 3rd Floor, Kampala</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Phone</span>
-          <span class="ld-value">+256 (0) 414 254 811</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Fax</span>
-          <span class="ld-value">+256 (0) 414 230 370</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="gov-leader-card">
-      <h3>Eng. James B. Banabeitaki</h3>
-      <div class="leader-role">Executive Commissioner — Petroleum Supply</div>
-      <div class="gov-leader-details">
-        <div class="detail-item">
-          <span class="ld-label">Postal</span>
-          <span class="ld-value">P.O. Box 7270, Kampala, Uganda</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Street</span>
-          <span class="ld-value">Amber House, Plot 29/33 Lumumba Ave, 3rd Floor, Kampala</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Phone</span>
-          <span class="ld-value">+256 (0) 417 892 510</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Fax</span>
-          <span class="ld-value">+256 (0) 414 230 370</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="gov-leader-card">
-      <h3>Col. Johnson Mugyenyi</h3>
-      <div class="leader-role">Chief Field Enforcement Officer</div>
-      <div class="gov-leader-details">
-        <div class="detail-item">
-          <span class="ld-label">Postal</span>
-          <span class="ld-value">P.O. Box 7270, Kampala, Uganda</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Street</span>
-          <span class="ld-value">Amber House, Plot 29/33 Lumumba Ave, 3rd Floor, Kampala</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Phone</span>
-          <span class="ld-value">+256 (0) 417 892 520</span>
-        </div>
-        <div class="detail-item">
-          <span class="ld-label">Fax</span>
-          <span class="ld-value">+256 (0) 414 230 370</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ─── HERO ─── -->
-<section class="hero" id="hero">
-  <div class="section-inner">
-    <div class="hero-left">
-      <div class="badge">🇺🇬 National Fuel Price Platform</div>
-      <h1>Driving Transparency in <span class="highlight">Uganda's Fuel Market</span></h1>
-      <p>Real-time, crowdsourced fuel prices across all licensed stations. Compare, report, and save — because every Ugandan deserves fair fuel.</p>
-      <div class="hero-actions">
-        <button class="btn-neon" onclick="switchPage('map');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">
-          Find Cheapest Fuel Near Me <span class="arrow">↗</span>
-        </button>
-        <button class="btn-outline-neon" onclick="switchPage('report');document.getElementById('appSection')?.scrollIntoView({behavior:'smooth'})">
-          Report a Price
-        </button>
-      </div>
-
-      <div class="hero-feed" id="heroFeed">
-        <div class="feed-header">
-          <span class="pulse-dot"></span> Live Community Broadcasts
-        </div>
-        <div class="feed-ticker" id="feedTicker">
-          <div class="ticker-item">⚠️ <strong>Boda Stage Alert:</strong> Heavy traffic on Masaka Rd near Mpigi. <span class="station-tag">Shell Mpigi</span> has zero lines right now.</div>
-          <div class="ticker-item">📢 <strong>Fuel Watch:</strong> Petrol dropped to UGX 5,230 at <span class="station-tag">Total Ntinda</span>. 3 verified reports.</div>
-          <div class="ticker-item">🚨 <strong>Consumer Alert:</strong> Possible pump tampering reported at <span class="station-tag">Kobil Bombo Rd</span>. Investigation opened.</div>
-          <div class="ticker-item">✅ <strong>Verified:</strong> Diesel at UGX 5,450 at <span class="station-tag">Shell Jinja</span> — consensus confirmed by 5 riders.</div>
-          <div class="ticker-item">📍 <strong>Route Update:</strong> <span class="station-tag">Total Entebbe</span> has shortest queue times (avg 4 min) per rider reports.</div>
-        </div>
-      </div>
-
-      <div class="hero-entry">
-        <input type="text" id="broadcastInput" maxlength="140" placeholder="Share a quick alert (140 chars) — e.g. 'Fuel price drop at Shell Jinja Main'" autocomplete="off">
-        <div class="entry-controls">
-          <span class="char-count" id="charCount">0/140</span>
-          <button class="btn-entry" id="sendBroadcastBtnHero">📢 Broadcast ↗</button>
-        </div>
-      </div>
-    </div>
-    <div class="hero-right">
-      <div class="hero-stats-card">
-        <div class="big" id="heroVerifiedCount">1,200+</div>
-        <div class="label">active fuel pump prices verified today</div>
-        <div class="micro-item"><span>📍 Stations monitored</span><span class="val" id="heroStationsCount">56</span></div>
-        <div class="micro-item"><span>👥 Daily active users</span><span class="val">150k+</span></div>
-        <div class="micro-item"><span>💰 Avg savings per tank</span><span class="val">UGX 12k+</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ─── TRI-HUB INTERACTION SYSTEM ─── -->
-<section class="section trihub-section">
+<section class="section-light trihub-section">
   <div class="section-inner">
     <div class="section-tag"><span class="dot"></span> Community Interaction Hub</div>
     <h2 class="section-title">Three Ways to Drive Change</h2>
@@ -1633,14 +1157,45 @@ html { scroll-padding-top: 110px; }
 </section>
 
 <!-- ─── FOOTER ─── -->
-<footer class="footer-gov">
-  <div class="gov-footer-seal">🇺🇬</div>
-  <div class="gov-footer-name">MafutaWatch Uganda</div>
-  <div class="gov-footer-sub">National Fuel Price Transparency Platform</div>
-  <div class="gov-footer-divider"></div>
-  <div style="font-size:0.75rem;color:var(--text-muted);">Data powered by crowdsourced reports &amp; licensed station operators under the Petroleum Supply Act, 2003.</div>
-  <div class="gov-footer-motto">For the People. For the Market. For Uganda.</div>
-  <div class="gov-footer-legal">© 2026 · Republic of Uganda — Ministry of Energy &amp; Mineral Development (Demo Platform)</div>
+<footer class="footer-industrial" id="footer-industrial">
+  <div class="partner-ribbon">
+    <span class="partner-logo">MEMD</span>
+    <span class="partner-logo">NITA-U</span>
+    <span class="partner-logo">URA</span>
+    <span class="partner-logo">UNBS</span>
+  </div>
+  <div class="footer-links">
+    <div class="footer-col">
+      <h4>Products</h4>
+      <a href="#" onclick="event.preventDefault();switchPage('map')">Price Map</a>
+      <a href="#" onclick="event.preventDefault();switchPage('planner')">Trip Planner</a>
+      <a href="#" onclick="event.preventDefault();switchPage('stations')">Station Directory</a>
+      <a href="#" onclick="event.preventDefault();switchPage('p2p')">Rider Forum</a>
+    </div>
+    <div class="footer-col">
+      <h4>Technology</h4>
+      <a href="#" onclick="event.preventDefault();document.querySelector('.section-image-break')?.scrollIntoView({behavior:'smooth'})">USSD *284*X#</a>
+      <a href="#" onclick="event.preventDefault();switchPage('admin')">Admin Dashboard</a>
+      <a href="#" onclick="event.preventDefault();document.getElementById('priceCapMatrix')?.scrollIntoView({behavior:'smooth'})">Price Caps</a>
+    </div>
+    <div class="footer-col">
+      <h4>Company</h4>
+      <a href="#" onclick="event.preventDefault();showToast('MafutaWatch Uganda — MEMD')">About</a>
+      <a href="#" onclick="event.preventDefault();showToast('Careers: careers@mafutawatch.go.ug')">Careers</a>
+      <a href="#" onclick="event.preventDefault();showToast('Press: press@mafutawatch.go.ug')">Press</a>
+    </div>
+    <div class="footer-col">
+      <h4>Contact</h4>
+      <p>Ministry of Energy &amp; Mineral Development<br>Plot 29/33, Amber House<br>Kampala, Uganda</p>
+      <p>Toll-Free: 0800-200-500<br>Email: help@mafutawatch.go.ug</p>
+    </div>
+  </div>
+  <div class="footer-map">
+    <div id="footerMiniMap" style="height:200px;width:100%;"></div>
+  </div>
+  <div class="footer-legal">
+    <p>© 2026 Republic of Uganda — Ministry of Energy &amp; Mineral Development. All rights reserved.</p>
+  </div>
 </footer>
 
 <!-- ─── STATION MODAL ─── -->

@@ -1650,6 +1650,20 @@ function updateHeroCount() {
   const sc=document.getElementById('heroStationsCount');
   if(sc) sc.textContent=STATIONS_DATA.length;
 
+  // Update service grid live caps
+  const petrolCap=document.getElementById('heroPetrolCap');
+  if(petrolCap) {
+    const caps=Object.values(DISTRICT_PRICE_CAPS);
+    const maxPetrol=Math.max(...caps.map(c=>c.petrol));
+    petrolCap.textContent=maxPetrol.toLocaleString()+' UGX';
+  }
+  const dieselCap=document.getElementById('heroDieselCap');
+  if(dieselCap) {
+    const caps=Object.values(DISTRICT_PRICE_CAPS);
+    const maxDiesel=Math.max(...caps.map(c=>c.diesel));
+    dieselCap.textContent=maxDiesel.toLocaleString()+' UGX';
+  }
+
   // Update metrics with live data
   const peerCount = (DB.peerScore || 0) + 12400;
   const metricPeer = document.getElementById('metricPeerAlerts');
@@ -1661,6 +1675,23 @@ function updateHeroCount() {
   const metricInv = document.getElementById('metricInvestigations');
   if (metricInv) metricInv.innerHTML = invCount + '<span class="neon">+</span>';
 }
+
+// Orange interaction hub tab switcher
+document.addEventListener('click', e => {
+  const tab = e.target.closest('.tab-industrial');
+  if (tab) {
+    const pane = tab.dataset.orangeTab;
+    document.querySelectorAll('.tab-industrial').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.tab-content-industrial').forEach(t=>t.classList.remove('active'));
+    const el = document.getElementById('orangeTab-'+pane);
+    if (el) el.classList.add('active');
+  }
+  // Mobile nav toggle
+  if (e.target.closest('.hamburger-industrial')) {
+    document.querySelector('.header-nav').classList.toggle('open');
+  }
+});
 
 /* ─── SEED NEW DATA ─── */
 function seedNewData() {
