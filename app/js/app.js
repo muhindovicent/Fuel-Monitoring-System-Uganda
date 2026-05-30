@@ -882,6 +882,14 @@ function initAdminSystem() {
   saveDB();
 }
 
+/* ─── ADMIN ACCOUNTS & RBAC ─── */
+const ADMIN_ACCOUNTS = [
+  { user:'admin', pass:'admin123', name:'Ministry Admin', role:'Super Admin', tabAccess:['dashboard','fraud','c2g','stations','audit','config','caps','api'] },
+  { user:'inspector', pass:'inspector123', name:'Regional Inspector', role:'Regional Inspector', tabAccess:['dashboard','fraud','c2g','audit'] },
+  { user:'analyst', pass:'analyst123', name:'Data Analyst', role:'Data Analyst', tabAccess:['dashboard','audit','caps'] },
+];
+let adminSession = null;
+
 /* ─── ADMIN SUB-NAV ─── */
 document.addEventListener('click', e => {
   const tab = e.target.closest('.admin-tab');
@@ -895,9 +903,11 @@ document.addEventListener('click', e => {
     adminActiveTab = pane;
     if (pane==='dashboard') renderAdminDash();
     if (pane==='fraud') renderFraudQueue();
+    if (pane==='c2g') renderC2GAdmin();
     if (pane==='stations') renderKYCPipeline();
     if (pane==='audit') renderAuditTrail();
     if (pane==='config') renderHierarchyTree();
+    if (pane==='caps') renderCapEditor();
     if (pane==='api') renderAPITokens();
   }
 });
@@ -926,16 +936,39 @@ document.addEventListener('click', e => {
 /* ─── ADMIN LOGIN ─── */
 document.addEventListener('click', e => {
   if(e.target.id==='adminLoginBtn'){
+    const user=document.getElementById('adminUser')?.value?.trim();
     const pass=document.getElementById('adminPass')?.value;
-    if(pass==='admin123'){
+    const account=ADMIN_ACCOUNTS.find(a=>a.user===user && a.pass===pass);
+    if(account){
+      adminSession = { user:account.user, name:account.name, role:account.role, tabAccess:account.tabAccess };
       document.getElementById('adminLogin').style.display='none';
       document.getElementById('adminDash').style.display='block';
+      document.getElementById('adminUserName').textContent=account.name;
+      document.getElementById('adminUserRole').textContent=account.role;
+      // Show only authorized tabs
+      document.querySelectorAll('.admin-tab').forEach(t=>{
+        const pane = t.dataset.adminTab;
+        t.style.display = account.tabAccess.includes(pane) ? '' : 'none';
+        t.classList.toggle('active', pane==='dashboard');
+      });
+      document.querySelectorAll('.admin-pane').forEach(p=>p.classList.remove('active'));
+      const dash = document.getElementById('adminPane-dashboard');
+      if(dash) dash.classList.add('active');
+      adminActiveTab = 'dashboard';
       initAdminSystem();
-      showToast('✅ Welcome, Administrator');
+      showToast('✅ Welcome, '+account.name+' ('+account.role+')');
       renderAdminDash();
     } else {
       showToast('❌ Invalid credentials');
     }
+  }
+  if(e.target.id==='adminLogoutBtn'){
+    adminSession = null;
+    document.getElementById('adminDash').style.display='none';
+    document.getElementById('adminLogin').style.display='block';
+    document.getElementById('adminUser').value='';
+    document.getElementById('adminPass').value='';
+    showToast('🚪 Logged out');
   }
 });
 
@@ -959,7 +992,7 @@ function renderSLATimers() {
     const cls = urgent ? 'sla-urgent' : warning ? 'sla-warning' : '';
     return `<div class="sla-card ${cls}">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-weight:600;font-size:0.82rem;">${t.id}</span>
+        <span style="font-weight:600;font-size:0.82rem;">Ticket #${t.id}</span>
         <span style="font-size:0.75rem;color:var(--text-dim);">${t.stationName}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
@@ -969,6 +1002,11 @@ function renderSLATimers() {
         </div>
       </div>
       <div style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;">Status: ${t.status} · Created ${new Date(t.createdAt).toLocaleDateString()}</div>
+      <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+        ${t.status==='open' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'investigating')" style="font-size:0.6rem;">🔍 Start Investigation</button>` : ''}
+        ${t.status==='investigating' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'dispatched')" style="font-size:0.6rem;">🚔 Dispatch Enforcement</button>` : ''}
+        ${t.status==='dispatched' ? `<button class="btn-tool btn-tool-primary btn-tool-sm" onclick="progressTicket(${t.id},'resolved')" style="font-size:0.6rem;">✅ Resolved</button> <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'penalty_issued')" style="font-size:0.6rem;border-color:rgba(239,68,68,0.3);color:#fca5a5;">💰 Penalty Issued</button>` : ''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -1270,12 +1308,13 @@ function renderHierarchyNode(node, depth) {
       <span>📍 ${node.name}</span>
       <div class="actions">
         <span style="font-size:0.6rem;color:var(--text-dim);margin-right:6px;">${(node.stations||[]).length} stations</span>
-        <button onclick="showToast('✏️ Edit area: ${node.name}')">✏️</button>
+        <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="deleteHierarchyNode(${node.id})" style="font-size:0.55rem;padding:1px 4px;color:#fca5a5;">✕</button>
       </div>
     </div>`;
   }
   const children = node.children || [];
   const icon = node.type==='region'?'🏙️':node.type==='district'?'📍':'';
+  const childType = node.type==='region'?'district':node.type==='district'?'area':'station';
   return `<div class="hierarchy-node">
     <div class="hierarchy-node-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.toggle').classList.toggle('open')">
       <span>${icon} ${node.name} <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;">(${node.type})</span></span>
@@ -1283,7 +1322,7 @@ function renderHierarchyNode(node, depth) {
     </div>
     <div class="hierarchy-children">
       ${children.map(c => renderHierarchyNode(c, depth+1)).join('')}
-      ${node.type!=='area' ? `<div style="padding:4px 12px;"><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="showToast('+ Add sub-node under ${node.name}')" style="font-size:0.65rem;">+ Add ${node.type==='region'?'District':node.type==='district'?'Area':'Station'}</button></div>` : ''}
+      ${node.type!=='area' ? `<div style="padding:4px 12px;display:flex;gap:4px;"><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="addSubNode(${node.id},'${childType}')" style="font-size:0.65rem;">+ Add ${childType.charAt(0).toUpperCase()+childType.slice(1)}</button><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="deleteHierarchyNode(${node.id})" style="font-size:0.55rem;padding:1px 6px;color:#fca5a5;">✕ Delete</button></div>` : ''}
     </div>
   </div>`;
 }
@@ -2272,6 +2311,208 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
 }
 
+/* ─── C2G TICKET ADMIN ─── */
+function renderC2GAdmin() {
+  const tickets = DB.c2gTickets || [];
+  const active = tickets.filter(t=>t.status!=='resolved' && t.status!=='penalty_issued');
+  const cnt = document.getElementById('c2gTicketCount');
+  if (cnt) cnt.textContent = active.length + ' active';
+  const list = document.getElementById('c2gAdminList');
+  if (!list) return;
+  if (tickets.length===0) {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">No C2G tickets filed.</div>';
+    return;
+  }
+  list.innerHTML = tickets.slice().reverse().map(t => {
+    const statusColors = {open:'#fcd34d',investigating:'#93c5fd',dispatched:'#fbbf24',resolved:'#76FF03',penalty_issued:'#fca5a5'};
+    const statusIcons = {open:'🟡',investigating:'🔍',dispatched:'🚔',resolved:'✅',penalty_issued:'💰'};
+    const statusColor = statusColors[t.status]||'var(--text-dim)';
+    const vehicleLabel = {truck:'🚛 Truck',boda:'🛵 Boda Boda',private:'🚗 Private'}[t.vehicleType]||'—';
+    return `<div class="kyc-card" style="margin-bottom:8px;">
+      <div class="kyc-info" style="flex:1;">
+        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${t.stationName} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
+        <div class="meta">${vehicleLabel} · ${t.fuel||'petrol'} at UGX ${(t.price||0).toLocaleString()} · ${t.location||t.district||'—'}</div>
+        <div class="meta" style="font-size:0.65rem;">Reporter: ${t.phone||t.userId||'—'} · ${new Date(t.createdAt).toLocaleString()}</div>
+        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${t.description.substring(0,120)}${t.description.length>120?'…':''}</div>` : ''}
+        ${t.uploadedFiles?.length ? `<div class="docs">📎 ${t.uploadedFiles.map(f=>f.name).join(', ')}</div>` : ''}
+      </div>
+      <div class="kyc-actions" style="flex-direction:column;gap:4px;">
+        ${t.status==='open' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'investigating')" style="font-size:0.6rem;">🔍 Investigate</button>` : ''}
+        ${t.status==='investigating' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'dispatched')" style="font-size:0.6rem;">🚔 Dispatch</button>` : ''}
+        ${t.status==='dispatched' ? `<button class="btn-tool btn-tool-primary btn-tool-sm" onclick="progressTicket(${t.id},'resolved')" style="font-size:0.6rem;">✅ Resolve</button><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'penalty_issued')" style="font-size:0.6rem;border-color:rgba(239,68,68,0.3);color:#fca5a5;">💰 Issue Penalty</button>` : ''}
+        ${t.status==='resolved'||t.status==='penalty_issued' ? `<span style="font-size:0.6rem;color:var(--text-dim);">✔ Closed ${new Date(t.resolvedAt||t.updatedAt).toLocaleDateString()}</span>` : ''}
+        ${t.notifiedReporter ? `<span style="font-size:0.6rem;color:var(--neon);">📨 Reporter notified</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function progressTicket(id, newStatus) {
+  const ticket = (DB.c2gTickets||[]).find(t=>t.id===id);
+  if (!ticket) return;
+  ticket.status = newStatus;
+  ticket.updatedAt = new Date().toISOString();
+  if (newStatus==='resolved' || newStatus==='penalty_issued') {
+    ticket.resolvedAt = new Date().toISOString();
+    ticket.notifiedReporter = true;
+    const msg = `📨 C2G Ticket #${id}: ${ticket.stationName} — Status updated to "${newStatus.replace(/_/g,' ').toUpperCase()}". An automated SMS notification has been dispatched to the reporting citizen (${ticket.phone||ticket.userId||'on file'}).`;
+    if (!DB.notifications) DB.notifications = [];
+    DB.notifications.push({ id:Date.now(), type:'c2g_resolved', message:msg, read:false, date:new Date().toISOString() });
+    showToast('📨 Resolution dispatched — citizen notified via SMS/WhatsApp.');
+  }
+  saveDB();
+  renderC2GAdmin();
+  renderSLATimers();
+}
+
+/* ─── PRICE CAP EDITOR ─── */
+function renderCapEditor() {
+  const container = document.getElementById('adminCapEditor');
+  if (!container) return;
+  const districts = Object.keys(DISTRICT_PRICE_CAPS);
+  container.innerHTML = `<table class="fraud-table">
+    <thead><tr>
+      <th>District</th>
+      <th>Region</th>
+      <th>Petrol Cap (UGX)</th>
+      <th>Diesel Cap (UGX)</th>
+      <th>Last Updated</th>
+    </tr></thead>
+    <tbody>${districts.map(d => {
+      const region = STATIONS_DATA.find(s=>s.district===d)?.region||'—';
+      const caps = DISTRICT_PRICE_CAPS[d];
+      return `<tr>
+        <td style="font-weight:600;">${d}</td>
+        <td style="font-size:0.75rem;color:var(--text-dim);">${region}</td>
+        <td><input type="number" class="cap-input" data-district="${d}" data-fuel="petrol" value="${caps.petrol}" style="width:100px;padding:4px 8px;border:1px solid var(--green-border);border-radius:4px;background:var(--green-dark);color:var(--white);font-family:var(--font-mono);"></td>
+        <td><input type="number" class="cap-input" data-district="${d}" data-fuel="diesel" value="${caps.diesel}" style="width:100px;padding:4px 8px;border:1px solid var(--green-border);border-radius:4px;background:var(--green-dark);color:var(--white);font-family:var(--font-mono);"></td>
+        <td style="font-size:0.65rem;color:var(--text-dim);">${new Date().toLocaleDateString()}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id==='saveAllCapsBtn') {
+    document.querySelectorAll('.cap-input').forEach(inp => {
+      const district = inp.dataset.district;
+      const fuel = inp.dataset.fuel;
+      const val = parseInt(inp.value);
+      if (district && fuel && val > 0 && DISTRICT_PRICE_CAPS[district]) {
+        DISTRICT_PRICE_CAPS[district][fuel] = val;
+      }
+    });
+    saveDB();
+    showToast('💾 Price caps updated across all system layers.');
+    renderPriceCapMatrix();
+  }
+});
+
+/* ─── HIERARCHY — ADD DISTRICT/AREA/STATION ─── */
+function addSubNode(parentId, type) {
+  const name = prompt('Enter name for new '+type+':');
+  if (!name || !name.trim()) return;
+  const tree = DB.admin.hierarchy;
+  if (!tree) return;
+  const parent = findHierarchyNode(tree, parentId);
+  if (!parent) return;
+  if (!parent.children) parent.children = [];
+  const newNode = { id:Date.now(), name:name.trim(), type, children:[] };
+  if (type==='area') newNode.stations = [];
+  parent.children.push(newNode);
+  saveDB();
+  renderHierarchyTree();
+  showToast('✅ '+type.charAt(0).toUpperCase()+type.slice(1)+' "'+name.trim()+'" added.');
+}
+function findHierarchyNode(nodes, id) {
+  for (const n of nodes) {
+    if (n.id===id) return n;
+    if (n.children) {
+      const found = findHierarchyNode(Array.isArray(n.children)?n.children:n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+function deleteHierarchyNode(id) {
+  if (!confirm('Delete this node and all its children?')) return;
+  const tree = DB.admin.hierarchy;
+  const remove = (nodes, targetId) => {
+    for (let i=nodes.length-1; i>=0; i--) {
+      if (nodes[i].id===targetId) { nodes.splice(i,1); return true; }
+      if (nodes[i].children) { if (remove(Array.isArray(nodes[i].children)?nodes[i].children:nodes[i].children, targetId)) return true; }
+    }
+    return false;
+  };
+  if (remove(tree, id)) { saveDB(); renderHierarchyTree(); showToast('🗑️ Deleted.'); }
+}
+
+/* ─── CSV EXPORT ─── */
+function exportCSV(data, filename, columns) {
+  if (!data || data.length===0) return showToast('No data to export.');
+  const header = columns.map(c=>c.label).join(',');
+  const rows = data.map(row => columns.map(c => {
+    let val = c.get ? c.get(row) : row[c.key];
+    if (typeof val==='string' && (val.includes(',')||val.includes('"'))) val='"'+val.replace(/"/g,'""')+'"';
+    return val;
+  }).join(','));
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('📥 '+filename+' exported.');
+}
+
+// Add CSV export buttons in admin panes
+document.addEventListener('click', e => {
+  if (e.target.id==='exportFraudBtn') {
+    const queue = (DB.admin.fraudQueue||[]).filter(f=>f.status==='pending');
+    exportCSV(queue, 'fraud_queue', [
+      {label:'Timestamp', get:r=>new Date(r.timestamp).toLocaleString()},
+      {label:'Station', key:'stationName'},
+      {label:'User ID', key:'userId'},
+      {label:'Reported Price', get:r=>'UGX '+r.reportedPrice},
+      {label:'Current Price', get:r=>'UGX '+r.currentPrice},
+      {label:'Deviation %', get:r=>r.deviationPct.toFixed(1)+'%'},
+      {label:'Confidence', key:'confidence'},
+    ]);
+  }
+  if (e.target.id==='exportAuditBtn') {
+    const log = DB.admin.auditLog || [];
+    exportCSV(log, 'audit_trail', [
+      {label:'Timestamp', get:r=>new Date(r.timestamp).toLocaleString()},
+      {label:'Station', key:'stationName'},
+      {label:'Modified By', key:'modifiedBy'},
+      {label:'Previous Price', get:r=>r.previousPrice?'UGX '+r.previousPrice:'—'},
+      {label:'New Price', get:r=>r.newPrice?'UGX '+r.newPrice:'—'},
+      {label:'Channel', key:'channel'},
+      {label:'Action', key:'action'},
+    ]);
+  }
+  if (e.target.id==='exportKPIBtn') {
+    const data = [{
+      totalReports:(DB.reports||[]).length,
+      verified:(DB.reports||[]).filter(r=>r.status==='verified').length,
+      rejected:(DB.reports||[]).filter(r=>r.status==='rejected').length,
+      activeFlags:(DB.admin.fraudQueue||[]).filter(f=>f.status==='pending').length,
+      activeAPITokens:(DB.admin.apiTokens||[]).filter(t=>t.status==='active').length,
+      activeC2GTickets:(DB.c2gTickets||[]).filter(t=>t.status!=='resolved'&&t.status!=='penalty_issued').length,
+    }];
+    exportCSV(data, 'kpi_snapshot', [
+      {label:'Total Reports', key:'totalReports'},
+      {label:'Verified', key:'verified'},
+      {label:'Rejected', key:'rejected'},
+      {label:'Active Flags', key:'activeFlags'},
+      {label:'Active API Tokens', key:'activeAPITokens'},
+      {label:'Active C2G Tickets', key:'activeC2GTickets'},
+    ]);
+  }
+});
+
+// Update the SLA section header in dashboard to show the ticket ID prefixed
   // Seed new community data if needed
   seedNewData();
 

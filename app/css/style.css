@@ -580,6 +580,13 @@ a { color: var(--neon); text-decoration: none; }
 .admin-tab.active { color: var(--neon); background: var(--green-card); border: 1px solid var(--green-border); border-bottom-color: var(--green-card); }
 .admin-pane { display: none; }
 .admin-pane.active { display: block; }
+.admin-userbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 14px; margin-bottom: 10px;
+  background: rgba(118,255,3,0.04); border: 1px solid rgba(118,255,3,0.1);
+  border-radius: 8px;
+}
+.admin-userbar-info { display: flex; align-items: center; gap: 10px; }
 .admin-sub-tabs { display: flex; gap: 4px; }
 .admin-sub-tab {
   padding: 6px 14px; border: 1px solid var(--green-border); background: none;
