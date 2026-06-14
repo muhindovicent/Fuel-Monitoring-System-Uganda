@@ -13,7 +13,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="css/style.css">
 <style>
-/* ─── GOVERNMENT DIRECTORY INSTITUTIONAL OVERLAYS ─── */
+  
 :root {
   --gov-gold: #D4A843;
   --gov-gold-dim: rgba(212,168,67,0.12);
@@ -503,7 +503,7 @@ html { scroll-padding-top: 110px; }
 </head>
 <body>
 
-<!-- ─── NAVBAR ─── -->
+
 <nav class="navbar" id="navbar">
   <div class="navbar-brand">
     <span class="flag">🇺🇬</span>
@@ -527,7 +527,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </nav>
 
-<!-- ─── BREADCRUMB ─── -->
+
 <div class="gov-breadcrumb">
   <a href="#" id="breadcrumbHome">Home</a>
   <span class="sep">›</span>
@@ -538,7 +538,7 @@ html { scroll-padding-top: 110px; }
   <span class="current">MafutaWatch Uganda</span>
 </div>
 
-<!-- ─── INSTITUTIONAL PROFILE ─── -->
+
 <section class="gov-institutional">
   <div class="gov-institutional-inner">
     <div class="gov-entity-header">
@@ -592,7 +592,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── LEADERSHIP FRAMEWORK ─── -->
+
 <section class="gov-leadership">
   <div class="gov-leadership-inner">
     <h2>🏛️ Leadership & Executive Framework</h2>
@@ -668,7 +668,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── HERO ─── -->
+
 <section class="hero" id="hero">
   <div class="section-inner">
     <div class="hero-left">
@@ -717,7 +717,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── TRI-HUB INTERACTION SYSTEM ─── -->
+
 <section class="section trihub-section">
   <div class="section-inner">
     <div class="section-tag"><span class="dot"></span> Community Interaction Hub</div>
@@ -771,7 +771,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── METRICS ─── -->
+
 <section class="metrics-section">
   <div class="section-inner">
     <div class="section-tag" style="color: var(--green-dark);"><span class="dot" style="background: var(--green-dark);"></span> Platform Transparency Metrics</div>
@@ -812,7 +812,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── NATIONWIDE DISTRICT PRICE CAP MATRIX ─── -->
+
 <section class="gov-price-cap" id="priceCapMatrix">
   <div class="gov-price-cap-inner">
     <h2>📋 Nationwide District Price Cap Matrix</h2>
@@ -929,7 +929,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── PARTNERS ─── -->
+
 <section class="partners-section">
   <div class="section-inner">
     <div style="text-align:center;margin-bottom:16px;font-size:0.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Trusted by leading fuel operators nationwide</div>
@@ -962,22 +962,21 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── LIVE ANALYTICS ─── -->
+
 <section class="section" style="background: var(--green-mid);">
   <div class="section-inner">
     <div class="section-tag"><span class="dot"></span> Live Analytics</div>
     <h2 class="section-title">Regional Price Hotspots</h2>
     <p class="section-sub">Real-time average fuel prices across Uganda's major economic corridors.</p>
     <div class="value-grid" style="margin-top:40px;" id="regionCards">
-      <!-- filled by JS -->
     </div>
     <div class="map-wrapper" style="margin-top:24px;height:320px;" id="analyticsMiniMap">
-      <!-- mini leaflet map showing all stations -->
+    
     </div>
   </div>
 </section>
 
-<!-- ─── APP / TOOLS ─── -->
+
 <section class="section tools-section" id="appSection">
   <div class="section-inner">
     <div class="section-tag"><span class="dot"></span> Platform Tools</div>
@@ -999,7 +998,7 @@ html { scroll-padding-top: 110px; }
 
     <div class="tools-content" id="mainContent">
 
-      <!-- MAP -->
+  
       <div class="tools-pane active" id="page-map">
         <div class="map-wrapper" id="mapWrapper" style="height:600px;">
           <div id="map"></div>
@@ -1014,7 +1013,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- STATIONS -->
+    
       <div class="tools-pane" id="page-stations">
         <div style="max-height:70vh;overflow-y:auto;">
           <div style="display:flex;gap:8px;margin-bottom:12px;">
@@ -1025,7 +1024,7 @@ html { scroll-padding-top: 110px; }
           </div>
           <div id="stationList"></div>
 
-          <!-- REVIEWS -->
+        
           <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--green-border);" id="reviewSection">
             <h3 style="font-size:1rem;color:var(--neon);margin-bottom:4px;">⭐ Station Reviews & Issues</h3>
             <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Help others — report station conditions.</p>
@@ -1062,7 +1061,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- TRIP PLANNER -->
+      
       <div class="tools-pane" id="page-planner">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="tool-card">
@@ -1090,7 +1089,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- P2P CHAT -->
+    
       <div class="tools-pane" id="page-p2p">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="tool-card">
@@ -1123,7 +1122,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- REPORT -->
+    
       <div class="tools-pane" id="page-report">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="tool-card" style="background:var(--neon-dim);border-color:rgba(118,255,3,0.2);">
@@ -1150,7 +1149,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- C2G REPORT -->
+  
       <div class="tools-pane" id="page-c2g">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="tool-card" style="background:var(--neon-dim);border-color:rgba(118,255,3,0.2);">
@@ -1218,7 +1217,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- G2C ADVISORY -->
+    
       <div class="tools-pane" id="page-g2c">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="tool-card" style="background:rgba(118,255,3,0.08);border:1px solid var(--neon);">
@@ -1241,7 +1240,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- ACTIVITY -->
+
       <div class="tools-pane" id="page-activity">
         <div style="max-height:70vh;overflow-y:auto;">
           <div class="dash-grid">
@@ -1259,7 +1258,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- OPERATOR -->
+    
       <div class="tools-pane" id="page-operator">
         <div style="max-height:70vh;overflow-y:auto;">
           <!-- Login -->
@@ -1272,7 +1271,7 @@ html { scroll-padding-top: 110px; }
             <button class="btn-tool btn-tool-primary btn-tool-full" id="opLoginBtn">Send OTP</button>
             <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Demo: enter any number, use OTP: 123456</p>
           </div>
-          <!-- Dashboard -->
+      
           <div id="opDashboard" style="display:none;">
             <div style="display:flex;gap:8px;margin-bottom:12px;">
               <select id="opStation" style="flex:1;padding:9px;border:1px solid var(--green-border);border-radius:8px;font-family:var(--font);background:var(--green-dark);color:var(--white);"></select>
@@ -1298,7 +1297,7 @@ html { scroll-padding-top: 110px; }
         </div>
       </div>
 
-      <!-- ADMIN -->
+    
       <div class="tools-pane" id="page-admin">
         <div style="max-height:70vh;overflow-y:auto;">
           <div id="adminLogin" class="auth-box" style="display:block;">
@@ -1314,7 +1313,7 @@ html { scroll-padding-top: 110px; }
           </div>
           <div id="adminDash" style="display:none;">
 
-            <!-- Admin User Bar -->
+            
             <div class="admin-userbar">
               <div class="admin-userbar-info">
                 <span id="adminUserName" style="font-weight:700;font-size:0.85rem;">Admin</span>
@@ -1323,7 +1322,7 @@ html { scroll-padding-top: 110px; }
               <button class="btn-tool btn-tool-outline btn-tool-sm" id="adminLogoutBtn" style="font-size:0.65rem;">🚪 Logout</button>
             </div>
 
-            <!-- Admin Sub-Nav -->
+          
             <div class="admin-subnav">
               <button class="admin-tab active" data-admin-tab="dashboard">📊 Dashboard</button>
               <button class="admin-tab" data-admin-tab="fraud">🚨 Fraud Queue</button>
@@ -1335,7 +1334,7 @@ html { scroll-padding-top: 110px; }
               <button class="admin-tab" data-admin-tab="api">🔑 API Console</button>
             </div>
 
-            <!-- ── DASHBOARD ── -->
+          
             <div class="admin-pane active" id="adminPane-dashboard">
               <!-- Bento-grid metrics -->
               <div class="bento-grid">
@@ -1436,7 +1435,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── FRAUD QUEUE ── -->
+            
             <div class="admin-pane" id="adminPane-fraud">
               <div class="admin-section-header">
                 <div>
@@ -1468,7 +1467,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── STATION MGMT ── -->
+            
             <div class="admin-pane" id="adminPane-stations">
               <div class="admin-sub-tabs" style="margin-bottom:12px;">
                 <button class="admin-sub-tab active" data-station-tab="kyc">📄 KYC Pipeline</button>
@@ -1492,7 +1491,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── AUDIT TRAIL ── -->
+            
             <div class="admin-pane" id="adminPane-audit">
               <div class="admin-section-header">
                 <div>
@@ -1537,7 +1536,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── SYSTEM CONFIG ── -->
+        
             <div class="admin-pane" id="adminPane-config">
               <div class="admin-sub-tabs" style="margin-bottom:12px;">
                 <button class="admin-sub-tab active" data-config-tab="hierarchy">🌳 Channel Hierarchy</button>
@@ -1576,7 +1575,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── API CONSOLE ── -->
+      
             <div class="admin-pane" id="adminPane-api">
               <div class="admin-section-header">
                 <div>
@@ -1598,7 +1597,7 @@ html { scroll-padding-top: 110px; }
               </div>
             </div>
 
-            <!-- ── C2G TICKETS ── -->
+          
             <div class="admin-pane" id="adminPane-c2g">
               <div class="admin-section-header">
                 <div>
@@ -1610,7 +1609,7 @@ html { scroll-padding-top: 110px; }
               <div id="c2gAdminList"></div>
             </div>
 
-            <!-- ── PRICE CAPS ── -->
+          
             <div class="admin-pane" id="adminPane-caps">
               <div class="admin-section-header">
                 <div>
@@ -1632,7 +1631,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </section>
 
-<!-- ─── FOOTER ─── -->
+
 <footer class="footer-gov">
   <div class="gov-footer-seal">🇺🇬</div>
   <div class="gov-footer-name">MafutaWatch Uganda</div>
@@ -1643,7 +1642,7 @@ html { scroll-padding-top: 110px; }
   <div class="gov-footer-legal">© 2026 · Republic of Uganda — Ministry of Energy &amp; Mineral Development (Demo Platform)</div>
 </footer>
 
-<!-- ─── STATION MODAL ─── -->
+  
 <div class="modal-overlay" id="stationModal">
   <div class="modal-sheet">
     <div class="modal-handle"></div>
@@ -1663,7 +1662,7 @@ html { scroll-padding-top: 110px; }
   </div>
 </div>
 
-<!-- ─── TOAST ─── -->
+
 <div class="toast" id="toast"></div>
 
 <script src="js/data.js"></script>
