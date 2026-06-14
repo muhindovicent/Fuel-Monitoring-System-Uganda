@@ -1,6 +1,3 @@
-// MafutaWatch Uganda — Service Worker v1.0
-// Offline-first caching strategy for fuel price data
-
 const CACHE_NAME = 'MafutaWatch Uganda-v1';
 const STATIC_ASSETS = [
   'index.html',
@@ -10,7 +7,7 @@ const STATIC_ASSETS = [
   'js/app.js',
 ];
 
-// Install: cache shell resources
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -19,7 +16,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate: clean old caches
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -32,16 +29,15 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: network-first with cache fallback for API/data,
-// cache-first for static assets
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Handle only same-origin requests and CDN map tiles
+  
   if (request.method !== 'GET') return;
 
-  // For map tiles and static CDN resources, try cache first
+  
   if (url.hostname === 'unpkg.com' || url.hostname === 'tile.openstreetmap.org') {
     event.respondWith(
       caches.match(request).then((cached) => {
@@ -66,7 +62,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For the app itself: network first, fall back to cache
+
   event.respondWith(
     fetch(request)
       .then((response) => {
@@ -91,7 +87,6 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Listen for messages to update cache
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'CACHE_UPDATED') {
     caches.open(CACHE_NAME).then((cache) => {
