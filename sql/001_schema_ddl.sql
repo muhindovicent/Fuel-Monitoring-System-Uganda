@@ -11,9 +11,7 @@
 
 BEGIN;
 
--- ============================================================================
--- 0. EXTENSION SETUP
--- ============================================================================
+
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS postgis_topology;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -21,9 +19,9 @@ CREATE EXTENSION IF NOT EXISTS pg_partman;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
--- ============================================================================
+
 -- 1. ENUM TYPES
--- ============================================================================
+
 CREATE TYPE fuel_type AS ENUM (
     'petrol', 'diesel', 'kerosene'
 );
@@ -53,9 +51,7 @@ CREATE TYPE operator_role AS ENUM (
     'station_manager', 'regional_manager', 'corporate_admin'
 );
 
--- ============================================================================
 -- 2. GEOGRAPHIC HIERARCHY
--- ============================================================================
 CREATE TABLE geo_regions (
     id              SMALLSERIAL PRIMARY KEY,
     code            VARCHAR(4) NOT NULL UNIQUE,
@@ -100,9 +96,9 @@ CREATE TABLE geo_subcounties (
 CREATE INDEX idx_geo_subcounties_district ON geo_subcounties(district_id);
 CREATE INDEX idx_geo_subcounties_geom ON geo_subcounties USING GIST (geometry);
 
--- ============================================================================
+
 -- 3. FUEL OPERATORS (Companies)
--- ============================================================================
+
 CREATE TABLE fuel_operators (
     id              SMALLSERIAL PRIMARY KEY,
     name            VARCHAR(150) NOT NULL UNIQUE,
@@ -115,9 +111,9 @@ CREATE TABLE fuel_operators (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ============================================================================
+
 -- 4. FUEL STATIONS
--- ============================================================================
+
 CREATE TABLE stations (
     id              SERIAL PRIMARY KEY,
     operator_id     SMALLINT NOT NULL REFERENCES fuel_operators(id),
@@ -144,9 +140,9 @@ CREATE INDEX idx_stations_subcounty ON stations(subcounty_id);
 CREATE INDEX idx_stations_location ON stations USING GIST (location);
 CREATE INDEX idx_stations_active ON stations(is_active) WHERE is_active = TRUE;
 
--- ============================================================================
+
 -- 5. USERS & TRUST SYSTEM
--- ============================================================================
+
 CREATE TABLE users (
     id              BIGSERIAL PRIMARY KEY,
     msisdn_hash     VARCHAR(64) NOT NULL UNIQUE,   -- SHA-256(salt + MSISDN)
@@ -185,9 +181,9 @@ CREATE TABLE user_registration_staging (
 CREATE INDEX idx_user_reg_staging_raw_msisdn ON user_registration_staging(raw_msisdn);
 CREATE INDEX idx_user_reg_staging_expires ON user_registration_staging(otp_expires_at) WHERE otp_expires_at > NOW();
 
--- ============================================================================
+
 -- 6. PRICE REPORTS (Core Ingestion Table, Partitioned)
--- ============================================================================
+
 CREATE TABLE price_reports (
     id                  BIGSERIAL,
     station_id          INTEGER NOT NULL REFERENCES stations(id),
@@ -222,9 +218,9 @@ CREATE INDEX idx_price_reports_reporter ON price_reports(reporter_user_id, creat
 CREATE INDEX idx_price_reports_status ON price_reports(status, created_at DESC);
 CREATE INDEX idx_price_reports_fuel ON price_reports(fuel_type, created_at DESC);
 
--- ============================================================================
+
 -- 7. CONSENSUS GROUPS (For low-trust reporter verification)
--- ============================================================================
+
 CREATE TABLE consensus_groups (
     id                  BIGSERIAL PRIMARY KEY,
     station_id          INTEGER NOT NULL REFERENCES stations(id),
@@ -255,9 +251,9 @@ CREATE TABLE consensus_votes (
 
 CREATE INDEX idx_consensus_votes_group ON consensus_votes(consensus_group_id);
 
--- ============================================================================
+
 -- 8. VERIFIED PRICES (Current authoritative prices)
--- ============================================================================
+
 CREATE TABLE verified_prices (
     id              BIGSERIAL PRIMARY KEY,
     station_id      INTEGER NOT NULL REFERENCES stations(id),
@@ -308,9 +304,9 @@ CREATE UNIQUE INDEX idx_mv_nearest_cheapest_unique ON mv_nearest_cheapest (stati
 CREATE INDEX idx_mv_nearest_cheapest_loc ON mv_nearest_cheapest USING GIST (location);
 CREATE INDEX idx_mv_nearest_cheapest_price ON mv_nearest_cheapest(fuel_type, price ASC);
 
--- ============================================================================
+
 -- 9. TRUST SCORE EVENT LOG
--- ============================================================================
+
 CREATE TABLE trust_score_events (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT NOT NULL REFERENCES users(id),
@@ -328,9 +324,9 @@ CREATE TABLE trust_score_events (
 CREATE INDEX idx_trust_score_events_user ON trust_score_events(user_id, created_at DESC);
 CREATE INDEX idx_trust_score_events_reason ON trust_score_events(reason);
 
--- ============================================================================
+
 -- 10. OPERATOR STATION MANAGERS (Official Price Updates)
--- ============================================================================
+
 CREATE TABLE operator_staff (
     id              SERIAL PRIMARY KEY,
     operator_id     SMALLINT NOT NULL REFERENCES fuel_operators(id),
@@ -362,9 +358,9 @@ CREATE TABLE operator_price_updates (
 
 CREATE INDEX idx_operator_updates_station ON operator_price_updates(station_id, created_at DESC);
 
--- ============================================================================
+
 -- 11. RATE LIMITING & SYBIL DETECTION
--- ============================================================================
+
 CREATE TABLE rate_limit_events (
     id              BIGSERIAL PRIMARY KEY,
     msisdn_hash     VARCHAR(64),
@@ -395,9 +391,9 @@ CREATE TABLE blacklisted_entities (
 
 CREATE INDEX idx_blacklisted_active ON blacklisted_entities(is_active) WHERE is_active = TRUE;
 
--- ============================================================================
+
 -- 12. USSD SESSION AUDIT LOG
--- ============================================================================
+
 CREATE TABLE ussd_session_logs (
     id              BIGSERIAL PRIMARY KEY,
     msisdn_hash     VARCHAR(64) NOT NULL,
@@ -423,9 +419,9 @@ SELECT partman.create_parent(
     p_start_partition := '2026-01-01'
 );
 
--- ============================================================================
+
 -- 13. ANOMALY DETECTION ALERTS
--- ============================================================================
+
 CREATE TABLE anomaly_alerts (
     id              BIGSERIAL PRIMARY KEY,
     alert_type      VARCHAR(50) NOT NULL,
@@ -450,9 +446,9 @@ CREATE INDEX idx_anomaly_alerts_type ON anomaly_alerts(alert_type, created_at DE
 CREATE INDEX idx_anomaly_alerts_severity ON anomaly_alerts(severity, created_at DESC)
     WHERE is_resolved = FALSE;
 
--- ============================================================================
+
 -- 14. PRICE HISTORY CACHE INVALIDATION TRACKER
--- ============================================================================
+
 CREATE TABLE cache_invalidation_log (
     id              BIGSERIAL PRIMARY KEY,
     cache_key       VARCHAR(200) NOT NULL,
@@ -466,9 +462,9 @@ CREATE INDEX idx_cache_invalidation_key ON cache_invalidation_log(cache_key, inv
 CREATE INDEX idx_cache_invalidation_time ON cache_invalidation_log(invalidated_at)
     WHERE invalidated_at > NOW() - INTERVAL '1 hour';
 
--- ============================================================================
+
 -- 15. FUNCTIONS & TRIGGERS
--- ============================================================================
+
 
 -- Update user trust score and tier on each report event
 CREATE OR REPLACE FUNCTION fn_update_user_trust()
@@ -542,9 +538,8 @@ CREATE TRIGGER trg_verified_prices_refresh_mv
     FOR EACH STATEMENT
     EXECUTE FUNCTION fn_refresh_mv_nearest();
 
--- ============================================================================
 -- 16. MAINTENANCE JOBS (pg_cron or application scheduler)
--- ============================================================================
+
 
 -- Expire stale consensus groups (runs every 5 minutes)
 -- CREATE EXTENSION IF NOT EXISTS pg_cron;
@@ -563,9 +558,8 @@ CREATE TRIGGER trg_verified_prices_refresh_mv
 --     $$REFRESH MATERIALIZED VIEW CONCURRENTLY mv_nearest_cheapest;$$
 -- );
 
--- ============================================================================
+
 -- 17. GRANTS & RLS (Tiered access)
--- ============================================================================
 
 -- Application roles
 CREATE ROLE matano_app WITH LOGIN PASSWORD 'changeme_in_production';
