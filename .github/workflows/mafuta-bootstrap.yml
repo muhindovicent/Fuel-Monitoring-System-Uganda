@@ -1,0 +1,87 @@
+name: MafutaWatch one-time database bootstrap
+
+on:
+  push:
+    branches:
+      - feat/production-foundation-2026-11-02
+    paths:
+      - .github/workflows/mafuta-bootstrap.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mafuta-bootstrap-production-foundation-2026-11-02
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate required secrets
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DATABASE_URL:-}" ]]; then
+            echo "::error::Required secret NEON_DIRECT_DATABASE_URL is missing."
+            exit 1
+          fi
+          if [[ -z "${BOOTSTRAP_ADMIN_EMAIL:-}" ]]; then
+            echo "::error::Required secret BOOTSTRAP_ADMIN_EMAIL is missing."
+            exit 1
+          fi
+          if [[ -z "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]]; then
+            echo "::error::Required secret BOOTSTRAP_ADMIN_PASSWORD is missing."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --no-audit --no-fund
+
+      - name: Apply PostgreSQL migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          log_file="$RUNNER_TEMP/mafuta-bootstrap-migrate.log"
+          trap 'rm -f "$log_file"' EXIT
+          if ! npm run db:migrate >"$log_file" 2>&1; then
+            echo "::error::Database migrations failed. Admin creation was not attempted; command output is suppressed to protect credentials."
+            exit 1
+          fi
+          echo "Database migrations completed successfully."
+
+      - name: Create bootstrap administrator
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          log_file="$RUNNER_TEMP/mafuta-bootstrap-admin.log"
+          trap 'rm -f "$log_file"' EXIT
+          if ! npm run admin:create >"$log_file" 2>&1; then
+            echo "::error::Administrator creation failed. Command output is suppressed to protect credentials; existing accounts are not overwritten."
+            exit 1
+          fi
+          echo "Bootstrap administrator created successfully."
