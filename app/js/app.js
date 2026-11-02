@@ -9,11 +9,11 @@ const isAdmin=()=>state.user?.role==='admin';
 const empty=text=>`<div class="empty">${esc(text)}</div>`;
 const badge=(text,kind=text)=>`<span class="badge ${esc(kind)}">${esc(text)}</span>`;
 const heading=(title,description,eyebrow='MAFUTAWATCH UGANDA')=>`<div class="page-heading"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(description)}</p></div></div>`;
-const metric=(value,label,warning=false)=>`<div class="metric${warning?' warning':''}"><strong>${esc(value??'—')}</strong><span class="label">${esc(label)}</span></div>`;
+const metric=(value,label,warning=false)=>`<div class="metric workspace-metric${warning?' warning':''}"><span class="workspace-metric-icon">${icon(warning?'clock':'chart')}</span><strong>${esc(value??'—')}</strong><span class="label">${esc(label)}</span></div>`;
 const field=(label,name,{type='text',required=true,value='',min,max,step,maxlength=200,placeholder=''}={})=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" ${required?'required':''} value="${esc(value)}" ${min!==undefined?`min="${min}"`:''} ${max!==undefined?`max="${max}"`:''} ${step?`step="${step}"`:''} maxlength="${maxlength}" placeholder="${esc(placeholder)}"></label>`;
 const select=(label,name,options,selected='',required=true)=>`<label>${esc(label)}<select name="${name}" aria-label="${esc(label)}" ${required?'required':''}>${options.map(([value,text])=>`<option value="${esc(value)}" ${String(value)===String(selected)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
 const fuelOptions=[['petrol','Petrol'],['diesel','Diesel'],['kerosene','Kerosene']];
-const fuelField=()=>select('Fuel type','fuel',fuelOptions);
+const fuelField=(selected='petrol')=>select('Fuel type','fuel',fuelOptions,selected);
 const priceField=()=>field('Price (UGX per litre)','price',{type:'number',min:100,max:100000,step:1});
 const textarea=(label,name,{min=1,max=3000}={})=>`<label>${esc(label)}<textarea name="${name}" required minlength="${min}" maxlength="${max}" rows="3"></textarea></label>`;
 const formEnd=text=>`<p class="form-error" role="alert"></p><button class="primary" type="submit">${esc(text)}</button>`;
@@ -22,12 +22,23 @@ const evidenceInput=()=>'<label>Evidence (optional, up to 3 files, 5 MiB each)<i
 function showError(error){$('#errorBanner').textContent=error.message;$('#errorBanner').hidden=false;if(error.status===401){state.user=null;updateAccount();} }
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('#toast').hidden=true;},6000);}
 function updateAccount(){
+  document.body.classList.toggle('signed-in',Boolean(state.user));
   $('#accountButton').textContent=state.user?`${state.user.display_name} · ${state.user.role}`:'Sign in';
   $('#accountButton').dataset.action=state.user?'account':'auth';$('#logoutButton').hidden=!state.user;
   $('[data-page="admin"]').hidden=!['admin','inspector','analyst'].includes(state.user?.role);
   $('#registerButton').hidden=Boolean(state.user);
   $('#workspaceLink').href=['admin','inspector','analyst'].includes(state.user?.role)?'#admin':state.user?.role==='operator'?'#operator':'#activity';
+  $('#notificationButton').hidden=!state.user;
+  const names={citizen:'Citizen services',operator:'Station operations',inspector:'Case management',analyst:'Market analysis',admin:'Platform administration'};
+  $('#workspaceRole').textContent=names[state.user?.role]||'Citizen services';
+  $('#workspaceName').textContent=state.user?.display_name||'Welcome to MafutaWatch';
+  $('#workspaceIdentity').textContent=state.user?`${state.user.role} account`:'Sign in to contribute';
+  $('#accountAvatar').textContent=(state.user?.display_name||'M').slice(0,1).toUpperCase();
+  if(!state.user){state.notifications=[];updateNotificationBadge();}
 }
+function updateNotificationBadge(){const unread=(state.notifications||[]).filter(n=>!n.read_at).length;$('#notificationCount').textContent=unread;$('#notificationCount').hidden=!unread;$('#notificationButton').setAttribute('aria-label',unread?`Notifications, ${unread} unread in the latest 100`:'Notifications');}
+async function refreshNotifications(){if(!state.user)return;const userId=state.user.id;const result=await api('/me/notifications');if(state.user?.id!==userId)return;state.notifications=result.items;updateNotificationBadge();}
+async function notificationDialog(){if(!authRequired())return;await refreshNotifications();if(!state.user)return;$('#detailTitle').textContent='Notifications';$('#detailContent').innerHTML=`<p class="small">Your latest in-app updates. No external delivery is implied.</p><div class="notification-list">${(state.notifications||[]).slice(0,10).map(n=>`<article class="notification-item ${n.read_at?'':'unread'}"><span class="notification-icon">${icon('bell')}</span><div>${n.read_at?'':badge('Unread','pending')}<p>${esc(n.message)}</p><small>${date(n.created_at)}</small></div></article>`).join('')||empty('No updates yet. Follow a station to receive price-change notifications.')}</div><div class="actions"><button data-action="read-notifications">Mark displayed notifications read</button><a class="button primary" href="#activity" data-action="close-detail">View my activity ${icon('arrow')}</a></div>`;$('#detailDialog').showModal();}
 function authRequired(){if(state.user)return true;openAuth();return false;}
 function openAuth(mode='login'){if($('#detailDialog').open)$('#detailDialog').close();state.authMode=mode;renderAuth();$('#authDialog').showModal();}
 function renderAuth(){
@@ -158,8 +169,10 @@ async function ticketDetail(id){
 async function activityView(){
   if(!state.user)return loginCard('Sign in to track your observations, cases and price-change notifications.');
   const [reports,notifications,tickets]=await Promise.all([api(`/me/reports?limit=50&offset=${state.activityOffset}`),api('/me/notifications'),api('/tickets?limit=50')]);state.notifications=notifications.items;
-  return `${heading('Your contributions. In one place.','Track decisions, case updates and the stations you follow.','CITIZEN / MY ACTIVITY')}<div class="metrics">${metric(reports.items.length,'Reports on this page')}${metric(notifications.items.filter(n=>!n.read_at).length,'Unread notifications')}${metric(tickets.items.filter(t=>t.user_id===state.user.id).length,'Your cases on this page')}${metric(state.user.identity_verified?'Verified':'Not verified','Independent identity status')}</div><div class="grid"><section class="card"><div class="card-head"><h2>Price observations</h2><button class="small" data-action="refresh">Refresh status</button></div>${reportTable(reports.items)}${pagination(state.activityOffset,reports.items.length,'activity-page')}</section><section class="card"><div class="card-head"><h2>Notifications</h2><button class="small" data-action="read-notifications">Mark displayed read</button></div>${notifications.items.map(n=>`<div class="list-item">${n.read_at?'':badge('New')}<p>${esc(n.message)}</p><small>${date(n.created_at)}</small></div>`).join('')||empty('No notifications. Follow a station to receive price changes.')}</section></div><details class="card"><summary>Change your password</summary><form id="passwordForm">${field('Current password','currentPassword',{type:'password',maxlength:128})}${field('New password (at least 12 characters)','newPassword',{type:'password',min:12,maxlength:128})}${formEnd('Change password and sign out all sessions')}</form></details>`;
+  updateNotificationBadge();
+  return `${heading('Your contributions. In one place.','Track decisions, case updates and the stations you follow.','CITIZEN / MY ACTIVITY')}${citizenExperience()}<div class="metrics">${metric(reports.items.length,'Reports on this page')}${metric(notifications.items.filter(n=>!n.read_at).length,'Unread notifications')}${metric(tickets.items.filter(t=>t.user_id===state.user.id).length,'Your cases on this page')}${metric(state.user.identity_verified?'Verified':'Not verified','Independent identity status')}</div><div class="grid"><section class="card"><div class="card-head"><h2>Price observations</h2><button class="small" data-action="refresh">Refresh status</button></div>${reportTable(reports.items)}${pagination(state.activityOffset,reports.items.length,'activity-page')}</section><section class="card"><div class="card-head"><h2>Notifications</h2><button class="small" data-action="read-notifications">Mark displayed read</button></div>${notifications.items.map(n=>`<div class="list-item">${n.read_at?'':badge('New')}<p>${esc(n.message)}</p><small>${date(n.created_at)}</small></div>`).join('')||empty('No notifications. Follow a station to receive price changes.')}</section></div><details class="card"><summary>Change your password</summary><form id="passwordForm">${field('Current password','currentPassword',{type:'password',maxlength:128})}${field('New password (at least 12 characters)','newPassword',{type:'password',min:12,maxlength:128})}${formEnd('Change password and sign out all sessions')}</form></details>`;
 }
+function citizenExperience(){if(state.user?.role!=='citizen')return '';return `<section class="citizen-experience card"><div><span class="eyebrow">YOUR JOURNEY</span><h2>One account. A workspace that fits.</h2><p>Choose useful starting defaults. This changes your experience, not your citizen permissions.</p></div><div class="experience-options" aria-label="Journey preferences">${[['private','Private motorist','route'],['boda','Boda rider','bike'],['truck','Truck driver','truck']].map(([mode,label,name])=>`<button data-action="citizen-mode" data-mode="${mode}" aria-pressed="${(state.citizenMode||'private')===mode}">${icon(name)}${label}</button>`).join('')}</div></section>`;}
 function reportTable(reports,moderate=false){return reports.length?`<div class="table-wrap"><table><thead><tr><th>Station / date</th><th>Observation</th><th>Status / reason</th>${moderate?'<th>Decision</th>':''}</tr></thead><tbody>${reports.map(r=>`<tr><td><strong>${esc(r.station_name)}</strong><br><small>${date(r.created_at)}</small></td><td>${esc(r.fuel)}<br><strong>${money(r.price)}</strong></td><td>${badge(r.status)}<br><small>${esc(r.decision_reason||r.note||'Awaiting independent confirmation or officer review')}</small></td>${moderate?`<td><button class="small" data-action="review-report" data-id="${r.id}" data-status="verified">Verify</button><button class="small danger" data-action="review-report" data-id="${r.id}" data-status="rejected">Reject</button></td>`:''}</tr>`).join('')}</tbody></table></div>`:empty('No price observations to show.');}
 async function operatorView(){
   if(!state.user)return loginCard('Station operators can request access, publish assigned prices, and manage integration credentials.');
@@ -183,14 +196,23 @@ async function advisoriesView(){
   const [notices,halls]=await Promise.all([api('/advisories'),api('/town-halls')]);
   return `${heading('Information you can trace.','Read source-linked platform releases and ask questions ahead of scheduled town halls.','PUBLIC INFORMATION / ADVISORIES')}<div class="grid"><section><h2>Published advisories</h2>${notices.items.map(a=>`<article class="card"><div class="eyebrow">PLATFORM ADVISORY · ${date(a.created_at)}</div><h2>${esc(a.title)}</h2><p class="notice-text">${esc(a.body)}</p><p class="small">Published by ${esc(a.author)}</p><a href="${esc(a.source_url)}" target="_blank" rel="noopener noreferrer">Read original source ↗</a></article>`).join('')||empty('No source-linked advisories have been published.')}</section><section><h2>Town halls & questions</h2>${halls.items.map(h=>`<article class="card"><h3>${esc(h.title)}</h3><p>${esc(h.host)} · ${date(h.starts_at)}</p>${h.questions.map(q=>`<div class="message"><p><strong>Question:</strong> ${esc(q.body)}</p>${q.answer?`<p><strong>Platform response:</strong> ${esc(q.answer)}</p>`:isAdmin()?`<button class="small" data-action="answer-question" data-id="${q.id}">Answer</button>`:''}</div>`).join('')}${new Date(h.starts_at)>new Date()?`<form class="questionForm" data-id="${h.id}">${textarea('Ask a question','body',{min:5,max:1000})}${formEnd('Submit question')}</form>`:badge('Questions closed','closed')}</article>`).join('')||empty('No town halls scheduled.')}</section></div>`;
 }
-function tripView(){return `${heading('Plan the fuel. Know the estimate.','Use your road distance and vehicle efficiency. Costs use fresh operational prices for the fuel you select.','MOBILITY / TRIP COST')}<div class="grid"><section class="card"><form id="tripForm"><div class="form-row">${field('Road distance (km)','distanceKm',{type:'number',min:.1,max:3000,step:.1,placeholder:'Distance from your navigation app'})}${field('Fuel efficiency (km per litre)','kmPerLitre',{type:'number',min:1,max:100,step:.1,value:12})}</div>${fuelField()}<p class="small">For example: a boda at 30 km/L, a car at 12 km/L, or a truck at 3 km/L. Adjust for your actual vehicle and conditions.</p>${formEnd('Estimate trip fuel cost')}</form></section><section class="card" id="tripResult">${empty('Enter the road distance to see fuel needed and an indicative cost. Prices and consumption can change.')}</section></div>`;}
+function tripView(){
+  const mode=state.user?.role==='citizen'?state.citizenMode:'private';
+  const efficiency=mode==='truck'?3:mode==='boda'?30:12;
+  return `${heading('Plan the fuel. Know the estimate.','Use your road distance and vehicle efficiency. Costs use fresh operational prices for the fuel you select.','MOBILITY / TRIP COST')}<div class="grid"><section class="card"><form id="tripForm"><div class="form-row">${field('Road distance (km)','distanceKm',{type:'number',min:.1,max:3000,step:.1,placeholder:'Distance from your navigation app'})}${field('Fuel efficiency (km per litre)','kmPerLitre',{type:'number',min:1,max:100,step:.1,value:efficiency})}</div>${fuelField(mode==='truck'?'diesel':'petrol')}<p class="small">For example: a boda at 30 km/L, a car at 12 km/L, or a truck at 3 km/L. These are editable starting estimates, not measured consumption. Adjust for your actual vehicle and conditions.</p>${formEnd('Estimate trip fuel cost')}</form></section><section class="card" id="tripResult">${empty('Enter the road distance to see fuel needed and an indicative cost. Prices and consumption can change.')}</section></div>`;
+}
+function trendChart(rows){
+  if(!rows.length)return '';
+  const values=rows.slice(-14),max=Math.max(...values.map(r=>r.average));
+  return `<figure class="price-trend"><figcaption>Latest ${values.length} daily fuel averages <span>Zero baseline · UGX / litre</span></figcaption><div class="trend-plot" role="img" aria-label="Daily average accepted update prices, detailed in the table below">${values.map(r=>`<div class="trend-column"><strong>${Number(r.average).toLocaleString('en-UG')}</strong><div class="trend-bar-area"><span class="trend-bar ${r.fuel==='diesel'?'diesel':''}" style="height:${r.average/max*100}%"></span></div><small>${esc(String(r.day).slice(5,10))}<br>${esc(r.fuel)}</small></div>`).join('')}</div></figure>`;
+}
 const adminTabs=()=>[['dashboard','Overview'],...(isStaff()?[['reports','Price review'],['tickets','Consumer cases']]:[]),...(isAdmin()?[['applications','Operator access'],['directory','Station directory'],['publishing','Public information'],['users','Accounts']]:[]),['audit','Audit trail']];
 async function adminView(){
   if(!['admin','inspector','analyst'].includes(state.user?.role))return loginCard('This workspace is restricted to provisioned operations staff.');
   if(!adminTabs().some(([id])=>id===state.adminTab))state.adminTab='dashboard';
   const shell=`${heading('Turn observations into action.','Review data, manage cases and keep a traceable record of every decision.','OPERATIONS / AUTHORIZED STAFF')}<nav class="workspace-tabs" aria-label="Operations sections">${adminTabs().map(([id,text])=>`<button data-action="admin-tab" data-tab="${id}" class="${state.adminTab===id?'active':''}">${text}</button>`).join('')}</nav>`;
   if(state.adminTab==='dashboard'){
-    const d=await api('/admin/dashboard');return shell+`<div class="metrics">${metric(d.reports,'Total price observations')}${metric(d.review_queue,'Observations awaiting review',true)}${metric(d.overdue,'Cases beyond response target',true)}${metric(d.signed_in_today,'Accounts signed in today')}</div><div class="grid"><section class="card"><h2>Verification & response</h2><div class="list-item">Verified observations <strong>${d.verified}</strong></div><div class="list-item">Pending station applications <strong>${d.applications}</strong></div><div class="list-item">Mean time to first officer response <strong>${d.average_response_hours==null?'Not enough data':`${d.average_response_hours}h`}</strong></div><p class="small">Signed-in accounts count distinct accounts with a session created today. It is not a total visitor count.</p><button data-action="export-dashboard">Download KPI CSV</button></section><section class="card"><h2>Accepted price observations · last 30 days</h2><p class="small">Daily average of accepted updates; not a continuously sampled national index. Missing dates have no observations.</p>${d.trend.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${d.trend.map(p=>`<tr><td>${esc(String(p.day).slice(0,10))}</td><td>${esc(p.fuel)}</td><td>${money(p.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted operational price history yet.')}</section></div>`;
+    const d=await api('/admin/dashboard');return shell+`<div class="metrics">${metric(d.reports,'Total price observations')}${metric(d.review_queue,'Observations awaiting review',true)}${metric(d.overdue,'Cases beyond response target',true)}${metric(d.signed_in_today,'Accounts signed in today')}</div><div class="grid"><section class="card"><h2>Verification & response</h2><div class="list-item">Verified observations <strong>${d.verified}</strong></div><div class="list-item">Pending station applications <strong>${d.applications}</strong></div><div class="list-item">Mean time to first officer response <strong>${d.average_response_hours==null?'Not enough data':`${d.average_response_hours}h`}</strong></div><p class="small">Signed-in accounts count distinct accounts with a session created today. It is not a total visitor count.</p><button data-action="export-dashboard">Download KPI CSV</button></section><section class="card"><h2>Accepted price observations · last 30 days</h2><p class="small">Daily average of accepted updates; not a continuously sampled national index. Missing dates have no observations.</p>${trendChart(d.trend)}${d.trend.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${d.trend.map(p=>`<tr><td>${esc(String(p.day).slice(0,10))}</td><td>${esc(p.fuel)}</td><td>${money(p.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted operational price history yet.')}</section></div>`;
   }
   if(state.adminTab==='reports'){const reports=await api(`/admin/reports?limit=50&offset=${state.adminOffset}`);return shell+`<section class="card"><h2>Verification queue</h2><p class="small">Check the observed price and source before verifying. A newer published price cannot be overwritten by an older report.</p>${reportTable(reports.items,true)}${pagination(state.adminOffset,reports.items.length,'admin-page')}</section>`;}
   if(state.adminTab==='tickets'){const tickets=await api(`/tickets?limit=50&offset=${state.adminOffset}`);return shell+ticketCards(tickets.items)+pagination(state.adminOffset,tickets.items.length,'admin-page');}
@@ -211,14 +233,27 @@ function privacyView(){return `${heading('Privacy & data use.','Understand what 
 const renderers={overview,prices:stationsView,stations:stationsView,services:servicesView,analytics:analyticsView,about:aboutView,contact:contactView,credits:creditsView,report:reportView,complaints:complaintsView,community:communityView,advisories:advisoriesView,trip:tripView,activity:activityView,operator:operatorView,admin:adminView,privacy:privacyView};
 const publicPages=new Set(['overview','prices','stations','services','analytics','advisories','about','contact','credits','privacy']);
 function closeMenu(){const nav=$('#primaryNavigation');nav.classList.remove('is-open');$('#menuToggle').setAttribute('aria-expanded','false');$('#menuToggle').setAttribute('aria-label','Open navigation');}
+const compactWorkspace=()=>matchMedia('(max-width: 900px)').matches;
+function syncWorkspaceShell(){
+  const workspace=document.body.dataset.shell==='workspace',compact=compactWorkspace();
+  $('#sidebarToggle').hidden=!workspace;
+  $('#workspaceSidebar').hidden=!workspace||(compact&&!state.sidebarOpen);
+  $('#sidebarBackdrop').hidden=!(workspace&&compact&&state.sidebarOpen);
+  document.body.classList.toggle('sidebar-collapsed',workspace&&!compact&&Boolean(state.sidebarCollapsed));
+  document.body.classList.toggle('sidebar-open',workspace&&compact&&Boolean(state.sidebarOpen));
+  $('#sidebarToggle').setAttribute('aria-expanded',String(compact?Boolean(state.sidebarOpen):!state.sidebarCollapsed));
+  $('#sidebarToggle').setAttribute('aria-label',compact?(state.sidebarOpen?'Close workspace navigation':'Open workspace navigation'):(state.sidebarCollapsed?'Expand workspace navigation':'Collapse workspace navigation'));
+}
+function decorateWorkspaceNav(){const icons={overview:'grid',stations:'pin',report:'report',complaints:'shield',community:'chat',advisories:'bell',trip:'route',activity:'chart',operator:'building',admin:'grid'};document.querySelectorAll('#navigation a').forEach(a=>{const text=a.textContent;a.innerHTML=`${icon(icons[a.dataset.page])}<span class="nav-text">${esc(text)}</span>`;a.title=text;});}
 async function navigate(){
   const version=++routeVersion;state.page=location.hash.slice(1)||'overview';if(!renderers[state.page])state.page='overview';
-  closeMenu();document.body.dataset.shell=publicPages.has(state.page)?'public':'workspace';document.body.classList.toggle('is-home',state.page==='overview');
-  $('#errorBanner').hidden=true;$('#breadcrumb').textContent=`PLATFORM / ${state.page.toUpperCase()}`;
+  closeMenu();state.sidebarOpen=false;document.body.dataset.shell=publicPages.has(state.page)?'public':'workspace';document.body.classList.toggle('is-home',state.page==='overview');syncWorkspaceShell();
+  const pageNames={overview:'Home',prices:'Fuel prices',stations:'Fuel stations',services:'Citizen services',analytics:'Reports & analytics',activity:'My activity',operator:'Station workspace',admin:'Operations dashboard',complaints:'Consumer complaints',report:'Price observation',community:'Driver community',trip:'Trip planner',advisories:'Advisories',privacy:'Privacy',about:'About',contact:'Contact',credits:'Photography credits'};
+  $('#errorBanner').hidden=true;$('#breadcrumb').textContent=pageNames[state.page]||state.page;
   document.querySelectorAll('[data-page]').forEach(a=>{a.classList.toggle('active',a.dataset.page===state.page);if(a.dataset.page===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   document.querySelectorAll('[data-public-page]').forEach(a=>{if(a.dataset.publicPage===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   if(map){map.remove();map=null;}$('#view').setAttribute('aria-busy','true');$('#view').innerHTML='<div class="loading" role="status">Loading current records…</div>';
-  try{await summary();const html=await renderers[state.page]();if(version!==routeVersion)return;$('#view').innerHTML=html;if(['overview','stations','prices'].includes(state.page))initMap();if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}}
+  try{await summary();const html=await renderers[state.page]();if(version!==routeVersion)return;$('#view').innerHTML=html;if(['overview','stations','prices'].includes(state.page))initMap();if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}if(state.page==='complaints'&&state.citizenMode&&$('#complaintForm'))$('#complaintForm [name=vehicleType]').value=state.citizenMode;}
   catch(error){if(version!==routeVersion)return;$('#view').innerHTML=empty('Unable to load current records. Check your connection and use Refresh data.');showError(error);$('#connection').textContent='Unavailable';}
   finally{if(version===routeVersion)$('#view').setAttribute('aria-busy','false');}
 }
@@ -234,7 +269,11 @@ async function action(button){
   if(kind==='skip'){$('#main').focus();return;}
   if(kind==='auth')return openAuth();
   if(kind==='register')return openAuth('register');
-  if(kind==='menu'){const open=$('#primaryNavigation').classList.toggle('is-open');button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-label',open?'Close navigation':'Open navigation');return;}
+  if(kind==='menu'){state.sidebarOpen=false;syncWorkspaceShell();const open=$('#primaryNavigation').classList.toggle('is-open');button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-label',open?'Close navigation':'Open navigation');return;}
+  if(kind==='sidebar'){closeMenu();if(compactWorkspace())state.sidebarOpen=!state.sidebarOpen;else state.sidebarCollapsed=!state.sidebarCollapsed;syncWorkspaceShell();if(compactWorkspace()&&state.sidebarOpen)$('#navigation a:not([hidden])').focus();return;}
+  if(kind==='sidebar-close'){state.sidebarOpen=false;syncWorkspaceShell();$('#sidebarToggle').focus();return;}
+  if(kind==='notifications')return notificationDialog();
+  if(kind==='citizen-mode'){if(state.user?.role==='citizen'&&['private','boda','truck'].includes(button.dataset.mode)){state.citizenMode=button.dataset.mode;return navigate();}return;}
   if(kind==='home-clear'){state.position=null;$('#homeMapFilter').reset();return filterHomeMap();}
   if(kind==='account'){location.hash='activity';return;}
   if(kind==='close-auth'){ $('#authDialog').close();return;}
@@ -260,7 +299,7 @@ async function action(button){
   if(kind==='admin-page'){state.adminOffset=Number(button.dataset.offset);return navigate();}
   if(kind==='room'){state.room=Number(id);return navigate();}
   if(kind==='admin-tab'){state.adminTab=button.dataset.tab;state.adminOffset=0;return navigate();}
-  if(kind==='read-notifications'){await api('/me/notifications/read',{method:'POST',body:{ids:state.notifications.filter(n=>!n.read_at).map(n=>n.id)}});return navigate();}
+  if(kind==='read-notifications'){const shown=button.closest('#detailDialog')?state.notifications.slice(0,10):state.notifications;await api('/me/notifications/read',{method:'POST',body:{ids:shown.filter(n=>!n.read_at).map(n=>n.id)}});await refreshNotifications();if($('#detailDialog').open)$('#detailDialog').close();return navigate();}
   if(['vote','hide-message'].includes(kind)){if(!authRequired())return;await api(`/messages/${id}${kind==='vote'?'/vote':''}`,{method:kind==='vote'?'PUT':'DELETE',body:{}});return navigate();}
   if(kind==='revoke-token'){await api(`/tokens/${id}`,{method:'DELETE'});toast('Credential revoked.');return navigate();}
   if(kind==='revoke-assignment'){if(!confirm('Revoke this station assignment and its integration credentials?'))return;await api(`/admin/stations/${id}/staff/${button.dataset.user}`,{method:'DELETE'});toast('Station access revoked.');return navigate();}
@@ -280,7 +319,7 @@ async function submit(form){
   const data=Object.fromEntries(new FormData(form));const number=name=>Number(data[name]);
   if(form.id==='authForm'){
     const body={email:data.email,password:data.password};if(state.authMode==='register'){body.displayName=data.displayName;body.consent=data.consent==='on';}
-    const session=await api(`/auth/${state.authMode}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);updateAccount();$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);return navigate();
+    const session=await api(`/auth/${state.authMode}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);updateAccount();refreshNotifications().catch(()=>{});$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);return navigate();
   }
   if(form.id==='homeSearch'){state.filters={...state.filters,q:data.q,district:data.district,fuel:data.fuel,sort:'price'};state.position=null;state.offset=0;location.hash='prices';return;}
   if(form.id==='homeMapFilter')return filterHomeMap();
@@ -337,13 +376,16 @@ document.addEventListener('change',event=>{
   if(event.target.closest('#operatorPrice')){const form=$('#operatorPrice');const station=state.assigned.find(s=>s.id===Number(form.elements.stationId.value));const p=station?.prices.find(p=>p.fuel===form.elements.fuel.value);$('#currentPrice').textContent=p?`Current ${p.fuel}: ${money(p.price)} · ${p.source} · ${date(p.updated_at)}`:'No current published price for this fuel.';}
 });
 window.addEventListener('hashchange',()=>{if($('#authDialog').open)$('#authDialog').close();if($('#detailDialog').open)$('#detailDialog').close();navigate();});
-window.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('#primaryNavigation').classList.contains('is-open')){closeMenu();$('#menuToggle').focus();}});
+window.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if($('#primaryNavigation').classList.contains('is-open')){closeMenu();$('#menuToggle').focus();}if(state.sidebarOpen){state.sidebarOpen=false;syncWorkspaceShell();$('#sidebarToggle').focus();}});
+matchMedia('(max-width: 900px)').addEventListener('change',()=>{state.sidebarOpen=false;syncWorkspaceShell();});
 window.addEventListener('offline',()=>{$('#connection').textContent='Offline';showError(new Error('You are offline. Current records and submissions need a connection. Existing form entries are kept on this screen.'));});
 window.addEventListener('online',()=>{$('#connection').textContent='Connected · refresh for current records';toast('Connection restored. Refresh data or retry your submission.');});
 async function initialize(){
   $('#copyrightYear').textContent=new Date().getFullYear();
+  decorateWorkspaceNav();
   try{const session=await api('/auth/session');state.user=session.user;setCsrf(session.csrfToken);updateAccount();}catch(error){showError(error);}
   await navigate();
+  refreshNotifications().catch(()=>{});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
 }
 initialize();
