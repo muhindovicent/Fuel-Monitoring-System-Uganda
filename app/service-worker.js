@@ -1,10 +1,12 @@
-const CACHE_NAME = 'MafutaWatch Uganda-v1';
+const CACHE_NAME = 'MafutaWatch Uganda-v2-foundation';
 const STATIC_ASSETS = [
   'index.html',
   'manifest.json',
   'css/style.css',
   'js/data.js',
   'js/app.js',
+  'js/api-config.js',
+  'js/production.js',
 ];
 
 

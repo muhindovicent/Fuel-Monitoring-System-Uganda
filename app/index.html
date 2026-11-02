@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, ">
 <meta name="theme-color" content="#0A251C">
 <meta name="description" content="MafutaWatch Uganda — National Fuel Price Transparency Platform. Real-time fuel prices across Uganda.">
 <title>MafutaWatch Uganda — Driving Transparency in Uganda's Fuel Market</title>
@@ -502,6 +502,7 @@ html { scroll-padding-top: 110px; }
 </style>
 </head>
 <body>
+<aside id="mafutaModeBanner" role="status" aria-live="polite" style="background:#fef3c7;color:#422006;padding:12px 18px;font:600 14px/1.5 system-ui;text-align:center;position:relative;z-index:1000;">DEMO MODE — Independent software prototype; not an official Uganda government service. Fuel prices and metrics shown here are illustrative until verified data load from the API.</aside>
 
 
 <nav class="navbar" id="navbar">
@@ -816,7 +817,7 @@ html { scroll-padding-top: 110px; }
 <section class="gov-price-cap" id="priceCapMatrix">
   <div class="gov-price-cap-inner">
     <h2>📋 Nationwide District Price Cap Matrix</h2>
-    <p class="price-cap-sub">Maximum legally allowed retail fuel prices per region — enforced under the Petroleum Supply Act, 2003 (as amended). All prices in UGX per litre.</p>
+    <p class="price-cap-sub">Maximum legally allowed retail fuel prices per region — not verified against any law and not enforceable as price caps. All prices in UGX per litre.</p>
     <div class="gov-table-wrap">
       <table class="gov-table">
         <thead>
@@ -1225,7 +1226,7 @@ html { scroll-padding-top: 110px; }
               <span style="font-size:2rem;">🏛️</span>
               <div>
                 <div style="font-weight:700;font-size:0.9rem;">Ministry of Energy & Mineral Development <span class="verified-badge">✓ Verified</span></div>
-                <div style="font-size:0.75rem;color:var(--text-muted);">Official communications from @energy.go.ug — unalterable and authenticated.</div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">Demonstration messages only. Not authenticated government communications.</div>
               </div>
             </div>
           </div>
@@ -1265,11 +1266,11 @@ html { scroll-padding-top: 110px; }
           <div id="opLogin" class="auth-box" style="display:block;">
             <div class="icon-big">⛽</div>
             <h3>Operator Login</h3>
-            <div class="sub">Enter your registered phone number to receive an OTP.</div>
+            <div class="sub">Operator onboarding is disabled pending secure verification of station ownership.</div>
             <div class="form-group"><label>Phone Number (MTN/Airtel)</label>
               <input type="tel" id="opPhone" placeholder="+256 7XX XXX XXX" style="text-align:center;"></div>
-            <button class="btn-tool btn-tool-primary btn-tool-full" id="opLoginBtn">Send OTP</button>
-            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Demo: enter any number, use OTP: 123456</p>
+            <button class="btn-tool btn-tool-primary btn-tool-full" id="opLoginBtn" disabled aria-disabled="true">OTP unavailable</button>
+            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Operator OTP registration is not available in this release. Requests cannot be approved through the browser.</p>
           </div>
       
           <div id="opDashboard" style="display:none;">
@@ -1303,13 +1304,13 @@ html { scroll-padding-top: 110px; }
           <div id="adminLogin" class="auth-box" style="display:block;">
             <div class="icon-big">🏛️</div>
             <h3>Admin Access</h3>
-            <div class="sub">Authorized MEMD & URA personnel only.</div>
+            <div class="sub">Access restricted to approved MafutaWatch accounts; not a government authentication portal.</div>
             <div class="form-group"><label>Username</label>
               <input type="text" id="adminUser" placeholder="Username" style="text-align:center;"></div>
             <div class="form-group"><label>Access Code</label>
               <input type="password" id="adminPass" placeholder="Enter admin code" style="text-align:center;"></div>
             <button class="btn-tool btn-tool-primary btn-tool-full" id="adminLoginBtn">Access Dashboard</button>
-            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Demo: <strong>admin</strong> / <strong>admin123</strong> (Super Admin) · <strong>inspector</strong> / <strong>inspector123</strong> (Regional Inspector) · <strong>analyst</strong> / <strong>analyst123</strong> (Data Analyst)</p>
+            <p style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;">Access requires an approved server-side account. No demo administrator credentials are supported.</p>
           </div>
           <div id="adminDash" style="display:none;">
 
@@ -1666,6 +1667,8 @@ html { scroll-padding-top: 110px; }
 <div class="toast" id="toast"></div>
 
 <script src="js/data.js"></script>
+<script src="js/api-config.js"></script>
 <script src="js/app.js"></script>
+<script src="js/production.js"></script>
 </body>
 </html>

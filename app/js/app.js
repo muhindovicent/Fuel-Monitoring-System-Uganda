@@ -75,6 +75,8 @@ const DISTRICT_PRICE_CAPS = {
 };
 
 function checkPriceCap(stationId, fuel, price) {
+  // No public legal cap is established by this prototype. Never flag a legal violation.
+  return { withinCap: true, cap: null, excess: 0 };
   const s = getStation(stationId);
   if (!s) return { withinCap: true, cap: null, excess: 0 };
   const district = s.district;
@@ -353,8 +355,11 @@ function renderStationList() {
 document.addEventListener('input',e=>{if(e.target.id==='listSearch') renderStationList();});
 document.addEventListener('change',e=>{if(e.target.id==='listFuel') renderStationList();});
 
+function escapeMafutaHtml(value){ return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 /* ─── REVIEWS ─── */
 function submitReview() {
+  // Demo-only review. Production review moderation has not yet been implemented.
   const stationId=parseInt(document.getElementById('reviewStation')?.value);
   const ratingEl=document.querySelector('.star-rating');
   const rating=parseInt(ratingEl?.dataset?.rating)||0;
@@ -392,7 +397,7 @@ function renderReviews() {
         <strong>${s?s.name:'Unknown'}</strong>
         <span>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
       </div>
-      ${r.text?`<div style="color:var(--text-muted);margin-top:2px;">${r.text}</div>`:''}
+      ${r.text?`<div style="color:var(--text-muted);margin-top:2px;">${escapeMafutaHtml(r.text)}</div>`:''}
       <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;">
         ${issues.includes('long_lines')?'<span class="tag tag-red">Long lines</span>':''}
         ${issues.includes('bad_pumps')?'<span class="tag tag-yellow">Bad pumps</span>':''}
@@ -418,6 +423,8 @@ document.addEventListener('click',e=>{
   if(e.target.id==='submitReportBtn') submitReport();
 });
 function submitReport() {
+  // In connected mode the server is the only source of truth for submitted prices.
+  if (window.MafutaApi && window.MafutaApi.isLive()) return window.MafutaApi.submitPrice();
   const stationId=parseInt(document.getElementById('reportStation')?.value);
   const fuel=document.getElementById('reportFuel')?.value;
   const price=parseFloat(document.getElementById('reportPrice')?.value);
@@ -828,13 +835,13 @@ function initAdminSystem() {
   }
   if (!DB.admin.apiTokens) {
     DB.admin.apiTokens = [
-      { id:1, name:'Shell Uganda — Forecourt Sync', token:'mfw_v2_shell_fc7a3b9e1d2f4c8a0b5e',
+      { id:1, name:'Shell Uganda — Forecourt Sync', token:'DEMO_TOKEN_REMOVED',
         operator:'Shell Uganda', created:new Date(Date.now()-86400000*30).toISOString(),
         lastUsed:new Date(Date.now()-3600000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:2, name:'TotalEnergies — Pump Integration', token:'mfw_v2_total_d4e5f6a7b8c9d0e1f2a3',
+      { id:2, name:'TotalEnergies — Pump Integration', token:'DEMO_TOKEN_REMOVED',
         operator:'TotalEnergies Uganda', created:new Date(Date.now()-86400000*14).toISOString(),
         lastUsed:new Date(Date.now()-7200000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:3, name:'Stabex — Legacy API Bridge', token:'mfw_v2_stabex_b1c2d3e4f5a6b7c8d9e0',
+      { id:3, name:'Stabex — Legacy API Bridge', token:'DEMO_TOKEN_REMOVED',
         operator:'Stabex Uganda', created:new Date(Date.now()-86400000*60).toISOString(),
         lastUsed:null, status:'revoked', rateLimit:'500 req/min' },
     ];
@@ -883,11 +890,7 @@ function initAdminSystem() {
 }
 
 /* ─── ADMIN ACCOUNTS & RBAC ─── */
-const ADMIN_ACCOUNTS = [
-  { user:'admin', pass:'admin123', name:'Ministry Admin', role:'Super Admin', tabAccess:['dashboard','fraud','c2g','stations','audit','config','caps','api'] },
-  { user:'inspector', pass:'inspector123', name:'Regional Inspector', role:'Regional Inspector', tabAccess:['dashboard','fraud','c2g','audit'] },
-  { user:'analyst', pass:'analyst123', name:'Data Analyst', role:'Data Analyst', tabAccess:['dashboard','audit','caps'] },
-];
+// Credentials are verified only by the production backend. No browser-owned accounts.
 let adminSession = null;
 
 /* ─── ADMIN SUB-NAV ─── */
@@ -933,44 +936,7 @@ document.addEventListener('click', e => {
   }
 });
 
-/* ─── ADMIN LOGIN ─── */
-document.addEventListener('click', e => {
-  if(e.target.id==='adminLoginBtn'){
-    const user=document.getElementById('adminUser')?.value?.trim();
-    const pass=document.getElementById('adminPass')?.value;
-    const account=ADMIN_ACCOUNTS.find(a=>a.user===user && a.pass===pass);
-    if(account){
-      adminSession = { user:account.user, name:account.name, role:account.role, tabAccess:account.tabAccess };
-      document.getElementById('adminLogin').style.display='none';
-      document.getElementById('adminDash').style.display='block';
-      document.getElementById('adminUserName').textContent=account.name;
-      document.getElementById('adminUserRole').textContent=account.role;
-      // Show only authorized tabs
-      document.querySelectorAll('.admin-tab').forEach(t=>{
-        const pane = t.dataset.adminTab;
-        t.style.display = account.tabAccess.includes(pane) ? '' : 'none';
-        t.classList.toggle('active', pane==='dashboard');
-      });
-      document.querySelectorAll('.admin-pane').forEach(p=>p.classList.remove('active'));
-      const dash = document.getElementById('adminPane-dashboard');
-      if(dash) dash.classList.add('active');
-      adminActiveTab = 'dashboard';
-      initAdminSystem();
-      showToast('✅ Welcome, '+account.name+' ('+account.role+')');
-      renderAdminDash();
-    } else {
-      showToast('❌ Invalid credentials');
-    }
-  }
-  if(e.target.id==='adminLogoutBtn'){
-    adminSession = null;
-    document.getElementById('adminDash').style.display='none';
-    document.getElementById('adminLogin').style.display='block';
-    document.getElementById('adminUser').value='';
-    document.getElementById('adminPass').value='';
-    showToast('🚪 Logged out');
-  }
-});
+/* ─── ADMIN LOGIN: implemented in production.js using server-issued JWTs ─── */
 
 /* ─── SLA TIMERS ─── */
 function renderSLATimers() {
@@ -1422,75 +1388,15 @@ function renderAPITokens() {
   `).join('');
 }
 
-document.addEventListener('click', e => {
-  if (e.target.id==='generateTokenBtn') {
-    const name = prompt('Enter token name (e.g. "Shell Uganda — Forecourt Sync"):');
-    if (!name || !name.trim()) return;
-    const tokenStr = 'mfw_v2_'+name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
-    if (!DB.admin.apiTokens) DB.admin.apiTokens = [];
-    DB.admin.apiTokens.push({
-      id:Date.now(), name:name.trim(), token:tokenStr,
-      operator:name.trim().split('—')[0].trim(), created:new Date().toISOString(),
-      lastUsed:null, status:'active', rateLimit:'500 req/min',
-    });
-    saveDB();
-    renderAPITokens();
-    showToast('🔑 Token generated: '+tokenStr.substr(0,20)+'...');
-  }
-});
-
-function cycleToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  const newToken = 'mfw_v2_'+t.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
-  t.token = newToken;
-  t.created = new Date().toISOString();
-  saveDB();
-  renderAPITokens();
-  showToast('🔄 Token cycled: '+newToken.substr(0,20)+'...');
-}
-
-function revokeToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  t.status = 'revoked';
-  saveDB();
-  renderAPITokens();
-  showToast('✕ Token revoked: '+t.name);
-}
-
-function reactivateToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  t.status = 'active';
-  saveDB();
-  renderAPITokens();
-  showToast('↻ Token reactivated: '+t.name);
-}
+// Demo API token issuance removed; use a server-side token vault in a later release.
+function cycleToken(){ showToast('API token management is unavailable in the prototype.'); }
+function revokeToken(){ showToast('API token management is unavailable in the prototype.'); }
+function reactivateToken(){ showToast('API token management is unavailable in the prototype.'); }
 let operatorLoggedIn=false;
-document.addEventListener('click',e=>{
-  if(e.target.id==='opLoginBtn'){
-    const phone=document.getElementById('opPhone')?.value?.trim();
-    if(!phone||phone.length<8) return showToast('Please enter a valid phone number.');
-    // Simulate OTP verification
-    showToast(`📱 OTP sent to ${phone}. Use code: 123456`);
-    setTimeout(()=>{
-      const code=prompt('Enter OTP code sent to your phone:');
-      if(code==='123456'){
-        operatorLoggedIn=true;
-        document.getElementById('opLogin').style.display='none';
-        document.getElementById('opDashboard').style.display='block';
-        showToast('✅ Verified! Welcome, station operator.');
-        renderOperatorDash();
-      } else {
-        showToast('❌ Invalid OTP. Please try again.');
-      }
-    },1500);
-  }
-});
-
+// Operator OTP demo removed. Operator identity must be verified server-side.
 document.addEventListener('click',e=>{
   if(e.target.id==='opUpdatePriceBtn'){
+    if (!operatorLoggedIn) return showToast('Operator updates require secure server authentication (not enabled yet).');
     const stationId=parseInt(document.getElementById('opStation')?.value);
     const fuel=document.getElementById('opFuel')?.value;
     const price=parseFloat(document.getElementById('opPrice')?.value);
@@ -2526,14 +2432,14 @@ document.addEventListener('click', e => {
   updateHubCounts();
   renderPriceCapMatrix();
 
-  // Simulate verification of initial reports
-  setTimeout(runFraudDetection,3000);
+  // Prototype simulation only; authoritative server data is never auto-verified here.
+  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(runFraudDetection,3000);
   // Simulate price changes
-  setTimeout(checkPriceChanges,8000);
+  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(checkPriceChanges,8000);
   // Simulate community broadcasts
-  setTimeout(() => { simulateBroadcasts(); }, 15000);
+  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(() => { simulateBroadcasts(); }, 15000);
   setInterval(() => {
-    if (Math.random() > 0.4 && (DB.broadcasts||[]).length < 60) {
+    if (!(window.MafutaApi && window.MafutaApi.isLive()) && Math.random() > 0.4 && (DB.broadcasts||[]).length < 60) {
       simulateBroadcasts();
     }
   }, 60000);
