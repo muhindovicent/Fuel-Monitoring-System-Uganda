@@ -110,13 +110,15 @@ class StationsController {
   @UseGuards(AuthGuard) @Post()
   async create(@Req() req: RequestWithUser, @Body() body: CreateStationDto) {
     requireRole(req.user, ['admin']);
-    const result = await this.db.query(
-      'INSERT INTO stations(name,district,latitude,longitude) VALUES($1,$2,$3,$4) RETURNING id,name,district,latitude,longitude',
-      [body.name.trim(), body.district.trim(), body.latitude ?? null, body.longitude ?? null]
-    );
-    await this.db.query("INSERT INTO audit_events(actor_id,action,target_type,target_id) VALUES($1,'station.create','station',$2)",
-      [req.user.sub, String(result.rows[0].id)]);
-    return result.rows[0];
+    return this.db.transaction(async client => {
+      const result = await client.query(
+        'INSERT INTO stations(name,district,latitude,longitude) VALUES($1,$2,$3,$4) RETURNING id,name,district,latitude,longitude',
+        [body.name.trim(), body.district.trim(), body.latitude ?? null, body.longitude ?? null]
+      );
+      await client.query("INSERT INTO audit_events(actor_id,action,target_type,target_id) VALUES($1,'station.create','station',$2)",
+        [req.user.sub, String(result.rows[0].id)]);
+      return result.rows[0];
+    });
   }
 }
 

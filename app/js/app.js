@@ -474,20 +474,8 @@ function submitReport() {
   if(!DB.priceHistory) DB.priceHistory=[];
   DB.priceHistory.push({stationId,fuel,price,date:new Date().toISOString()});
 
-  // If trusted user (>=50), publish immediately
-  if(false){ // DEPRECATED: never publish from a browser-controlled trust score
-    report.status='verified';
-    report.verifiedAt=new Date().toISOString();
-    s[fuel]=price;
-    s.lastUpdated=new Date().toISOString();
-    DB.verifiedCount=(DB.verifiedCount||0)+1;
-    saveDB();
-    renderMapMarkers();
-    renderStationList();
-    showToast('✅ Price published! (Trusted reporter)');
-  } else {
-    showToast('DEMO ONLY: stored locally and not sent to a regulator.');
-  }
+  // Demo reports remain pending; no browser-side transition to verified exists.
+  showToast('DEMO ONLY: stored locally and not sent to a regulator.');
 
   document.getElementById('reportStation').value='';
   document.getElementById('reportPrice').value='';
