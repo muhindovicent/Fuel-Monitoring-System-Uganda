@@ -1,0 +1,71 @@
+name: mafutawatch
+x-api-environment: &api-environment
+  NODE_ENV: production
+  PORT: 3000
+  APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
+  DATABASE_URL: postgresql://mafuta_app:${DB_APP_PASSWORD:?Set a strong URL-safe runtime password}@db:5432/mafutawatch
+  PGSSLMODE: disable
+  TRUST_PROXY_HOPS: 1
+  LOG_LEVEL: info
+  ROUTING_URL: ${ROUTING_URL:-}
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mafutawatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong database bootstrap password}
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:?Set a strong URL-safe owner password}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?Set a strong URL-safe runtime password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-mafuta.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d mafutawatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [database]
+  migrate:
+    build: .
+    restart: "no"
+    environment:
+      <<: *api-environment
+      MIGRATION_DATABASE_URL: postgresql://mafuta_owner:${DB_OWNER_PASSWORD}@db:5432/mafutawatch
+    command: [node, server/cli.js, migrate]
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [database]
+  api:
+    build: .
+    restart: unless-stopped
+    environment: *api-environment
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m,mode=1777]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    expose: ["3000"]
+    networks: [database,edge]
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set the public hostname}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [edge]
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+networks:
+  database: {internal: true}
+  edge:

@@ -1,101 +1,70 @@
-# MafutaWatch Uganda — National Fuel Price Transparency Platform
+# MafutaWatch Uganda
 
-**Ministry of Energy and Mineral Development (MEMD)** | **Republic of Uganda**
+Fuel-price transparency, verified operator updates, and tracked consumer complaints. Version 3 replaces the browser-only demonstration with a Node.js API and PostgreSQL persistence.
 
----
+## What works
 
-## Repository Structure
+- Public station directory/map, fuel-specific sorting, GPS radius search, price provenance/freshness and accepted-price history.
+- Citizen accounts, price observations, independently verified-citizen consensus, manual outlier review and private activity/notifications.
+- Consumer complaints, private evidence uploads/downloads, case conversations, staff assignment, validated transitions and a server-owned 24h response target.
+- Station-access applications with license evidence and manual approval; assigned operators publish audited pump prices and issue/revoke station-scoped integration credentials.
+- Real operations metrics, role-aware workspaces, append-only audit records, source-linked advisories, effective/expiring district directives, corridor messages and scheduled town-hall questions/responses.
+- Responsive keyboard-accessible UI, offline shell, explicit unavailable/error states and no cached private API responses.
 
+No default passwords, invented government releases, fabricated analytics, browser-controlled roles or simulated SMS delivery are included. Demo station fixtures are optional, explicitly labeled, excluded from live price analytics, and blocked from production seeding.
+
+## Requirements
+
+- Node.js 24 LTS and npm.
+- PostgreSQL 17 (16+ should be compatible; CI targets 17). No extensions required.
+- Docker Engine + Compose v2 for the supplied deployment, or a managed PostgreSQL service and Node host.
+
+## Local development
+
+1. Install dependencies: `npm ci`.
+2. Create a PostgreSQL database and schema-owner/runtime users. See [`deploy/init-db.sh`](deploy/init-db.sh) and [`deploy/runtime-grants.sql`](deploy/runtime-grants.sql) for grants.
+3. Copy `.env.example` to `.env`, set `DATABASE_URL`, `MIGRATION_DATABASE_URL` and `APP_ORIGIN=http://localhost:3000`.
+4. Run `npm run db:migrate`.
+5. Optionally run `npm run db:seed` **only for demonstration data in development**.
+6. Provision an administrator. Supply a unique password through the `USER_PASSWORD` environment variable, then run:
+
+   ```text
+   npm run db:user -- admin@example.org admin "Platform administrator"
+   ```
+
+   Remove `USER_PASSWORD` from your shell environment afterward. The CLI also provisions `inspector`, `analyst`, `operator`, and `citizen` accounts or resets an existing account; it revokes previous sessions and API credentials.
+
+7. Run `npm run dev` and open **http://localhost:3000**. The server serves `app/` at `/`; opening HTML directly bypasses the API and is unsupported.
+
+Public registration creates only citizen accounts. Operators request access through the station workspace; an administrator verifies license evidence and approves their named station. Official staff accounts are provisioned using the CLI.
+
+## Verification
+
+```text
+npm run check
+npx playwright install chromium
+npm run test:e2e
+npm audit --audit-level=moderate
 ```
-D:\FUEL SYSTEM UGANDA\
-│
-├── README.md                               # This file — project overview
-├── index.html                              # Project documentation entry page
-├── MAFUTAWATCH_UGANDA_FULL_SYSTEM.md       # Full system implementation reference (1490 lines)
-│
-├── app\
-│   ├── index.html                          # PWA shell — gov.za directory layout
-│   ├── css\
-│   │   └── style.css                       # Institutional government design system
-│   ├── js\
-│   │   ├── app.js                          # All application logic (~2300 lines)
-│   │   └── data.js                         # Station, operator, seed data
-│   ├── manifest.json                       # PWA manifest
-│   └── service-worker.js                   # Offline cache strategy
-│
-├── docs\
-│   ├── 01_SYSTEM_TOPOGRAPHY.md             # Cloud infra diagram, data flows, scaling
-│   ├── 02_PRICE_VERIFICATION.md            # (placeholder) Verification pipeline spec
-│   ├── 03_USSD_SESSION_FLOW.md             # Redis state machine, menu handlers, i18n
-│   ├── 04_SECURITY_FRAMEWORK.md            # 5-layer Sybil defense, trust engine, rate limiting
-│   ├── 05_SITE_MAP.md                      # App navigation tree, component hierarchy
-│   ├── 06_ERD.md                           # Entity Relationship Diagram — data model
-│   └── 07_UI_WIREFRAME.md                  # gov.za directory layout wireframe blueprint
-│
-└── sql\
-    └── 001_schema_ddl.sql                  # Full PostgreSQL DDL: PostGIS, partitioning, RLS
-```
 
-## Deliverables Summary
+`npm test` uses an isolated embedded PostgreSQL engine (PGlite). To run the same suite against native PostgreSQL, set `TEST_DATABASE_URL` to a disposable database named **mafuta_test**. Tests reset that database's public schema. CI runs both variants. Browser tests have their own isolated fixtures and must not inherit `TEST_DATABASE_URL`.
 
-| # | Deliverable | File | Key Highlights |
-|---|---|---|---|
-| **1** | System Topography Mapping | `docs/01_SYSTEM_TOPOGRAPHY.md` | Cloud-infra Mermaid diagram; Kafka event bus; 7 worker microservices; CDN→API Gateway→Queue→Worker→DB pipeline |
-| **2** | Database Schema DDL | `sql/001_schema_ddl.sql` | 18 tables; PostGIS `GEOGRAPHY(POINT,4326)` spatial indexing; monthly partitioning; trust score triggers; RLS policies |
-| **3** | USSD Session Flow | `docs/03_USSD_SESSION_FLOW.md` | Redis hash state machine with 12 states; distributed locking; Kafka-published reports; 3.4s budget; Luganda/Runyakitara i18n |
-| **4** | Security Framework | `docs/04_SECURITY_FRAMEWORK.md` | 5-layer defense; moving median anti-cheat; consensus verification; geospatial DBSCAN SIM farm detection |
-| **5** | Site Map | `docs/05_SITE_MAP.md` | Full navigation tree; tool pane hierarchy; component dependency graph |
-| **6** | Entity Relationship Diagram | `docs/06_ERD.md` | localStorage data model; relationship graph; field reference tables |
-| **7** | UI Wireframe Blueprint | `docs/07_UI_WIREFRAME.md` | gov.za directory layout; breadcrumb → profile block → leadership → tool panes hierarchy |
+On a machine with an installed compatible Chrome/Edge, `PLAYWRIGHT_CHANNEL=chrome` or `msedge` can avoid downloading a test browser. See [`docs/11_VERIFICATION.md`](docs/11_VERIFICATION.md) for recorded local results and limits.
 
-## Design Direction
+## Deployment
 
-The application is modeled after the **South African Government contact directory** ([gov.za/contact-directory/soe](https://www.gov.za/about-government/contact-directory/soe/central-energy-fund-cef)) — institutional breadcrumb hierarchy, split-column metadata blocks, and leadership framework rows — while integrating real-time fuel price mapping, C2G ticketing with SLA enforcement, P2P corridor chat, G2C advisory board, and a nationwide District Price Cap matrix.
+Follow [`docs/10_OPERATIONS.md`](docs/10_OPERATIONS.md) for HTTPS Compose deployment, migrations, privileged-account provisioning, backups/restores, logging, credential rotation and release procedure. `.env` is excluded from version control and container images. Never use demo fixtures as an operational station register.
 
-## Feature Overview
+## Architecture and review
 
-- **Smart Map** — Leaflet-based with radius filters, station clustering, turn-by-turn directions
-- **Trip Cost Planner** — From/To/Distance-based petrol/diesel cost estimation
-- **Price Reporting** — Citizen-submitted prices with GPS verification and receipt upload
-- **Station Directory** — Searchable station list with trust scores, reviews, price history
-- **P2P Corridor Chat** — Real-time chat rooms for truck drivers/boda boda riders along major routes
-- **C2G Exploitation Ticketing** — File complaints with vehicle-type categorization, receipt evidence, 24h SLA enforcement
-- **G2C Advisory Board** — Verified government advisories, AMA sessions, broadcast alerts
-- **District Price Cap Matrix** — Nationwide table showing legal maximum prices per district with auto-flagging of breaches
-- **Operator Console** — Station operators manage prices, view reports, KYC pipeline
-- **Admin Analytics** — Fraud detection engine, SLA timer dashboard, audit ledger, trust scoring
-- **PWA Offline** — Service worker caching, manifest install prompt, offline data queue
+| Resource | Purpose |
+|---|---|
+| [`docs/08_REVIEW.md`](docs/08_REVIEW.md) | Baseline bugs/security review with evidence and remediation |
+| [`docs/09_ARCHITECTURE.md`](docs/09_ARCHITECTURE.md) | Implemented architecture, entities, access matrix and workflows |
+| [`docs/12_API.md`](docs/12_API.md) | API endpoint inventory and integration examples |
+| `server/migrations/` | Executable, checksummed PostgreSQL migrations |
+| `server/` | API, authorization, transactional pricing and administrative CLI |
+| `app/` | API-backed PWA frontend |
+| `test/` | Regression and real-browser workflows |
 
-## Stack
-
-- **Frontend:** Vanilla JS PWA + Leaflet/OpenStreetMap
-- **Persistence:** localStorage under `mafuta_watch_v2` key
-- **Routing:** OSRM-based trip calculations (open endpoint)
-- **Maps:** OpenStreetMap tiles + Leaflet routing machine
-- **Design:** Government institutional (inspired by gov.za directory layout)
-
-## Core Architecture Decisions
-
-1. **Single-page PWA** — All features in one HTML shell with tab-based navigation for offline-first mobile use
-2. **localStorage as primary store** — Zero backend dependency; `mafuta_watch_v2` key holds all entities
-3. **gov.za directory as structural template** — Institutional layout signals high trust and regulatory authority
-4. **Tiered trust system** — Graduated reputation from anonymous citizen reports to verified operator/admin roles
-5. **SLA enforcement via countdown timer** — C2G tickets auto-flag if investigation exceeds 24h window
-
-## Scaling Targets
-
-- 150,000 concurrent USSD/WhatsApp sessions during peak hours
-- < 4,000ms USSD response (carrier timeout compliance)
-- < 500ms PWA API P95 latency for spatial queries
-- 12-month data retention with auto-archival
-
-## Regulatory Compliance
-
-- Uganda Data Protection and Privacy Act (2019)
-- NITA-U e-Government standards alignment
-- Bank of Uganda financial data accuracy guidelines
-
----
-
-*Platform commissioned by Ministry of Energy and Mineral Development, Republic of Uganda*
-*Reference Architecture v2.0 — May 2026*
+The original architecture papers, documentation HTML and `docs/reference/legacy_schema.sql` are retained as **historical design references**, not executable deployment instructions. The original Kafka/Redis/USSD/WhatsApp microservices and national-capacity targets were proposals. External delivery channels, operator identity integrations, production station records and regulatory directives require real providers/source records and operational validation.

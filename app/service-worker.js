@@ -1,98 +1,21 @@
-const CACHE_NAME = 'MafutaWatch Uganda-v1';
-const STATIC_ASSETS = [
-  'index.html',
-  'manifest.json',
-  'css/style.css',
-  'js/data.js',
-  'js/app.js',
-];
-
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    }).then(() => self.skipWaiting())
-  );
+const CACHE='mafutawatch-shell-v3';
+const ASSETS=['/','/index.html','/css/style.css','/js/api.js','/js/app.js','/manifest.json','/icon.svg','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js'];
+const allowed=new Set(ASSETS);
+self.addEventListener('install',event=>{
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));
 });
-
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    }).then(() => self.clients.claim())
-  );
+self.addEventListener('activate',event=>{
+  event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('mafutawatch-shell-')&&key!==CACHE||key==='MafutaWatch Uganda-v1').map(key=>caches.delete(key)))).then(()=>self.clients.claim()));
 });
-
-
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
-
-  
-  if (request.method !== 'GET') return;
-
-  
-  if (url.hostname === 'unpkg.com' || url.hostname === 'tile.openstreetmap.org') {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, copy);
-            });
-          }
-          return response;
-        }).catch(() => {
-          // Return a placeholder for tiles when offline
-          return new Response(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><rect fill="#e2e8f0" width="256" height="256"/><text x="128" y="128" text-anchor="middle" fill="#94a3b8" font-size="14">Offline</text></svg>',
-            { headers: { 'Content-Type': 'image/svg+xml' } }
-          );
-        });
-      })
-    );
-    return;
-  }
-
-
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response && response.ok && response.type === 'basic') {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, copy);
-          });
-        }
-        return response;
-      })
-      .catch(() => {
-        return caches.match(request).then((cached) => {
-          if (cached) return cached;
-          // If index.html wasn't cached, return a minimal offline page
-          if (request.mode === 'navigate') {
-            return caches.match('index.html');
-          }
-          return new Response('Offline', { status: 503 });
-        });
-      })
-  );
-});
-
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'CACHE_UPDATED') {
-    caches.open(CACHE_NAME).then((cache) => {
-      if (event.data.payload) {
-        cache.put(event.data.url, new Response(JSON.stringify(event.data.payload)));
-      }
-    });
-  }
+self.addEventListener('fetch',event=>{
+  const request=event.request,url=new URL(request.url);
+  // No API, private evidence, map tile or arbitrary third-party caching.
+  if(request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return;
+  if(!allowed.has(url.pathname)&&request.mode!=='navigate')return;
+  event.respondWith(fetch(request).then(response=>{
+    if(response.ok&&allowed.has(url.pathname)){
+      const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(url.pathname,copy)));
+    }
+    return response;
+  }).catch(async()=>await caches.match(request.mode==='navigate'?'/':url.pathname)||new Response('Offline. Reconnect to load this resource.',{status:503})));
 });

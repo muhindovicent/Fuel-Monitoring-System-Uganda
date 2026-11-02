@@ -1,0 +1,37 @@
+{
+  "name": "mafutawatch-uganda",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "overrides": { "minimatch": "^11.0.1" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --env-file-if-exists=.env --watch server/index.js",
+    "db:migrate": "node --env-file-if-exists=.env server/cli.js migrate",
+    "db:user": "node --env-file-if-exists=.env server/cli.js user",
+    "db:seed": "node --env-file-if-exists=.env server/cli.js seed",
+    "db:maintain": "node --env-file-if-exists=.env server/cli.js maintain",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test:e2e": "playwright test",
+    "lint": "eslint server app/js test playwright.config.js",
+    "check": "npm run lint && npm test"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "file-type": "^21.0.0",
+    "helmet": "^8.1.0",
+    "leaflet": "^1.9.4",
+    "pg": "^8.16.3",
+    "pino": "^10.0.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.0",
+    "eslint": "^10.14.0",
+    "globals": "^16.5.0"
+  }
+}

@@ -1,5 +1,7 @@
 # Entity Relationship Diagram — MafutaWatch Uganda
 
+> Historical localStorage model, superseded by `server/migrations/` and the v3 ERD in [09_ARCHITECTURE.md](09_ARCHITECTURE.md). Browser-controlled state is no longer authoritative.
+
 > **Version:** 2.0  
 > **Storage:** Browser `localStorage` under key `mafuta_watch_v2`  
 > **Scope:** All entities — both dynamic (in `DB`) and static (in `data.js`)

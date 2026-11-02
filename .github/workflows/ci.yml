@@ -1,0 +1,65 @@
+name: Verify MafutaWatch
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: mafuta_test
+          POSTGRES_PASSWORD: test-password-ci-only
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres -d mafuta_test" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm audit --audit-level=moderate
+      - name: Embedded PostgreSQL regression suite
+        run: npm test
+      - name: PostgreSQL 17 regression suite
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test-password-ci-only@localhost:5432/mafuta_test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Build runtime container
+        run: docker build --tag mafutawatch:ci .
+      - name: Compose HTTPS and runtime-role smoke test
+        env:
+          APP_ORIGIN: https://localhost
+          SITE_ADDRESS: localhost
+          POSTGRES_PASSWORD: ci-bootstrap-only-82f459
+          DB_OWNER_PASSWORD: ci-owner-only-38a960
+          DB_APP_PASSWORD: ci-runtime-only-93b618
+        run: |
+          docker compose config --quiet
+          docker compose up --build -d
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --insecure https://localhost/health/ready; then
+              curl --silent --fail --insecure https://localhost/api/v1/summary
+              curl --silent --fail --insecure --output /dev/null https://localhost/api/v1/auth/register \
+                --header 'Origin: https://localhost' --header 'X-Requested-With: MafutaWatch' \
+                --header 'Content-Type: application/json' \
+                --data '{"email":"smoke@example.test","password":"CI-smoke-only-password-2026!","displayName":"Smoke test","consent":true}'
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-artifacts
+          path: test-results/
+          retention-days: 7

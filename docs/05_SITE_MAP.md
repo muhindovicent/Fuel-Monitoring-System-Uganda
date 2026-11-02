@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — Site Map & Architecture
 
+> Historical v2 browser-demo reference. Current v3 routes and workspaces are implemented in `app/js/app.js`; see [09_ARCHITECTURE.md](09_ARCHITECTURE.md) and [12_API.md](12_API.md). Credentials and line references below are obsolete.
+
 > **File:** `docs/05_SITE_MAP.md`  
 > **Source:** `app/index.html` (1621 lines), `app/js/data.js` (117 lines), `app/js/app.js` (2286 lines)  
 > **DB Store Key:** `mafuta_watch_v2` (localStorage)

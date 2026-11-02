@@ -1,3 +1,5 @@
+-- HISTORICAL DESIGN ONLY. Contains known execution/security defects.
+-- Do not execute. Active migrations are in server/migrations/.
 -- ============================================================================
 -- Matano-Meters: National Fuel Price Transparency Platform
 -- Production-Ready PostgreSQL DDL Schema
