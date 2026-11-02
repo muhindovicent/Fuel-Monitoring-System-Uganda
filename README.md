@@ -1,6 +1,6 @@
 # MafutaWatch Uganda — National Fuel Price Transparency Platform
 
-**Ministry of Energy and Mineral Development (MEMD)** | **Republic of Uganda**
+**Independent software prototype** | **Not an official ministry platform**
 
 ---
 
@@ -97,5 +97,9 @@ The application is modeled after the **South African Government contact director
 
 ---
 
-*Platform commissioned by Ministry of Energy and Mineral Development, Republic of Uganda*
+*Independent concept prototype. No verified government commissioning or endorsement.*
 *Reference Architecture v2.0 — May 2026*
+
+## Production foundation branch (November 2026)
+
+This repo contains both a **demonstration PWA** and an incremental production API in `backend/`. The browser's example prices, fictional accounts and localStorage interactions are **not authoritative data**. See [backend/README.md](backend/README.md), [docs/08_AUDIT_AND_RELEASE_GATES.md](docs/08_AUDIT_AND_RELEASE_GATES.md), and [docs/09_PWA_API_INTEGRATION.md](docs/09_PWA_API_INTEGRATION.md) before deployment. This project is not independently verified as commissioned by or affiliated with a Ugandan government agency; remove the original commissioning statement unless written authorization exists.

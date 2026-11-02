@@ -75,6 +75,8 @@ const DISTRICT_PRICE_CAPS = {
 };
 
 function checkPriceCap(stationId, fuel, price) {
+  // No public legal cap is established by this prototype. Never flag a legal violation.
+  return { withinCap: true, cap: null, excess: 0 };
   const s = getStation(stationId);
   if (!s) return { withinCap: true, cap: null, excess: 0 };
   const district = s.district;
@@ -144,6 +146,7 @@ function initMap() {
 }
 
 function renderMapMarkers(fuelFilter, radiusKm) {
+  if (!map) return; // The API may resolve before Leaflet is initialized.
   markers.forEach(m=>map.removeLayer(m)); markers=[];
   const fuel=fuelFilter||document.getElementById('mapFuel')?.value||'all';
   const radius=radiusKm||parseInt(document.getElementById('mapRadius')?.value)||0;
@@ -154,6 +157,7 @@ function renderMapMarkers(fuelFilter, radiusKm) {
   if (radius>0 && window._userLat!=null) userPos={lat:window._userLat,lng:window._userLng};
 
   let stations=getStations().filter(s=>{
+    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return false;
     if(search&&!s.name.toLowerCase().includes(search)&&!s.area.toLowerCase().includes(search)
        &&!s.district.toLowerCase().includes(search)) return false;
     if(fuel!=='all'&&!s[fuel]) return false;
@@ -192,8 +196,8 @@ function renderMapMarkers(fuelFilter, radiusKm) {
       s.kerosene?`<div>Kerosene: UGX ${s.kerosene.toLocaleString()}/L</div>`:'',
     ].filter(Boolean).join('');
     m.bindPopup(`
-      <div class="popup-station">${s.name}</div>
-      <div class="popup-operator">${op.name} · ${s.area}, ${s.district}</div>
+      <div class="popup-station">${escapeMafutaHtml(s.name)}</div>
+      <div class="popup-operator">${escapeMafutaHtml(op.name)} · ${escapeMafutaHtml(s.area)}, ${escapeMafutaHtml(s.district)}</div>
       <div style="margin:6px 0;">${pricesHtml}</div>
       <button class="popup-action" onclick="openStationModal(${s.id})">View Details + Report</button>
     `);
@@ -259,7 +263,7 @@ function openStationModal(id) {
     rContainer.innerHTML=reviews.slice(-3).reverse().map(r=>`
       <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
         <div>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} <span style="color:var(--text-muted);font-size:0.7rem;">${new Date(r.date).toLocaleDateString()}</span></div>
-        <div style="color:var(--text-muted);font-size:0.75rem;">${r.text||''} ${r.issues?r.issues.map(i=>'<span class="tag tag-red">'+i+'</span>').join(' '):''}</div>
+        <div style="color:var(--text-muted);font-size:0.75rem;">${escapeMafutaHtml(r.text||'')} ${r.issues?r.issues.map(i=>'<span class="tag tag-red">'+i+'</span>').join(' '):''}</div>
       </div>
     `).join('');
   }
@@ -353,8 +357,12 @@ function renderStationList() {
 document.addEventListener('input',e=>{if(e.target.id==='listSearch') renderStationList();});
 document.addEventListener('change',e=>{if(e.target.id==='listFuel') renderStationList();});
 
+function escapeMafutaHtml(value){ return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 /* ─── REVIEWS ─── */
 function submitReview() {
+  if (window.MafutaApi?.isLive()) return showToast('Reviews are not available in connected mode yet.');
+  // Demo-only review. Production review moderation has not yet been implemented.
   const stationId=parseInt(document.getElementById('reviewStation')?.value);
   const ratingEl=document.querySelector('.star-rating');
   const rating=parseInt(ratingEl?.dataset?.rating)||0;
@@ -392,7 +400,7 @@ function renderReviews() {
         <strong>${s?s.name:'Unknown'}</strong>
         <span>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
       </div>
-      ${r.text?`<div style="color:var(--text-muted);margin-top:2px;">${r.text}</div>`:''}
+      ${r.text?`<div style="color:var(--text-muted);margin-top:2px;">${escapeMafutaHtml(r.text)}</div>`:''}
       <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;">
         ${issues.includes('long_lines')?'<span class="tag tag-red">Long lines</span>':''}
         ${issues.includes('bad_pumps')?'<span class="tag tag-yellow">Bad pumps</span>':''}
@@ -410,7 +418,7 @@ function populateReportForm() {
   sel.innerHTML='<option value="">Select a station...</option>';
   getStations().forEach(s=>{
     const op=getOp(s.op);
-    sel.innerHTML+=`<option value="${s.id}">${s.name} — ${op.short}, ${s.area}</option>`;
+    sel.innerHTML+=`<option value="${s.id}">${escapeMafutaHtml(s.name)} — ${escapeMafutaHtml(op.short)}, ${escapeMafutaHtml(s.area)}</option>`;
   });
 }
 
@@ -418,6 +426,8 @@ document.addEventListener('click',e=>{
   if(e.target.id==='submitReportBtn') submitReport();
 });
 function submitReport() {
+  // In connected mode the server is the only source of truth for submitted prices.
+  if (window.MafutaApi && window.MafutaApi.isLive()) return window.MafutaApi.submitPrice();
   const stationId=parseInt(document.getElementById('reportStation')?.value);
   const fuel=document.getElementById('reportFuel')?.value;
   const price=parseFloat(document.getElementById('reportPrice')?.value);
@@ -464,20 +474,8 @@ function submitReport() {
   if(!DB.priceHistory) DB.priceHistory=[];
   DB.priceHistory.push({stationId,fuel,price,date:new Date().toISOString()});
 
-  // If trusted user (>=50), publish immediately
-  if((DB.trustScore||0)>=50){
-    report.status='verified';
-    report.verifiedAt=new Date().toISOString();
-    s[fuel]=price;
-    s.lastUpdated=new Date().toISOString();
-    DB.verifiedCount=(DB.verifiedCount||0)+1;
-    saveDB();
-    renderMapMarkers();
-    renderStationList();
-    showToast('✅ Price published! (Trusted reporter)');
-  } else {
-    showToast('📝 Price submitted! Awaiting verification (3 reports needed).');
-  }
+  // Demo reports remain pending; no browser-side transition to verified exists.
+  showToast('DEMO ONLY: stored locally and not sent to a regulator.');
 
   document.getElementById('reportStation').value='';
   document.getElementById('reportPrice').value='';
@@ -602,7 +600,7 @@ function renderActivity() {
     const sl=r.status==='verified'?'✅ Verified':r.status==='rejected'?'❌ Rejected':'⏳ Pending';
     return `<div class="station-card" style="cursor:default;">
       <div class="info">
-        <div class="name">${r.stationName}</div>
+        <div class="name">${escapeMafutaHtml(r.stationName)}</div>
         <div class="meta">${r.fuel.charAt(0).toUpperCase()+r.fuel.slice(1)} · UGX ${r.price.toLocaleString()} · ${new Date(r.timestamp).toLocaleDateString()}</div>
       </div>
       <span class="badge badge-${sc}">${sl}</span>
@@ -828,13 +826,13 @@ function initAdminSystem() {
   }
   if (!DB.admin.apiTokens) {
     DB.admin.apiTokens = [
-      { id:1, name:'Shell Uganda — Forecourt Sync', token:'mfw_v2_shell_fc7a3b9e1d2f4c8a0b5e',
+      { id:1, name:'Shell Uganda — Forecourt Sync', token:'DEMO_TOKEN_REMOVED',
         operator:'Shell Uganda', created:new Date(Date.now()-86400000*30).toISOString(),
         lastUsed:new Date(Date.now()-3600000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:2, name:'TotalEnergies — Pump Integration', token:'mfw_v2_total_d4e5f6a7b8c9d0e1f2a3',
+      { id:2, name:'TotalEnergies — Pump Integration', token:'DEMO_TOKEN_REMOVED',
         operator:'TotalEnergies Uganda', created:new Date(Date.now()-86400000*14).toISOString(),
         lastUsed:new Date(Date.now()-7200000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:3, name:'Stabex — Legacy API Bridge', token:'mfw_v2_stabex_b1c2d3e4f5a6b7c8d9e0',
+      { id:3, name:'Stabex — Legacy API Bridge', token:'DEMO_TOKEN_REMOVED',
         operator:'Stabex Uganda', created:new Date(Date.now()-86400000*60).toISOString(),
         lastUsed:null, status:'revoked', rateLimit:'500 req/min' },
     ];
@@ -883,11 +881,7 @@ function initAdminSystem() {
 }
 
 /* ─── ADMIN ACCOUNTS & RBAC ─── */
-const ADMIN_ACCOUNTS = [
-  { user:'admin', pass:'admin123', name:'Ministry Admin', role:'Super Admin', tabAccess:['dashboard','fraud','c2g','stations','audit','config','caps','api'] },
-  { user:'inspector', pass:'inspector123', name:'Regional Inspector', role:'Regional Inspector', tabAccess:['dashboard','fraud','c2g','audit'] },
-  { user:'analyst', pass:'analyst123', name:'Data Analyst', role:'Data Analyst', tabAccess:['dashboard','audit','caps'] },
-];
+// Credentials are verified only by the production backend. No browser-owned accounts.
 let adminSession = null;
 
 /* ─── ADMIN SUB-NAV ─── */
@@ -933,44 +927,7 @@ document.addEventListener('click', e => {
   }
 });
 
-/* ─── ADMIN LOGIN ─── */
-document.addEventListener('click', e => {
-  if(e.target.id==='adminLoginBtn'){
-    const user=document.getElementById('adminUser')?.value?.trim();
-    const pass=document.getElementById('adminPass')?.value;
-    const account=ADMIN_ACCOUNTS.find(a=>a.user===user && a.pass===pass);
-    if(account){
-      adminSession = { user:account.user, name:account.name, role:account.role, tabAccess:account.tabAccess };
-      document.getElementById('adminLogin').style.display='none';
-      document.getElementById('adminDash').style.display='block';
-      document.getElementById('adminUserName').textContent=account.name;
-      document.getElementById('adminUserRole').textContent=account.role;
-      // Show only authorized tabs
-      document.querySelectorAll('.admin-tab').forEach(t=>{
-        const pane = t.dataset.adminTab;
-        t.style.display = account.tabAccess.includes(pane) ? '' : 'none';
-        t.classList.toggle('active', pane==='dashboard');
-      });
-      document.querySelectorAll('.admin-pane').forEach(p=>p.classList.remove('active'));
-      const dash = document.getElementById('adminPane-dashboard');
-      if(dash) dash.classList.add('active');
-      adminActiveTab = 'dashboard';
-      initAdminSystem();
-      showToast('✅ Welcome, '+account.name+' ('+account.role+')');
-      renderAdminDash();
-    } else {
-      showToast('❌ Invalid credentials');
-    }
-  }
-  if(e.target.id==='adminLogoutBtn'){
-    adminSession = null;
-    document.getElementById('adminDash').style.display='none';
-    document.getElementById('adminLogin').style.display='block';
-    document.getElementById('adminUser').value='';
-    document.getElementById('adminPass').value='';
-    showToast('🚪 Logged out');
-  }
-});
+/* ─── ADMIN LOGIN: implemented in production.js using server-issued JWTs ─── */
 
 /* ─── SLA TIMERS ─── */
 function renderSLATimers() {
@@ -993,7 +950,7 @@ function renderSLATimers() {
     return `<div class="sla-card ${cls}">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <span style="font-weight:600;font-size:0.82rem;">Ticket #${t.id}</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);">${t.stationName}</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);">${escapeMafutaHtml(t.stationName)}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
         <div class="sla-timer" style="font-size:1.4rem;font-weight:800;font-family:var(--font-mono);">${hours}h ${minutes}m</div>
@@ -1422,75 +1379,15 @@ function renderAPITokens() {
   `).join('');
 }
 
-document.addEventListener('click', e => {
-  if (e.target.id==='generateTokenBtn') {
-    const name = prompt('Enter token name (e.g. "Shell Uganda — Forecourt Sync"):');
-    if (!name || !name.trim()) return;
-    const tokenStr = 'mfw_v2_'+name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
-    if (!DB.admin.apiTokens) DB.admin.apiTokens = [];
-    DB.admin.apiTokens.push({
-      id:Date.now(), name:name.trim(), token:tokenStr,
-      operator:name.trim().split('—')[0].trim(), created:new Date().toISOString(),
-      lastUsed:null, status:'active', rateLimit:'500 req/min',
-    });
-    saveDB();
-    renderAPITokens();
-    showToast('🔑 Token generated: '+tokenStr.substr(0,20)+'...');
-  }
-});
-
-function cycleToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  const newToken = 'mfw_v2_'+t.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
-  t.token = newToken;
-  t.created = new Date().toISOString();
-  saveDB();
-  renderAPITokens();
-  showToast('🔄 Token cycled: '+newToken.substr(0,20)+'...');
-}
-
-function revokeToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  t.status = 'revoked';
-  saveDB();
-  renderAPITokens();
-  showToast('✕ Token revoked: '+t.name);
-}
-
-function reactivateToken(id) {
-  const t = (DB.admin.apiTokens||[]).find(x=>x.id===id);
-  if (!t) return;
-  t.status = 'active';
-  saveDB();
-  renderAPITokens();
-  showToast('↻ Token reactivated: '+t.name);
-}
+// Demo API token issuance removed; use a server-side token vault in a later release.
+function cycleToken(){ showToast('API token management is unavailable in the prototype.'); }
+function revokeToken(){ showToast('API token management is unavailable in the prototype.'); }
+function reactivateToken(){ showToast('API token management is unavailable in the prototype.'); }
 let operatorLoggedIn=false;
-document.addEventListener('click',e=>{
-  if(e.target.id==='opLoginBtn'){
-    const phone=document.getElementById('opPhone')?.value?.trim();
-    if(!phone||phone.length<8) return showToast('Please enter a valid phone number.');
-    // Simulate OTP verification
-    showToast(`📱 OTP sent to ${phone}. Use code: 123456`);
-    setTimeout(()=>{
-      const code=prompt('Enter OTP code sent to your phone:');
-      if(code==='123456'){
-        operatorLoggedIn=true;
-        document.getElementById('opLogin').style.display='none';
-        document.getElementById('opDashboard').style.display='block';
-        showToast('✅ Verified! Welcome, station operator.');
-        renderOperatorDash();
-      } else {
-        showToast('❌ Invalid OTP. Please try again.');
-      }
-    },1500);
-  }
-});
-
+// Operator OTP demo removed. Operator identity must be verified server-side.
 document.addEventListener('click',e=>{
   if(e.target.id==='opUpdatePriceBtn'){
+    if (!operatorLoggedIn) return showToast('Operator updates require secure server authentication (not enabled yet).');
     const stationId=parseInt(document.getElementById('opStation')?.value);
     const fuel=document.getElementById('opFuel')?.value;
     const price=parseFloat(document.getElementById('opPrice')?.value);
@@ -1817,7 +1714,7 @@ function updateBroadcastTicker() {
   const items = recent.map(b => {
     const time = new Date(b.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const prefix = b.verified ? '✅ <strong>Verified:</strong>' : '📢 <strong>Broadcast:</strong>';
-    return `<div class="ticker-item">${prefix} ${b.text} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
+    return `<div class="ticker-item">${prefix} ${escapeMafutaHtml(b.text)} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
   }).join('');
   ticker.innerHTML = items || '<div class="ticker-item" style="color:var(--text-dim);">No broadcasts yet. Be the first to share!</div>';
 }
@@ -1910,7 +1807,7 @@ function renderP2PMessages(roomId) {
       <div class="msg-avatar">${initials}</div>
       <div class="msg-content">
         <div class="msg-author">${m.author} ${trustedBadge} <span class="msg-time">${time}</span></div>
-        <div class="msg-text">${m.text}</div>
+        <div class="msg-text">${escapeMafutaHtml(m.text)}</div>
         <div class="msg-actions">
           <button onclick="upvoteP2PMsg(${roomId},${m.id})">👍 ${m.upvotes || 0}</button>
         </div>
@@ -1983,6 +1880,7 @@ document.addEventListener('click', e => {
 });
 
 function submitC2GTicket() {
+  if (window.MafutaApi?.isLive()) return showToast('Official complaint submission is not yet available.');
   const category = document.getElementById('c2gCategory')?.value;
   const stationId = parseInt(document.getElementById('c2gStation')?.value);
   const date = document.getElementById('c2gDate')?.value;
@@ -2027,7 +1925,7 @@ function submitC2GTicket() {
 
   DB.trustScore = Math.min(100, (DB.trustScore || 0) + 2);
   saveDB();
-  showToast(`✅ Ticket ${ticketId} generated! A ministry regulator will be assigned within 24 hrs.`);
+  showToast(`DEMO ONLY: Ticket ${ticketId} is local to this browser; no agency received it.`);
 
   document.getElementById('c2gCategory').value = '';
   document.getElementById('c2gStation').value = '';
@@ -2061,8 +1959,8 @@ function renderC2GTickets() {
         <span class="ticket-id">${t.id}</span>
         <span class="ticket-status ${t.status}">${statusLabels[t.status] || t.status}</span>
       </div>
-      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${t.stationName}</div>
-      <div class="ticket-desc">${t.description}</div>
+      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${escapeMafutaHtml(t.stationName)}</div>
+      <div class="ticket-desc">${escapeMafutaHtml(t.description)}</div>
       ${t.chat && t.chat.length > 0 ? `<div class="ticket-chat">${chatHtml}</div>` : ''}
       <div style="margin-top:6px;font-size:0.65rem;color:var(--text-dim);">${new Date(t.createdAt).toLocaleDateString()}</div>
     </div>`;
@@ -2330,10 +2228,10 @@ function renderC2GAdmin() {
     const vehicleLabel = {truck:'🚛 Truck',boda:'🛵 Boda Boda',private:'🚗 Private'}[t.vehicleType]||'—';
     return `<div class="kyc-card" style="margin-bottom:8px;">
       <div class="kyc-info" style="flex:1;">
-        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${t.stationName} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
+        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${escapeMafutaHtml(t.stationName)} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
         <div class="meta">${vehicleLabel} · ${t.fuel||'petrol'} at UGX ${(t.price||0).toLocaleString()} · ${t.location||t.district||'—'}</div>
-        <div class="meta" style="font-size:0.65rem;">Reporter: ${t.phone||t.userId||'—'} · ${new Date(t.createdAt).toLocaleString()}</div>
-        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${t.description.substring(0,120)}${t.description.length>120?'…':''}</div>` : ''}
+        <div class="meta" style="font-size:0.65rem;">Reporter: ${escapeMafutaHtml(t.phone||t.userId||'—')} · ${new Date(t.createdAt).toLocaleString()}</div>
+        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${escapeMafutaHtml(t.description.substring(0,120))}${t.description.length>120?'…':''}</div>` : ''}
         ${t.uploadedFiles?.length ? `<div class="docs">📎 ${t.uploadedFiles.map(f=>f.name).join(', ')}</div>` : ''}
       </div>
       <div class="kyc-actions" style="flex-direction:column;gap:4px;">
@@ -2526,17 +2424,7 @@ document.addEventListener('click', e => {
   updateHubCounts();
   renderPriceCapMatrix();
 
-  // Simulate verification of initial reports
-  setTimeout(runFraudDetection,3000);
-  // Simulate price changes
-  setTimeout(checkPriceChanges,8000);
-  // Simulate community broadcasts
-  setTimeout(() => { simulateBroadcasts(); }, 15000);
-  setInterval(() => {
-    if (Math.random() > 0.4 && (DB.broadcasts||[]).length < 60) {
-      simulateBroadcasts();
-    }
-  }, 60000);
+  // Never synthesize live prices, official broadcasts or automatic verification.
 });
 
 // SW

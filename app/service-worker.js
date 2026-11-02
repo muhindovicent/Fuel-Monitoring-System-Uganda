@@ -1,10 +1,12 @@
-const CACHE_NAME = 'MafutaWatch Uganda-v1';
+const CACHE_NAME = 'MafutaWatch Uganda-v3-api-network-only';
 const STATIC_ASSETS = [
   'index.html',
   'manifest.json',
   'css/style.css',
   'js/data.js',
   'js/app.js',
+  'js/api-config.js',
+  'js/production.js',
 ];
 
 
@@ -36,6 +38,16 @@ self.addEventListener('fetch', (event) => {
 
   
   if (request.method !== 'GET') return;
+
+  // Private and authoritative API responses must NEVER enter the offline Cache API.
+  // Also covers API requests to another origin whose path still begins with /api/v1/.
+  if (url.pathname === '/api/v1' || url.pathname.startsWith('/api/v1/')) {
+    event.respondWith(fetch(request).catch(() => new Response(
+      JSON.stringify({ message: 'API unavailable — cannot serve stale prices or private data' }),
+      { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }
+    )));
+    return;
+  }
 
   
   if (url.hostname === 'unpkg.com' || url.hostname === 'tile.openstreetmap.org') {
@@ -87,12 +99,4 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'CACHE_UPDATED') {
-    caches.open(CACHE_NAME).then((cache) => {
-      if (event.data.payload) {
-        cache.put(event.data.url, new Response(JSON.stringify(event.data.payload)));
-      }
-    });
-  }
-});
+// Cache injection via arbitrary postMessage URLs is intentionally unsupported.
