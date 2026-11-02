@@ -11,7 +11,7 @@ async function login(page,name='alice') {
 }
 test('citizen report, reload persistence, private case and XSS-safe community',async({page})=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto('/');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
   await expect(page.locator('#demoBanner')).toBeVisible();
   await openWorkspacePage(page,'Report a price');
   await expect(page.getByRole('button',{name:'Sign in or create an account'})).toBeVisible();
@@ -60,7 +60,7 @@ test('operator and inspector workspaces, responsive navigation and accessible di
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });
 test('service worker caches only shell resources and offline never acknowledges writes',async({page,context})=>{
-  await page.goto('/');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
   await page.evaluate(()=>navigator.serviceWorker.ready);await page.reload();
   await login(page,'verified1');await page.goto('/#activity');await expect(page.getByRole('heading',{name:'Your contributions. In one place.'})).toBeVisible();
   const cached=await page.evaluate(async()=>{const keys=await caches.keys();return (await Promise.all(keys.map(async key=>(await (await caches.open(key)).keys()).map(r=>r.url)))).flat();});
@@ -71,7 +71,7 @@ test('service worker caches only shell resources and offline never acknowledges 
 });
 test('administrator can register real directory records and publish sourced information',async({page})=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto('/');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
   await test.info().attach('overview-desktop',{body:await page.screenshot({path:test.info().outputPath('overview-desktop.png'),fullPage:true}),contentType:'image/png'});
   await login(page,'admin');
   await openWorkspacePage(page,'Operations dashboard');
@@ -96,7 +96,7 @@ test('administrator can register real directory records and publish sourced info
   await openWorkspacePage(page,'Advisories & town halls');
   await expect(page.getByRole('heading',{name:'Operational test advisory'})).toBeVisible();
   await expect(page.getByRole('link',{name:'Read original source ↗'})).toHaveAttribute('href','https://example.test/official-release');
-  await page.setViewportSize({width:390,height:844});await page.goto('/#overview');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
+  await page.setViewportSize({width:390,height:844});await page.goto('/#overview');await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
   await test.info().attach('overview-mobile',{body:await page.screenshot({path:test.info().outputPath('overview-mobile.png'),fullPage:true}),contentType:'image/png'});
   expect(errors).toEqual([]);
 });
