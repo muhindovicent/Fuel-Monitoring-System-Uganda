@@ -27,3 +27,5 @@ Never use the legacy `sql/001_schema_ddl.sql` as an automatic migration. It is a
 
 ## Security/release caveats
 The MVP is **not production deployment approval**: complete identity verification, server-side operator onboarding, audit review, spam controls, CAPTCHA/abuse protection, privacy impact assessment, backups, source-of-truth licensing, and integration/e2e tests first. Reverse proxy must forward a trustworthy client IP; do not enable `trust proxy` for arbitrary forwarded headers. JWTs are short lived and held in memory by the PWA (no localStorage). Do not log credentials. Restrict CORS to HTTPS frontend origins in production. Migration must run as a deployment step with an authorized database role. Service requires a dedicated database identity with only necessary privileges.
+
+Integration: execute `npm run db:migrate && npm run build && npm run test:integration` only with a disposable PostgreSQL database. Never run test fixtures against real records.

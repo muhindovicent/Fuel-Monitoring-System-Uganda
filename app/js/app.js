@@ -261,7 +261,7 @@ function openStationModal(id) {
     rContainer.innerHTML=reviews.slice(-3).reverse().map(r=>`
       <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
         <div>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} <span style="color:var(--text-muted);font-size:0.7rem;">${new Date(r.date).toLocaleDateString()}</span></div>
-        <div style="color:var(--text-muted);font-size:0.75rem;">${r.text||''} ${r.issues?r.issues.map(i=>'<span class="tag tag-red">'+i+'</span>').join(' '):''}</div>
+        <div style="color:var(--text-muted);font-size:0.75rem;">${escapeMafutaHtml(r.text||'')} ${r.issues?r.issues.map(i=>'<span class="tag tag-red">'+i+'</span>').join(' '):''}</div>
       </div>
     `).join('');
   }
@@ -359,6 +359,7 @@ function escapeMafutaHtml(value){ return String(value ?? '').replace(/[&<>"']/g,
 
 /* ─── REVIEWS ─── */
 function submitReview() {
+  if (window.MafutaApi?.isLive()) return showToast('Reviews are not available in connected mode yet.');
   // Demo-only review. Production review moderation has not yet been implemented.
   const stationId=parseInt(document.getElementById('reviewStation')?.value);
   const ratingEl=document.querySelector('.star-rating');
@@ -472,7 +473,7 @@ function submitReport() {
   DB.priceHistory.push({stationId,fuel,price,date:new Date().toISOString()});
 
   // If trusted user (>=50), publish immediately
-  if((DB.trustScore||0)>=50){
+  if(false){ // DEPRECATED: never publish from a browser-controlled trust score
     report.status='verified';
     report.verifiedAt=new Date().toISOString();
     s[fuel]=price;
@@ -483,7 +484,7 @@ function submitReport() {
     renderStationList();
     showToast('✅ Price published! (Trusted reporter)');
   } else {
-    showToast('📝 Price submitted! Awaiting verification (3 reports needed).');
+    showToast('DEMO ONLY: stored locally and not sent to a regulator.');
   }
 
   document.getElementById('reportStation').value='';
@@ -609,7 +610,7 @@ function renderActivity() {
     const sl=r.status==='verified'?'✅ Verified':r.status==='rejected'?'❌ Rejected':'⏳ Pending';
     return `<div class="station-card" style="cursor:default;">
       <div class="info">
-        <div class="name">${r.stationName}</div>
+        <div class="name">${escapeMafutaHtml(r.stationName)}</div>
         <div class="meta">${r.fuel.charAt(0).toUpperCase()+r.fuel.slice(1)} · UGX ${r.price.toLocaleString()} · ${new Date(r.timestamp).toLocaleDateString()}</div>
       </div>
       <span class="badge badge-${sc}">${sl}</span>
@@ -959,7 +960,7 @@ function renderSLATimers() {
     return `<div class="sla-card ${cls}">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <span style="font-weight:600;font-size:0.82rem;">Ticket #${t.id}</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);">${t.stationName}</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);">${escapeMafutaHtml(t.stationName)}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
         <div class="sla-timer" style="font-size:1.4rem;font-weight:800;font-family:var(--font-mono);">${hours}h ${minutes}m</div>
@@ -1723,7 +1724,7 @@ function updateBroadcastTicker() {
   const items = recent.map(b => {
     const time = new Date(b.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const prefix = b.verified ? '✅ <strong>Verified:</strong>' : '📢 <strong>Broadcast:</strong>';
-    return `<div class="ticker-item">${prefix} ${b.text} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
+    return `<div class="ticker-item">${prefix} ${escapeMafutaHtml(b.text)} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
   }).join('');
   ticker.innerHTML = items || '<div class="ticker-item" style="color:var(--text-dim);">No broadcasts yet. Be the first to share!</div>';
 }
@@ -1816,7 +1817,7 @@ function renderP2PMessages(roomId) {
       <div class="msg-avatar">${initials}</div>
       <div class="msg-content">
         <div class="msg-author">${m.author} ${trustedBadge} <span class="msg-time">${time}</span></div>
-        <div class="msg-text">${m.text}</div>
+        <div class="msg-text">${escapeMafutaHtml(m.text)}</div>
         <div class="msg-actions">
           <button onclick="upvoteP2PMsg(${roomId},${m.id})">👍 ${m.upvotes || 0}</button>
         </div>
@@ -1889,6 +1890,7 @@ document.addEventListener('click', e => {
 });
 
 function submitC2GTicket() {
+  if (window.MafutaApi?.isLive()) return showToast('Official complaint submission is not yet available.');
   const category = document.getElementById('c2gCategory')?.value;
   const stationId = parseInt(document.getElementById('c2gStation')?.value);
   const date = document.getElementById('c2gDate')?.value;
@@ -1933,7 +1935,7 @@ function submitC2GTicket() {
 
   DB.trustScore = Math.min(100, (DB.trustScore || 0) + 2);
   saveDB();
-  showToast(`✅ Ticket ${ticketId} generated! A ministry regulator will be assigned within 24 hrs.`);
+  showToast(`DEMO ONLY: Ticket ${ticketId} is local to this browser; no agency received it.`);
 
   document.getElementById('c2gCategory').value = '';
   document.getElementById('c2gStation').value = '';
@@ -1967,8 +1969,8 @@ function renderC2GTickets() {
         <span class="ticket-id">${t.id}</span>
         <span class="ticket-status ${t.status}">${statusLabels[t.status] || t.status}</span>
       </div>
-      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${t.stationName}</div>
-      <div class="ticket-desc">${t.description}</div>
+      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${escapeMafutaHtml(t.stationName)}</div>
+      <div class="ticket-desc">${escapeMafutaHtml(t.description)}</div>
       ${t.chat && t.chat.length > 0 ? `<div class="ticket-chat">${chatHtml}</div>` : ''}
       <div style="margin-top:6px;font-size:0.65rem;color:var(--text-dim);">${new Date(t.createdAt).toLocaleDateString()}</div>
     </div>`;
@@ -2236,10 +2238,10 @@ function renderC2GAdmin() {
     const vehicleLabel = {truck:'🚛 Truck',boda:'🛵 Boda Boda',private:'🚗 Private'}[t.vehicleType]||'—';
     return `<div class="kyc-card" style="margin-bottom:8px;">
       <div class="kyc-info" style="flex:1;">
-        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${t.stationName} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
+        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${escapeMafutaHtml(t.stationName)} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
         <div class="meta">${vehicleLabel} · ${t.fuel||'petrol'} at UGX ${(t.price||0).toLocaleString()} · ${t.location||t.district||'—'}</div>
-        <div class="meta" style="font-size:0.65rem;">Reporter: ${t.phone||t.userId||'—'} · ${new Date(t.createdAt).toLocaleString()}</div>
-        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${t.description.substring(0,120)}${t.description.length>120?'…':''}</div>` : ''}
+        <div class="meta" style="font-size:0.65rem;">Reporter: ${escapeMafutaHtml(t.phone||t.userId||'—')} · ${new Date(t.createdAt).toLocaleString()}</div>
+        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${escapeMafutaHtml(t.description.substring(0,120))}${t.description.length>120?'…':''}</div>` : ''}
         ${t.uploadedFiles?.length ? `<div class="docs">📎 ${t.uploadedFiles.map(f=>f.name).join(', ')}</div>` : ''}
       </div>
       <div class="kyc-actions" style="flex-direction:column;gap:4px;">
@@ -2432,17 +2434,7 @@ document.addEventListener('click', e => {
   updateHubCounts();
   renderPriceCapMatrix();
 
-  // Prototype simulation only; authoritative server data is never auto-verified here.
-  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(runFraudDetection,3000);
-  // Simulate price changes
-  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(checkPriceChanges,8000);
-  // Simulate community broadcasts
-  if (!(window.MafutaApi && window.MafutaApi.isLive())) setTimeout(() => { simulateBroadcasts(); }, 15000);
-  setInterval(() => {
-    if (!(window.MafutaApi && window.MafutaApi.isLive()) && Math.random() > 0.4 && (DB.broadcasts||[]).length < 60) {
-      simulateBroadcasts();
-    }
-  }, 60000);
+  // Never synthesize live prices, official broadcasts or automatic verification.
 });
 
 // SW
