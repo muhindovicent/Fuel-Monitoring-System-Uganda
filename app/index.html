@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0a251c">
+  <meta name="theme-color" content="#0F2D52">
   <meta name="description" content="Compare reported fuel prices in Uganda, contribute observations, and track consumer complaints.">
   <title>MafutaWatch Uganda | Fuel price transparency</title>
   <link rel="manifest" href="/manifest.json">
@@ -13,15 +13,21 @@
   <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script type="module" src="/js/app.js"></script>
 </head>
-<body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="topbar">
-    <a class="brand" href="#overview"><span class="brand-icon" aria-hidden="true">M</span><span>MafutaWatch <small>UGANDA · FUEL PRICE TRANSPARENCY</small></span></a>
-    <div class="header-actions"><span id="connection" role="status">Connecting…</span><button id="accountButton" data-action="auth">Sign in</button><button id="logoutButton" data-action="logout" hidden>Sign out</button></div>
+<body data-shell="public" class="is-home">
+  <a class="skip-link" href="#main" data-action="skip">Skip to content</a>
+  <div class="utility-bar">
+    <div class="container utility-inner"><span><span class="country-mark" aria-hidden="true"><i></i><i></i><i></i></span>MafutaWatch Uganda <span class="utility-description">· Independent fuel transparency</span></span><div><a href="#contact">Help & support</a><span id="connection" role="status">Connecting…</span></div></div>
+  </div>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#overview" aria-label="MafutaWatch Uganda home"><span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M7 26V8a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v18M5 26h19M11 10h7v6h-7zM22 15h2a2 2 0 0 1 2 2v4a2 2 0 0 0 4 0V12l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Mafuta<span class="brand-accent">Watch</span><small>UGANDA · EVERY LITRE COUNTS</small></span></a>
+      <div class="header-actions"><a class="workspace-link" href="#activity" id="workspaceLink">My workspace <span aria-hidden="true">↗</span></a><button id="accountButton" class="secondary" data-action="auth">Sign in</button><button id="registerButton" class="primary" data-action="register">Create account</button><button id="logoutButton" class="quiet" data-action="logout" hidden>Sign out</button><button class="mobile-menu-toggle" id="menuToggle" data-action="menu" aria-controls="primaryNavigation" aria-expanded="false" aria-label="Open navigation"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div>
+    </div>
   </header>
+  <div class="navigation-bar"><div class="container"><nav class="primary-navigation" id="primaryNavigation" aria-label="Primary navigation"><a href="#overview" data-public-page="overview">Home</a><a href="#prices" data-public-page="prices">Fuel Prices</a><a href="#stations" data-public-page="stations">Fuel Stations</a><a href="#services" data-public-page="services">Citizen Services</a><a href="#analytics" data-public-page="analytics">Reports & Analytics</a><a href="#about" data-public-page="about">About</a><a href="#contact" data-public-page="contact">Contact</a><a href="#activity" class="mobile-only">My workspace</a><button class="mobile-only primary" data-action="register">Create account</button><span class="navigation-note">Better information. Better journeys.</span></nav></div></div>
   <div class="app-layout">
-    <aside class="sidebar">
-      <p class="nav-label">YOUR FUEL, YOUR VOICE</p>
+    <aside class="sidebar" id="workspaceSidebar" aria-label="Workspace sidebar">
+      <div class="sidebar-heading"><span class="nav-label">YOUR WORKSPACE</span></div>
       <nav aria-label="Main navigation" id="navigation">
         <a href="#overview" data-page="overview">Overview</a>
         <a href="#stations" data-page="stations">Find fuel</a>
@@ -37,13 +43,14 @@
       <div class="sidebar-note"><strong>Know the source.</strong><p>Prices show their source and freshness. Community observations are reviewed before publication.</p></div>
     </aside>
     <main id="main" tabindex="-1">
-      <div class="page-top"><span id="breadcrumb">PLATFORM / OVERVIEW</span><button class="quiet" data-action="refresh">Refresh data</button></div>
-      <div id="errorBanner" class="banner error" role="alert" hidden></div>
-      <div id="demoBanner" class="banner warning" hidden>Demonstration stations are present. Prices marked “demo” are sample data and are excluded from live analytics.</div>
-      <div id="view" aria-live="polite"><div class="loading">Loading platform data…</div></div>
-      <footer>For the people. For the market. For Uganda. <span>Source-linked information · Times in East Africa Time</span><a href="#privacy">Privacy & data use</a></footer>
+      <div class="status-container container"><div class="page-top"><span id="breadcrumb">PLATFORM / HOME</span><button class="quiet" data-action="refresh">Refresh data</button></div><div id="errorBanner" class="banner error" role="alert" hidden></div><div id="demoBanner" class="banner warning" hidden>Demonstration directory: sample stations and prices are labeled. Demo prices are excluded from operational insights.</div></div>
+      <div id="view" aria-busy="true"><div class="loading" role="status">Loading platform data…</div></div>
     </main>
   </div>
+  <footer class="site-footer">
+    <div class="container footer-grid"><div class="footer-brand"><a class="brand" href="#overview"><span class="brand-icon" aria-hidden="true">M</span><span>MafutaWatch<small>UGANDA</small></span></a><p>Clearer fuel information.<br>Stronger citizen participation.<br>Better journeys across Uganda.</p><span class="footer-note">An independent transparency platform.</span></div><div><h2>Explore</h2><a href="#prices">Fuel price comparison</a><a href="#stations">Station directory & map</a><a href="#analytics">Market insights</a><a href="#trip">Trip cost planner</a></div><div><h2>Participate</h2><a href="#report">Report a pump price</a><a href="#complaints">Consumer complaints</a><a href="#community">Driver community</a><a href="#operator">Station operators</a></div><div><h2>Information</h2><a href="#about">About MafutaWatch</a><a href="#advisories">Advisories & town halls</a><a href="#contact">Help & contact</a><a href="#privacy">Privacy & data use</a><a href="#credits">Photography credits</a></div></div>
+    <div class="container footer-bottom"><span>© <span id="copyrightYear">2026</span> MafutaWatch Uganda. Every litre counts.</span><span>UGX per litre · Times in East Africa Time</span><a href="#about">How information is verified ↗</a></div>
+  </footer>
   <dialog id="authDialog" aria-labelledby="authTitle">
     <div class="dialog-top"><h2 id="authTitle">Sign in</h2><button class="quiet" data-action="close-auth" aria-label="Close sign-in dialog">✕</button></div>
     <p id="authHint">Access your reports, tracked cases, and assigned workspaces.</p>

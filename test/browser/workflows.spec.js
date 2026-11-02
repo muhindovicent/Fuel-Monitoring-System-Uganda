@@ -1,5 +1,6 @@
 import { test,expect } from '@playwright/test';
 import { testPassword } from '../database.js';
+import { openWorkspacePage } from './helpers.js';
 
 async function login(page,name='alice') {
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
@@ -12,17 +13,17 @@ test('citizen report, reload persistence, private case and XSS-safe community',a
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
   await expect(page.locator('#demoBanner')).toBeVisible();
-  await page.locator('#navigation').getByRole('link',{name:'Report a price',exact:true}).click();
+  await openWorkspacePage(page,'Report a price');
   await expect(page.getByRole('button',{name:'Sign in or create an account'})).toBeVisible();
   await expect(page.locator('#reportForm')).toHaveCount(0);await login(page);
-  await page.locator('#navigation').getByRole('link',{name:'Report a price',exact:true}).click();
+  await openWorkspacePage(page,'Report a price');
   await page.locator('#reportForm [name=stationId]').selectOption('1');
   await page.getByLabel('Price (UGX per litre)',{exact:true}).fill('5410');
   await page.getByRole('button',{name:'Submit for verification'}).click();
   await expect(page.locator('#toast')).toContainText('Observation received: pending');
-  await page.locator('#navigation').getByRole('link',{name:'My activity'}).click();
+  await openWorkspacePage(page,'My activity');
   await expect(page.locator('#view')).toContainText('5,410');await page.reload();await expect(page.locator('#view')).toContainText('5,410');
-  await page.locator('#navigation').getByRole('link',{name:'Consumer complaints'}).click();
+  await openWorkspacePage(page,'Consumer complaints');
   await page.getByText('+ Open a consumer case',{exact:true}).click();
   await page.locator('#complaintForm [name=stationId]').selectOption('1');
   await page.getByLabel('What happened?').fill('Pump stopped while the display was still counting litres.');
@@ -32,7 +33,7 @@ test('citizen report, reload persistence, private case and XSS-safe community',a
   await page.getByLabel('Reply to this case').fill('I have kept the receipt for inspection.');
   await page.getByRole('button',{name:'Send reply'}).click();await expect(page.locator('#detailContent')).toContainText('I have kept the receipt');
   await page.keyboard.press('Escape');await expect(page.locator('#detailDialog')).not.toBeVisible();
-  await page.locator('#navigation').getByRole('link',{name:'Driver community'}).click();
+  await openWorkspacePage(page,'Driver community');
   await page.getByRole('button',{name:'Kampala–Jinja corridor →',exact:true}).click();
   await expect(page.locator('#chatMessages')).toContainText('<img src=x onerror=');
   expect(await page.evaluate(()=>window.XSS)).toBeUndefined();expect(await page.locator('#chatMessages img').count()).toBe(0);
@@ -40,19 +41,19 @@ test('citizen report, reload persistence, private case and XSS-safe community',a
 });
 test('operator and inspector workspaces, responsive navigation and accessible dialogs',async({page})=>{
   await page.goto('/');await login(page,'operator');
-  await page.locator('#navigation').getByRole('link',{name:'Station workspace'}).click();
+  await openWorkspacePage(page,'Station workspace');
   await page.locator('#operatorPrice [name=stationId]').selectOption('1');
   await page.locator('#operatorPrice [name=price]').fill('5550');
   await page.getByRole('button',{name:'Publish official operator price'}).click();
   await expect(page.locator('#toast')).toContainText('Pump price published');
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();
   await login(page,'inspector');
-  await page.locator('#navigation').getByRole('link',{name:'Operations dashboard'}).click();
+  await openWorkspacePage(page,'Operations dashboard');
   await expect(page.getByText('Observations awaiting review',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Price review',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Verification queue'})).toBeVisible();
   await page.setViewportSize({width:390,height:844});
-  const nav=page.locator('#navigation').getByRole('link',{name:'Find fuel',exact:true});await nav.scrollIntoViewIfNeeded();await nav.click();
+  await openWorkspacePage(page,'Find fuel');
   await expect(page.getByRole('heading',{name:'Find your next fuel stop.'})).toBeVisible();
   await page.getByRole('button',{name:'View station'}).first().click();await expect(page.locator('#detailDialog')).toBeVisible();
   await page.keyboard.press('Escape');await expect(page.locator('#detailDialog')).not.toBeVisible();
@@ -73,7 +74,7 @@ test('administrator can register real directory records and publish sourced info
   await page.goto('/');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
   await test.info().attach('overview-desktop',{body:await page.screenshot({path:test.info().outputPath('overview-desktop.png'),fullPage:true}),contentType:'image/png'});
   await login(page,'admin');
-  await page.locator('#navigation').getByRole('link',{name:'Operations dashboard'}).click();
+  await openWorkspacePage(page,'Operations dashboard');
   await page.getByRole('button',{name:'Station directory',exact:true}).click();
   await page.getByLabel('Full operator name',{exact:true}).fill('Verified test operator');
   await page.getByLabel('Short name',{exact:true}).fill('VTO');
@@ -92,7 +93,7 @@ test('administrator can register real directory records and publish sourced info
   await page.getByLabel('Release text').fill('Test release with an independently traceable source URL.');
   await page.getByLabel('Original source URL (HTTPS)').fill('https://example.test/official-release');
   await page.getByRole('button',{name:'Publish advisory'}).click();await expect(page.locator('#toast')).toContainText('Record saved');
-  await page.locator('#navigation').getByRole('link',{name:'Advisories & town halls'}).click();
+  await openWorkspacePage(page,'Advisories & town halls');
   await expect(page.getByRole('heading',{name:'Operational test advisory'})).toBeVisible();
   await expect(page.getByRole('link',{name:'Read original source ↗'})).toHaveAttribute('href','https://example.test/official-release');
   await page.setViewportSize({width:390,height:844});await page.goto('/#overview');await expect(page.getByRole('heading',{name:/Fairer fuel starts/})).toBeVisible();
