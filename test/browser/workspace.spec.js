@@ -17,14 +17,19 @@ for(const width of [360,768,1024,1440]){
     if(width<=900){
       await expect(page.locator('#workspaceSidebar')).not.toBeVisible();
       await page.locator('#sidebarToggle').click();await expect(page.locator('#sidebarToggle')).toHaveAttribute('aria-expanded','true');
+      await expect(page.locator('#main')).toHaveJSProperty('inert',true);
       await expect(page.locator('#workspaceSidebar')).toBeVisible();await page.keyboard.press('Escape');
       await expect(page.locator('#sidebarToggle')).toBeFocused();await expect(page.locator('#workspaceSidebar')).not.toBeVisible();
+      await expect(page.locator('#main')).toHaveJSProperty('inert',false);
     }else{
       await page.locator('#sidebarToggle').click();await expect(page.locator('#sidebarToggle')).toHaveAttribute('aria-expanded','false');
       await expect(page.locator('#navigation').getByRole('link',{name:'My activity',exact:true})).toBeVisible();
       await page.locator('#sidebarToggle').click();await expect(page.locator('#sidebarToggle')).toHaveAttribute('aria-expanded','true');
     }
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.locator('#fuelDiscovery').scrollIntoViewIfNeeded();
+    await expect.poll(()=>page.locator('#stationMap').evaluate(el=>{const m=el.getBoundingClientRect();return [...el.querySelectorAll('[role="button"]')].some(pin=>{const p=pin.getBoundingClientRect();return p.width>0&&p.left>=m.left&&p.right<=m.right&&p.top>=m.top&&p.bottom<=m.bottom;});})).toBe(true);
+    await page.evaluate(()=>scrollTo(0,0));
     await page.screenshot({path:test.info().outputPath(`workspace-${width}.png`),fullPage:true});
     await expect(page.getByRole('button',{name:'Price review',exact:true})).toHaveCount(0);
     expect((await page.request.get('/api/v1/admin/reports')).status()).toBe(403);

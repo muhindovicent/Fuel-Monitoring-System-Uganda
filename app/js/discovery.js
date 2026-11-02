@@ -19,9 +19,13 @@ export function distanceKm(a,b){
 }
 export function filterStations(stations,input={},position=null,now=Date.now()){
   const f={...defaults,...input},query=f.q.trim().toLowerCase(),district=f.district.trim().toLowerCase();
+  const exactDistrict=Boolean(district)&&stations.some(s=>String(s.district||'').toLowerCase()===district);
+  const exactArea=!exactDistrict&&Boolean(district)&&stations.some(s=>String(s.area||'').toLowerCase()===district);
   const matches=stations.filter(s=>{
     if(query&&![s.name,s.area,s.district,s.operator_name].some(v=>String(v||'').toLowerCase().includes(query)))return false;
-    if(district&&![s.area,s.district].some(v=>String(v||'').toLowerCase().includes(district)))return false;
+    if(exactDistrict&&String(s.district||'').toLowerCase()!==district)return false;
+    if(exactArea&&String(s.area||'').toLowerCase()!==district)return false;
+    if(district&&!exactDistrict&&!exactArea&&![s.area,s.district].some(v=>String(v||'').toLowerCase().includes(district)))return false;
     const p=publishedPrice(s,f.fuel);
     if(f.verifiedOnly&&!freshPrice(s,f.fuel,now))return false;
     if(f.freshness!=='all'&&(!p||p.stale||hoursOld(p,now)>Number(f.freshness)))return false;
@@ -86,11 +90,13 @@ function stationCard(station,fuel,now,selected){
 
 export function mountDiscovery(root,stations,{initial={},position:initialPosition=null,asOf,onDetails,onChange}={}){
   let map=null,locationMarker=null,position=initialPosition,filters={...defaults,...initial},matches=[],selected=null,limit=50,disposed=false,geoRequest=0;
-  let sheetExpanded=true,filtersOpen=false;
+  let sheetExpanded=!matchMedia('(max-width: 900px)').matches,filtersOpen=false;
   const markers=new Map(),media=matchMedia('(max-width: 900px)'),now=Number.isFinite(Date.parse(asOf))?Date.parse(asOf):Date.now();
   const find=selector=>root.querySelector(selector),form=find('#homeMapFilter'),results=find('#discoveryResults');
   const status=text=>{find('#homeMapStatus').textContent=text;};
   const reduced=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const observer=typeof ResizeObserver==='function'?new ResizeObserver(()=>{if(map&&!disposed)map.invalidateSize({pan:false});}):null;
+  observer?.observe(root);
 
   function panels(){
     root.classList.toggle('sheet-expanded',sheetExpanded);root.classList.toggle('filters-open',filtersOpen);
@@ -112,7 +118,7 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
     cardSelection();
     const card=find(`[data-station-card="${id}"]`);
     if(fromMap&&card){const top=card.offsetTop-results.offsetTop;results.scrollTo({top,behavior:reduced()?'auto':'smooth'});}
-    if(map){if(!markers.has(id))addMarker(station);map.panTo([station.latitude,station.longitude],{animate:!reduced()});markers.get(id)?.openPopup();}
+    if(map){if(!markers.has(id))addMarker(station);const center=map.project([station.latitude,station.longitude],map.getZoom());if(media.matches&&sheetExpanded)center.y+=Math.min(160,map.getSize().y/4);map.panTo(map.unproject(center,map.getZoom()),{animate:!reduced()});markers.get(id)?.openPopup();}
     status(`${station.name} selected. ${priceStatus(station,filters.fuel,now).text}.`);
   }
   function addMarker(station){
@@ -135,7 +141,7 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
     for(const marker of markers.values())marker.remove();markers.clear();locationMarker?.remove();locationMarker=null;
     const points=matches.slice(0,250).map(s=>{addMarker(s);return [s.latitude,s.longitude];});
     if(position){locationMarker=L.circleMarker([position.latitude,position.longitude],{radius:7,color:'#2b64be',fillOpacity:1}).addTo(map);points.push([position.latitude,position.longitude]);}
-    if(points.length)map.fitBounds(points,{paddingTopLeft:[35,65],paddingBottomRight:[35,media.matches?340:35],maxZoom:14,animate:false});
+    if(points.length)map.fitBounds(points,{paddingTopLeft:[35,media.matches?155:65],paddingBottomRight:[35,media.matches?(sheetExpanded?350:100):35],maxZoom:14,animate:false});
   }
   function renderCards(){
     results.innerHTML=matches.length?matches.slice(0,limit).map(s=>stationCard(s,filters.fuel,now,s.id===selected)).join('')+(matches.length>limit?'<button class="discovery-more" data-discovery="more">Show more matching stations</button>':''):'<div class="empty discovery-empty">No stations match these filters. Try widening the district, freshness or verified-price criteria. Demonstration prices never qualify as verified records.</div>';
@@ -152,7 +158,7 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
     if(!navigator.geolocation){status('Location is not supported by this browser. Search by station or district instead.');return;}
     const request=++geoRequest;status('Requesting your location…');root.setAttribute('aria-busy','true');
     try{
-      const found=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,()=>reject(new Error('Location unavailable or permission denied. Your location has not been shared; search by district instead.')),{timeout:10000,maximumAge:60000}));
+      const found=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,()=>reject(new Error('Location unavailable or permission denied. No distance filter was applied; search by district or try sharing your location again.')),{timeout:10000,maximumAge:60000}));
       if(disposed||request!==geoRequest)return;
       position={latitude:found.coords.latitude,longitude:found.coords.longitude};form.elements.sort.value='distance';if(!form.elements.radius.value)form.elements.radius.value='10';
       filters=readFilters();filtersOpen=false;sheetExpanded=true;update();
@@ -181,5 +187,5 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
   function keydown(event){if(event.key==='Escape'&&filtersOpen){filtersOpen=false;panels();find('[data-discovery="filters"]').focus();}}
   root.addEventListener('click',click);form.addEventListener('submit',apply);root.addEventListener('keydown',keydown);media.addEventListener('change',resize);
   update();
-  return {locate,select:id=>selectStation(id),destroy(){disposed=true;geoRequest++;root.removeEventListener('click',click);form.removeEventListener('submit',apply);root.removeEventListener('keydown',keydown);media.removeEventListener('change',resize);map?.remove();markers.clear();}};
+  return {locate,select:id=>selectStation(id),destroy(){disposed=true;geoRequest++;observer?.disconnect();root.removeEventListener('click',click);form.removeEventListener('submit',apply);root.removeEventListener('keydown',keydown);media.removeEventListener('change',resize);map?.remove();markers.clear();}};
 }

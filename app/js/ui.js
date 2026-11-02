@@ -26,7 +26,7 @@ const paths = {
 export const icon = (name, className = '') => `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || paths.info}</svg>`;
 
 export const services = [
-  { title: 'Compare fuel prices', description: 'Compare published pump prices, with a clear source and update time.', href: '#prices', icon: 'pump', tag: 'PRICE INTELLIGENCE' },
+  { title: 'Price trends & insights', description: 'Explore regional comparisons, published updates and source-backed market information.', href: '#analytics', icon: 'chart', tag: 'PRICE INTELLIGENCE' },
   { title: 'Find a fuel station', description: 'Explore stations by district or find the next stop near your location.', href: '#stations', icon: 'pin', tag: 'STATION DIRECTORY' },
   { title: 'Report a pump price', description: 'Share a price observation and follow its verification status.', href: '#report', icon: 'report', tag: 'CITIZEN CONTRIBUTIONS' },
   { title: 'Report a concern', description: 'Raise a station concern and securely attach supporting evidence.', href: '#complaints', icon: 'shield', tag: 'CONSUMER SERVICES' },

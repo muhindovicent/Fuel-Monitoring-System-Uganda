@@ -32,3 +32,8 @@ test('nearby sorting and radius use actual coordinate distance rather than a syn
   assert.equal(distanceKm(position,position),0);
   assert.ok(Math.abs(distanceKm({latitude:0,longitude:0},{latitude:0,longitude:1})-111.195)<.01);
 });
+test('canonical district selection does not match a similarly named road in a different district',()=>{
+  const rows=[station(1,'Shell Jinja Road',5200,{district:'Kampala',area:'Jinja Road'}),station(2,'Jinja town station',5100,{district:'Jinja',area:'Jinja Town'})];
+  assert.deepEqual(filterStations(rows,{district:'JINJA'},null,now).map(s=>s.id),[2]);
+  assert.equal(filterStations(rows,{q:'Jinja'},null,now).length,2);
+});

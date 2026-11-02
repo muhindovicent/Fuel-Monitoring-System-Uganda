@@ -89,3 +89,41 @@ test('fresh verified discovery, insights and station history use records publish
   await expect(page.locator('.discovery-card .badge.verified')).toHaveCount(2);await expect(page.locator('.verified-update-feed')).toContainText('Browser operational station A');
   await page.locator('.discovery-card').first().getByRole('button',{name:'View station',exact:true}).click();await expect(page.locator('#detailContent')).toContainText('UGX 4,990');await expect(page.locator('#detailContent')).toContainText('operator');
 });
+for(const width of [360,768]){
+  test(`mobile station sheet and floating filters are usable at ${width}px`,async({page})=>{
+    await page.setViewportSize({width,height:1000});await page.goto('/');const root=page.locator('#fuelDiscovery');await expect(root).toBeVisible();
+    const toggle=root.locator('[data-discovery=sheet]');await expect(toggle).toHaveAttribute('aria-expanded','false');await expect(root.locator('#discoveryResults')).not.toBeVisible();
+    await toggle.click();await expect(root.locator('#discoveryResults')).toBeVisible();await toggle.click();await expect(root.locator('#discoveryResults')).not.toBeVisible();
+    const filters=root.getByRole('button',{name:'Search & filters',exact:true});await filters.click();
+    const form=root.locator('#homeMapFilter');await expect(form).toBeVisible();await expect(form.getByLabel('Station name or area')).toBeFocused();
+    expect(await form.getByLabel('Station name or area').evaluate(el=>getComputedStyle(el).fontSize)).toBe('16px');
+    await page.keyboard.press('Escape');await expect(form).not.toBeVisible();await expect(filters).toBeFocused();
+    await filters.click();await form.getByLabel('District or city').fill('Jinja');await form.getByRole('button',{name:'Apply filters'}).click();
+    await expect(root.locator('.discovery-card')).toHaveCount(2);await expect(form).not.toBeVisible();await expect(toggle).toHaveAttribute('aria-expanded','true');
+    await expect(page.locator('#authDialog')).not.toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await root.screenshot({path:test.info().outputPath(`mobile-discovery-${width}.png`)});
+  });
+}
+test('denied GPS never fabricates proximity and keeps station discovery available',async({page})=>{
+  await page.addInitScript(()=>{window.geoRequests=0;Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition(_ok,failed){window.geoRequests++;failed({code:1});}}});});
+  await page.goto('/');await expect(page.locator('#fuelDiscovery')).toBeVisible();expect(await page.evaluate(()=>window.geoRequests)).toBe(0);
+  await page.getByRole('button',{name:'Find Fuel Near Me',exact:true}).click();
+  await expect(page.locator('#homeMapStatus')).toContainText('permission denied');await expect(page.locator('#homeMapStatus')).toContainText('No distance filter was applied');
+  await expect(page.locator('#fuelDiscovery')).toHaveAttribute('aria-busy','false');expect(await page.evaluate(()=>window.geoRequests)).toBe(1);
+  await expect(page.locator('.discovery-card')).not.toHaveCount(0);await expect(page.locator('#discoveryResults')).not.toContainText('km away');
+});
+test('map-library failure preserves real filtering and station details',async({page})=>{
+  await page.route('**/vendor/leaflet/leaflet.js',route=>route.abort());await page.goto('/');
+  await expect(page.locator('#stationMap')).toContainText('Map library unavailable');
+  const form=page.locator('#homeMapFilter');await form.getByLabel('District or city').fill('Jinja');await form.getByRole('button',{name:'Apply filters'}).click();
+  await expect(page.locator('.discovery-card')).toHaveCount(2);await page.locator('#discoveryResults').getByRole('button',{name:'View station',exact:true}).first().click();await expect(page.locator('#detailDialog')).toBeVisible();
+});
+test('real data loading exposes a skeleton and honors reduced motion',async({page})=>{
+  await page.emulateMedia({reducedMotion:'reduce'});let release;const gate=new Promise(resolve=>{release=resolve;});
+  await page.route('**/api/v1/summary',async route=>{await gate;await route.continue();});
+  try{await page.goto('/');await expect(page.locator('#view')).toHaveAttribute('aria-busy','true');await expect(page.locator('.loading-surface')).toBeVisible();
+    expect(await page.locator('.skeleton').first().evaluate(el=>getComputedStyle(el,'::after').animationName)).toBe('none');
+  }finally{release();}
+  await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();await expect(page.locator('#view')).toHaveAttribute('aria-busy','false');
+});
