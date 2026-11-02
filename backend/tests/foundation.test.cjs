@@ -25,3 +25,10 @@ test('No default production admin password or JWT secret', () => {
   const admin = fs.readFileSync(path.join(root,'scripts','create-admin.cjs'), 'utf8');
   assert.match(admin, /password.length < 16/);
 });
+
+test('Service worker never caches private or price API responses', () => {
+  const sw = fs.readFileSync(path.join(root, '..', 'app', 'service-worker.js'), 'utf8');
+  assert.match(sw, /url\.pathname\.startsWith\('\/api\/v1\/'\)/);
+  assert.match(sw, /event\.respondWith\(fetch\(request\)\.catch/);
+  assert.doesNotMatch(sw, /addEventListener\('message'/);
+});

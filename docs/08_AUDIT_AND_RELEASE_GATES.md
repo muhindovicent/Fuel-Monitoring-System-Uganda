@@ -37,3 +37,6 @@ Date: 2026-11-02. Scope: source review of `app/js/app.js`, `app/js/data.js`, `ap
 
 ## Manual inspection outcome
 This is a source-level initial audit of principal entry points, sensitive routines and schema; not an exhaustive line-by-line assessment of the 2,548-line legacy frontend nor a runtime assurance. All open items above remain blockers for production.
+
+### SW-01 — High (addressed in branch)
+The legacy service worker cached all same-origin successful GET requests, which could include authenticated admin API responses. It also accepted unrestricted `CACHE_UPDATED` messages for arbitrary cache writes. The new worker applies network-only handling for `/api/v1/*`, provides a 503 offline response instead of stale data, and removes the cache-update message injection path. Note that third-party hosted APIs must retain the `/api/v1` path convention or the worker should be extended to compare the configured API origin before deploying.
