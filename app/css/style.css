@@ -645,6 +645,40 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
   .fuel-discovery.filters-open .discovery-rail { height: 510px; }
 }
 
+/* Role-specific command-center priorities and station operations. */
+.command-priorities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin-bottom: 23px; }
+.command-priorities > button { display: flex; align-items: center; gap: 10px; text-align: left; border-radius: 11px; padding: 15px; background: white; font-size: .73rem; }
+.command-priorities > button > .icon:first-child { color: var(--green); width: 20px; height: 20px; }
+.command-priorities > button > span { flex: 1; }
+.command-priorities > button > .icon:last-child { width: 15px; height: 15px; color: #7b90a5; }
+.intelligence-toolbar, .case-queue-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; background: white; border: 1px solid var(--line); border-radius: 12px; padding: 17px; margin-bottom: 22px; }
+.intelligence-toolbar label, .case-queue-toolbar label { min-width: 175px; flex: 1; }
+.intelligence-toolbar button, .case-queue-toolbar button { min-height: 46px; font-size: .76rem; }
+.readiness-card p { font-size: .83rem; }
+.readiness-card small { display: block; font-size: .72rem; }
+.readiness-card .actions { margin-top: 14px; justify-content: space-between; font-size: .77rem; }
+.operator-price-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-block: 19px; }
+.operator-price-grid > div { background: #f2f7fb; padding: 15px; border: 1px solid #dce6ef; border-radius: 9px; }
+.operator-price-grid strong { display: block; font-size: 1.15rem; color: var(--navy); margin: 5px 0; }
+.operator-price-grid span { display: block; color: var(--green-deep); font-size: .67rem; margin-bottom: 4px; }
+.operator-price-grid small { font-size: .65rem; }
+.citizen-quicklinks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin: -6px 0 25px; }
+.citizen-quicklinks a { display: flex; align-items: center; gap: 9px; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; font-size: .72rem; color: var(--navy); font-weight: 600; }
+.citizen-quicklinks a:hover { background: var(--green-soft); border-color: #bdd9ca; }
+.citizen-quicklinks .icon { width: 19px; height: 19px; color: var(--green); }
+.workspace-map-panel { margin: 27px 0; }
+.workspace-map-panel .card-head h2 { font-size: 1.16rem; }
+.workspace-map-panel .card-head > a { font-size: .75rem; }
+@media (max-width: 1100px) { .command-priorities { grid-template-columns: repeat(2, minmax(0, 1fr)); } .citizen-quicklinks { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) {
+  .command-priorities { grid-template-columns: 1fr; }
+  .command-priorities > button { padding: 13px; }
+  .intelligence-toolbar, .case-queue-toolbar { display: grid; grid-template-columns: 1fr; padding: 15px; }
+  .intelligence-toolbar label, .case-queue-toolbar label { min-width: 0; }
+  .citizen-quicklinks { grid-template-columns: 1fr 1fr; }
+  .citizen-quicklinks a { align-items: flex-start; font-size: .68rem; padding: 12px; }
+}
+
 /* Phase 2: enterprise workspace chrome, using the same portal components. */
 .sidebar-toggle { display: inline-grid; place-items: center; width: 40px; padding: 8px; flex-shrink: 0; }
 .notification-button { position: relative; width: 42px; padding: 8px; }

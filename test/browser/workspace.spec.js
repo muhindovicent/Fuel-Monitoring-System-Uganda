@@ -1,6 +1,8 @@
 import {test,expect} from '@playwright/test';
 import {testPassword} from '../database.js';
 import {openWorkspacePage} from './helpers.js';
+import {readFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
 
 async function signIn(page,who='alice'){
   await page.goto('/#activity');await page.locator('#accountButton').click();
@@ -36,6 +38,8 @@ for(const [who,role,workspace] of [['alice','citizen','My activity'],['operator'
     if(role==='citizen')await expect(page.locator('#navigation').getByRole('link',{name:'Operations dashboard'})).toHaveCount(0);
     if(['inspector','admin'].includes(role))await expect(page.getByRole('button',{name:'Consumer cases',exact:true})).toBeVisible();
     if(role==='admin'){
+      await expect(page.getByRole('heading',{name:'National Energy Command Center',exact:true})).toBeVisible();
+      await expect(page.locator('.readiness-card')).toContainText('Ready');
       const sessionResponse=await page.request.get('/api/v1/auth/session');expect(sessionResponse.status()).toBe(200);
       const session=await sessionResponse.json();
       const published=await page.request.put('/api/v1/stations/1/prices',{headers:{Origin:new URL(page.url()).origin,'X-Requested-With':'MafutaWatch','X-CSRF-Token':session.csrfToken},data:{fuel:'petrol',price:5555}});expect(published.status()).toBe(200);
@@ -63,4 +67,38 @@ test('notification drawer reads real case updates and marks only displayed recor
   await expect(page.locator('#detailContent')).toContainText('received');
   await page.getByRole('button',{name:'Mark displayed notifications read',exact:true}).click();await expect(page.locator('#detailDialog')).not.toBeVisible();
   const records=await (await page.request.get('/api/v1/me/notifications')).json();expect(records.items.slice(0,10).every(n=>n.read_at)).toBe(true);
+});
+test('analyst intelligence filters and exports accepted history without gaining operational permissions',async({page})=>{
+  await signIn(page,'analyst');await openWorkspacePage(page,'Operations dashboard');
+  await expect(page.getByRole('heading',{name:'Fuel market intelligence',exact:true})).toBeVisible();
+  await expect(page.locator('#fuelDiscovery')).toBeVisible();
+  const form=page.locator('#intelligenceFilter');await form.getByLabel('Fuel view').selectOption('diesel');await form.getByRole('button',{name:'Apply fuel view'}).click();
+  await expect(page.getByRole('button',{name:'Export accepted history CSV'})).toBeDisabled();
+  await form.getByLabel('Fuel view').selectOption('petrol');await form.getByRole('button',{name:'Apply fuel view'}).click();
+  await expect(page.getByRole('button',{name:'Export accepted history CSV'})).toBeEnabled();
+  const pending=page.waitForEvent('download');await page.getByRole('button',{name:'Export accepted history CSV'}).click();const download=await pending;
+  expect(download.suggestedFilename()).toMatch(/^accepted-price-history/);expect(await readFile(await download.path(),'utf8')).toContain('petrol');
+  expect((await page.request.get('/api/v1/admin/reports')).status()).toBe(403);expect((await page.request.get('/api/v1/operator/stations')).status()).toBe(403);
+});
+test('investigator can find an unassigned case, inspect it, and record an authorized investigation',async({page,request,baseURL})=>{
+  const origin=new URL(baseURL).origin;
+  const login=await request.post('/api/v1/auth/login',{headers:{Origin:origin,'X-Requested-With':'MafutaWatch'},data:{email:'alice@example.test',password:testPassword}});expect(login.status()).toBe(200);
+  const session=await login.json(),headers={Origin:origin,'X-Requested-With':'MafutaWatch','X-CSRF-Token':session.csrfToken,'Idempotency-Key':randomUUID()};
+  const created=await request.post('/api/v1/tickets',{headers,data:{stationId:1,category:'quality',vehicleType:'truck',incidentDate:new Date().toISOString().slice(0,10),description:'Investigation workflow fixture: receipt and pump reading need review.'}});expect(created.status()).toBe(201);const ticket=await created.json();
+  await signIn(page,'inspector');await openWorkspacePage(page,'Operations dashboard');await page.getByRole('button',{name:'Consumer cases',exact:true}).click();
+  const filter=page.locator('#caseQueueFilter');await filter.getByLabel('Assignment',{exact:true}).selectOption('unassigned');await filter.getByLabel('Case status').selectOption('open');await filter.getByRole('button',{name:'Apply case filters'}).click();
+  await page.locator('.ticket-card').filter({hasText:ticket.reference}).getByRole('button',{name:'Open case →'}).click();
+  await page.locator('#ticketAction [name=status]').selectOption('investigating');await page.getByLabel('Action taken / reason (shared with citizen)').fill('Receipt reviewed; investigation opened and assigned to this case officer.');
+  await page.getByRole('button',{name:'Save case decision'}).click();await expect(page.locator('#detailContent')).toContainText('investigating');
+  const updated=await (await request.get(`/api/v1/tickets/${ticket.id}`)).json();expect(updated.status).toBe('investigating');expect(updated.assigned_to).toBeTruthy();
+  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Your assigned investigations'})).toBeVisible();await expect(page.locator('#view')).toContainText(ticket.reference);
+});
+test('operator history and station-map actions stay tied to its assigned station',async({page})=>{
+  await signIn(page,'operator');await openWorkspacePage(page,'Station workspace');
+  await expect(page.getByRole('heading',{name:'Assigned station profile'})).toBeVisible();
+  await page.getByRole('button',{name:'View price history & profile',exact:true}).click();
+  await expect(page.locator('#detailContent')).toContainText('Recent accepted price history');await expect(page.locator('#detailTitle')).toHaveText('Shell Nasser Road');
+  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Locate on map',exact:true}).click();
+  await expect(page).toHaveURL(/#stations$/);await expect(page.locator('.discovery-card.selected')).toContainText('Shell Nasser Road');
 });
