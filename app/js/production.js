@@ -126,17 +126,19 @@
       panel.appendChild(heading);
       const name = make('input'); name.placeholder = 'Station name'; name.maxLength = 160;
       const district = make('input'); district.placeholder = 'District'; district.maxLength = 100;
+      const latitude = make('input'); latitude.placeholder = 'Latitude (optional)'; latitude.type = 'number'; latitude.step = 'any'; latitude.min = '-90'; latitude.max = '90';
+      const longitude = make('input'); longitude.placeholder = 'Longitude (optional)'; longitude.type = 'number'; longitude.step = 'any'; longitude.min = '-180'; longitude.max = '180';
       const create = make('button', 'Add station', 'btn-tool btn-tool-primary btn-tool-sm');
       create.addEventListener('click', async () => {
         create.disabled = true;
         try {
-          await request('/stations', { method: 'POST', body: JSON.stringify({ name: name.value.trim(), district: district.value.trim() }) });
-          name.value = ''; district.value = '';
+          await request('/stations', { method: 'POST', body: JSON.stringify({ name: name.value.trim(), district: district.value.trim(), ...(latitude.value ? { latitude: Number(latitude.value) } : {}), ...(longitude.value ? { longitude: Number(longitude.value) } : {}) }) });
+          name.value = ''; district.value = ''; latitude.value = ''; longitude.value = '';
           safeToast('Station added to authoritative directory');
           await refreshStations();
         } catch (e) { safeToast(e.message); } finally { create.disabled = false; }
       });
-      for (const node of [name, district, create]) { node.style.marginRight = '8px'; node.style.marginTop = '8px'; panel.appendChild(node); }
+      for (const node of [name, district, latitude, longitude, create]) { node.style.marginRight = '8px'; node.style.marginTop = '8px'; panel.appendChild(node); }
     }
     const reportsTitle = make('h4', 'Pending citizen price reports');
     reportsTitle.style.marginTop = '18px';

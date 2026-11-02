@@ -12,6 +12,8 @@ WORKDIR /service
 COPY package*.json ./
 RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build /service/dist ./dist
+COPY scripts ./scripts
+COPY migrations ./migrations
 USER node
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

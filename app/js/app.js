@@ -146,6 +146,7 @@ function initMap() {
 }
 
 function renderMapMarkers(fuelFilter, radiusKm) {
+  if (!map) return; // The API may resolve before Leaflet is initialized.
   markers.forEach(m=>map.removeLayer(m)); markers=[];
   const fuel=fuelFilter||document.getElementById('mapFuel')?.value||'all';
   const radius=radiusKm||parseInt(document.getElementById('mapRadius')?.value)||0;
@@ -156,6 +157,7 @@ function renderMapMarkers(fuelFilter, radiusKm) {
   if (radius>0 && window._userLat!=null) userPos={lat:window._userLat,lng:window._userLng};
 
   let stations=getStations().filter(s=>{
+    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return false;
     if(search&&!s.name.toLowerCase().includes(search)&&!s.area.toLowerCase().includes(search)
        &&!s.district.toLowerCase().includes(search)) return false;
     if(fuel!=='all'&&!s[fuel]) return false;
@@ -194,8 +196,8 @@ function renderMapMarkers(fuelFilter, radiusKm) {
       s.kerosene?`<div>Kerosene: UGX ${s.kerosene.toLocaleString()}/L</div>`:'',
     ].filter(Boolean).join('');
     m.bindPopup(`
-      <div class="popup-station">${s.name}</div>
-      <div class="popup-operator">${op.name} · ${s.area}, ${s.district}</div>
+      <div class="popup-station">${escapeMafutaHtml(s.name)}</div>
+      <div class="popup-operator">${escapeMafutaHtml(op.name)} · ${escapeMafutaHtml(s.area)}, ${escapeMafutaHtml(s.district)}</div>
       <div style="margin:6px 0;">${pricesHtml}</div>
       <button class="popup-action" onclick="openStationModal(${s.id})">View Details + Report</button>
     `);
@@ -416,7 +418,7 @@ function populateReportForm() {
   sel.innerHTML='<option value="">Select a station...</option>';
   getStations().forEach(s=>{
     const op=getOp(s.op);
-    sel.innerHTML+=`<option value="${s.id}">${s.name} — ${op.short}, ${s.area}</option>`;
+    sel.innerHTML+=`<option value="${s.id}">${escapeMafutaHtml(s.name)} — ${escapeMafutaHtml(op.short)}, ${escapeMafutaHtml(s.area)}</option>`;
   });
 }
 

@@ -1,6 +1,6 @@
 # MafutaWatch Uganda — National Fuel Price Transparency Platform
 
-**Ministry of Energy and Mineral Development (MEMD)** | **Republic of Uganda**
+**Independent software prototype** | **Not an official ministry platform**
 
 ---
 
@@ -97,7 +97,7 @@ The application is modeled after the **South African Government contact director
 
 ---
 
-*Platform commissioned by Ministry of Energy and Mineral Development, Republic of Uganda*
+*Independent concept prototype. No verified government commissioning or endorsement.*
 *Reference Architecture v2.0 — May 2026*
 
 ## Production foundation branch (November 2026)
