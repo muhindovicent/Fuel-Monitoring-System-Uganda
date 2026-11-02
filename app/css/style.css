@@ -509,6 +509,23 @@ dialog p { font-size: .83rem; }
   dialog { padding: 22px; }
   #detailDialog .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Sticky public mobility navigation; workspace header has its own compact mode. */
+body[data-shell="public"] .site-header { position: sticky; top: 0; z-index: 1100; border-bottom: 1px solid #e7edf4; }
+body[data-shell="public"] .navigation-bar { top: 94px; }
+body[data-shell="public"] .primary-navigation { gap: 25px; }
+html { scroll-padding-top: 160px; }
+.surface-title { display: flex; gap: 10px; align-items: center; }
+.surface-title .icon { color: var(--green); }
+.skeleton { position: relative; overflow: hidden; border-radius: 6px; background: #e6edf4; }
+.skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 65%), transparent); transform: translateX(-100%); animation: shimmer 1.4s infinite; }
+@keyframes shimmer { to { transform: translateX(100%); } }
+.loading-surface { padding: 30px 0; }
+.loading-surface .skeleton { height: 17px; margin-bottom: 15px; }
+.loading-surface .skeleton:first-child { height: 35px; width: 60%; }
+.loading-surface .skeleton:last-child { height: 220px; margin-top: 28px; }
+@media (max-width: 900px) { body[data-shell="public"] .navigation-bar { top: 84px; } }
+@media (max-width: 620px) { body[data-shell="public"] .navigation-bar { top: 80px; } }
+
 /* Phase 2: enterprise workspace chrome, using the same portal components. */
 .sidebar-toggle { display: inline-grid; place-items: center; width: 40px; padding: 8px; flex-shrink: 0; }
 .notification-button { position: relative; width: 42px; padding: 8px; }

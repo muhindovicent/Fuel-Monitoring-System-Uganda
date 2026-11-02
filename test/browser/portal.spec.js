@@ -21,10 +21,11 @@ for(const width of [360,768,1024,1440]){
       await page.keyboard.press('Escape');await expect(page.locator('#menuToggle')).toHaveAttribute('aria-expanded','false');
       await page.locator('#menuToggle').click();
     }
-    await page.locator('#primaryNavigation').getByRole('link',{name:'Contact',exact:true}).click();
-    await expect(page.getByRole('heading',{name:'Find the right way to get help.'})).toBeVisible();
-    await expect(page.locator('#view')).toContainText('No public support phone number or email address has been configured.');
+    await page.locator('#primaryNavigation').getByRole('link',{name:'Citizen Services',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Every journey. A practical service.'})).toBeVisible();
     if(width<=900)await expect(page.locator('#menuToggle')).toHaveAttribute('aria-expanded','false');
+    await page.locator('.site-footer').getByRole('link',{name:'Help & contact',exact:true}).click();
+    await expect(page.locator('#view')).toContainText('No public support phone number or email address has been configured.');
     expect(errors).toEqual([]);
   });
 }
