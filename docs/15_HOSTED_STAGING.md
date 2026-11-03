@@ -35,7 +35,7 @@ Dependency installation, lint and tests run without these secrets. Deployment al
 2. Provisions/migrates the isolated database, verifies runtime privileges and preserves the legacy register.
 3. Pins Render to the workflow's commit and repository-root Dockerfile, turns automatic deployment off, sets production origin/TLS/runtime connection and `/health/ready`, then polls deployment status.
 4. Checks real public collection shapes, no-store headers, admin login/session continuity, secure cookie flags, protected staff endpoints, rejected Origin/CSRF/header violations, logout revocation, and unchanged legacy record counts.
-5. Checks the same session workflow through Vercel once its frontend proxy is published.
+5. Checks the same session workflow through Vercel once its frontend proxy is published, including actual Chromium UI login, browser acceptance of the secure cookie, the administrator command center and UI logout. Root HTML security headers are also required, so an incomplete header matcher cannot pass.
 
 Render configuration and previous environment values are retained in process memory for automatic restoration if deployment/direct-backend verification fails. Both databases remain available. A rollback failure is reported explicitly; inspect the Render dashboard before retrying.
 

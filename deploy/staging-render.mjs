@@ -3,7 +3,7 @@ import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {target,DeploymentError,requireValue,sameDatabase,secureConnection,managedConnection,assertEmptyLegacy} from './hosting-shared.mjs';
 import {prepareDatabase} from './staging-database.mjs';
-import {verifyHosted} from './staging-smoke.mjs';
+import {verifyHosted,verifyHostedBrowser} from './staging-smoke.mjs';
 export {target,DeploymentError,sameDatabase,secureConnection} from './hosting-shared.mjs';
 export async function renderRequest(key,path,{method='GET',body}={}){
   const response=await fetch(`https://api.render.com/v1${path}`,{
@@ -107,7 +107,7 @@ export async function upgrade(env=process.env){
   if(JSON.stringify(before.legacy)!==JSON.stringify(after.legacy)||before.matchingBootstrapAdministrator!==after.matchingBootstrapAdministrator)throw new DeploymentError('Legacy record counts changed during deployment.');
   let frontendReady=false;
   try{const response=await fetch(`${target.frontend}/health/ready`,{signal:AbortSignal.timeout(60000)});frontendReady=response.ok&&(await response.json()).status==='ready';}catch(_error){/* Frontend publication follows backend verification. */}
-  if(frontendReady)console.log(JSON.stringify(await verifyHosted(target.frontend,email,password)));
+  if(frontendReady){console.log(JSON.stringify(await verifyHosted(target.frontend,email,password)));console.log(JSON.stringify(await verifyHostedBrowser(email,password)));}
   else console.log('Backend verified. Publish the matching Vercel frontend, then rerun this workflow to verify its same-origin authentication.');
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){

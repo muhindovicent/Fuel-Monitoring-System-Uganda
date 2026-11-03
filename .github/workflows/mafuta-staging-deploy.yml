@@ -54,6 +54,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Verify deployment code without deployment secrets
         run: npm run lint && npm test
+      - name: Install Chromium for real hosted cookie and workspace verification
+        run: npx playwright install --with-deps chromium
       - name: Require complete application and Docker verification for this commit
         env:
           GH_TOKEN: ${{ github.token }}
