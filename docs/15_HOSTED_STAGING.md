@@ -68,11 +68,17 @@ Run **Provision authorized MafutaWatch staff** from the Actions tab with a non-s
 
 No password or database credential is written to logs, artifacts or the repository. Password changes, session/token revocation and normal role enforcement remain in the application. Operator access still uses the existing citizen application and administrator approval flow.
 
+Existing non-administrator accounts can also be reassigned between citizen, operator, inspector and analyst from the admin **Accounts** tab. Each change requires a recorded authorization reason, revokes the account's sessions and API tokens, and removes station assignments when operator access is removed. Administrator accounts and roles remain CLI-managed.
+
+## Stakeholder credentials
+
+There are no shared stakeholder logins. Citizens register their own accounts; operator applicants keep that account and receive station access after document approval; inspector and analyst accounts are created with the private `STAFF_ACCOUNT_*` secrets through the approved workflow; the administrator uses the bootstrap account. Passwords are stored only as scrypt hashes and cannot be recovered from the database or repository.
+
 ## Local verification
 
 - Node 24.22.1; `npm run lint` passes.
-- `npm test`: 35 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial, public build exclusions and staff-provisioning authorization/idempotency.
-- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 43 passed, including every role's login/logout, role navigation, denial of cross-role APIs, operator request continuity and 360/1440px layouts.
+- `npm test`: 36 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial, public build exclusions, administrator role assignment and staff-provisioning authorization/idempotency.
+- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 44 passed, including every role's login/logout, role navigation, administrator role assignment, denial of cross-role APIs, operator request continuity and 360/1440px layouts.
 - `npm run build` in `app`: passes with the locked Leaflet dependency.
 - The Docker healthcheck respects Render's `PORT` environment variable.
 

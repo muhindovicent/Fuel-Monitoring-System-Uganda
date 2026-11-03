@@ -49,7 +49,7 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | GET | `/admin/reports` | Inspector/admin pending/flagged observations |
 | PATCH | `/admin/reports/:id` | Inspector/admin `{status:verified|rejected,reason}` |
 | GET | `/admin/officers` | Inspector/admin active assignees |
-| GET, PATCH | `/admin/users`, `/admin/users/:id` | Admin non-admin identity/suspension; `{identityVerified?,disabled?,reason}` |
+| GET, PATCH | `/admin/users`, `/admin/users/:id` | Admin non-admin identity/suspension/role; `{identityVerified?,disabled?,role?,reason}`; role is citizen/operator/inspector/analyst |
 | POST | `/admin/operators` | Admin `{name,shortName}` |
 | POST | `/admin/rooms` | Admin `{name}`; create a real corridor room |
 | GET | `/admin/stations`, `/admin/assignments` | Admin full directory including inactive stations / current staff assignments |

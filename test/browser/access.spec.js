@@ -47,6 +47,22 @@ for(const width of [360,1440])for(const [account,role,route,title,endpoint,statu
     expect(authenticated.csrfToken).toBeTruthy();
   });
 }
+test('administrators assign a non-administrator role from the Accounts tab',async({page})=>{
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Citizen Registration',exact:true}).click();
+  await page.getByLabel('Display name').fill('Role Browser');await page.getByLabel('Email address').fill('role.browser@example.test');
+  await page.getByLabel('Password',{exact:true}).fill(testPassword);await page.locator('#authForm input[name=consent]').check();
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'Citizen Dashboard',exact:true})).toBeVisible();
+  await page.locator('#logoutButton').click();
+  await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Accounts',exact:true}).click();await expect(page.getByRole('heading',{name:'Identity & account access',exact:true})).toBeVisible();
+  page.on('dialog',async dialog=>dialog.type()==='confirm'?dialog.accept():dialog.accept('Role confirmed by the operating organization for this browser check.'));
+  const row=page.locator('tbody tr').filter({hasText:'role.browser@example.test'});await expect(row.locator('select[data-role-for]')).toHaveValue('citizen');
+  await row.locator('select[data-role-for]').selectOption('inspector');await row.getByRole('button',{name:'Update role',exact:true}).click();
+  await expect(page.locator('#toast')).toContainText('Account role updated and recorded.');
+  await expect(page.locator('tbody tr').filter({hasText:'role.browser@example.test'})).toContainText('inspector');
+});
 test('operator request continues the citizen application flow without self-promotion',async({page})=>{
   await page.goto('/');await page.locator('#stakeholderAccess').getByRole('link',{name:'Station Operator Access Request'}).click();
   await expect(page.getByRole('heading',{name:'Station Operator Access Request',exact:true})).toBeVisible();

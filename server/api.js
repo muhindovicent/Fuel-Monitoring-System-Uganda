@@ -357,14 +357,16 @@ export function apiRoutes(db,config) {
   });
   router.get('/admin/officers',staff,async(_req,res)=>res.json({items:(await db.query("SELECT id,display_name FROM users WHERE role IN ('admin','inspector') AND NOT disabled ORDER BY display_name")).rows}));
   router.patch('/admin/users/:id',roles('admin'),async(req,res)=>{
-    const input=z.object({identityVerified:z.boolean().optional(),disabled:z.boolean().optional(),reason:z.string().trim().min(10).max(1000)}).strict().refine(v=>v.identityVerified!==undefined||v.disabled!==undefined,'Choose an action.').parse(req.body);
+    const input=z.object({identityVerified:z.boolean().optional(),disabled:z.boolean().optional(),role:z.enum(['citizen','operator','inspector','analyst']).optional(),reason:z.string().trim().min(10).max(1000)}).strict().refine(v=>v.identityVerified!==undefined||v.disabled!==undefined||v.role!==undefined,'Choose an action.').parse(req.body);
     const id=uuid.parse(req.params.id);ensure(id!==req.user.id,403,'Use another administrator to change your own account.');
     await transaction(db,async client=>{
       const user=(await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];ensure(user,404,'Account not found.');
       ensure(user.role!=='admin',403,'Administrator account changes require the administrative CLI.');
-      await client.query('UPDATE users SET identity_verified=coalesce($1,identity_verified),disabled=coalesce($2,disabled) WHERE id=$3',[input.identityVerified??null,input.disabled??null,id]);
-      if(input.disabled) {await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1',[id]);}
-      await audit(client,req.user.id,'account.review',id,input);
+      const roleChanged=input.role!==undefined&&input.role!==user.role;
+      await client.query('UPDATE users SET identity_verified=coalesce($1,identity_verified),disabled=coalesce($2,disabled),role=coalesce($3,role) WHERE id=$4',[input.identityVerified??null,input.disabled??null,input.role??null,id]);
+      if(roleChanged&&input.role!=='operator')await client.query('DELETE FROM station_staff WHERE user_id=$1',[id]);
+      if(input.disabled||roleChanged){await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[id]);}
+      await audit(client,req.user.id,roleChanged?'account.role':'account.review',id,input);
     });res.json({saved:true});
   });
   router.post('/admin/operators',roles('admin'),async(req,res)=>{

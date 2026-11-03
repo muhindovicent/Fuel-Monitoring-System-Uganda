@@ -190,6 +190,22 @@ test('API security, persistence and stakeholder workflows',async t=>{
     await db.query("UPDATE tickets SET due_at=now()-interval '1 hour' WHERE id=$1",[ticket.id]);
     assert.equal((await request('/tickets',{as:'inspector'})).data.items.find(t=>t.id===ticket.id).overdue,true);
   });
+  await t.test('administrators can assign non-administrator roles with revoked access and an audit record',async()=>{
+    const registered=await request('/auth/register',{method:'POST',body:{email:'rolechange@example.test',password:testPassword,displayName:'Role change test',consent:true}});assert.equal(registered.status,201);
+    sessions.rolechange={...registered.data,cookie:registered.response.headers.get('set-cookie').split(';')[0]};
+    const id=registered.data.user.id,reason='Role confirmed by the operating organization and recorded for audit.';
+    assert.equal((await request(`/admin/users/${id}`,{as:'analyst',method:'PATCH',body:{role:'inspector',reason}})).status,403);
+    assert.equal((await request(`/admin/users/${users.admin.id}`,{as:'admin',method:'PATCH',body:{role:'operator',reason}})).status,403);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{role:'admin',reason}})).status,400);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{role:'inspector',reason}})).status,200);
+    assert.equal((await db.query('SELECT role FROM users WHERE id=$1',[id])).rows[0].role,'inspector');
+    assert.equal((await request('/me/reports',{as:'rolechange'})).status,401);
+    const login=await request('/auth/login',{method:'POST',body:{email:'rolechange@example.test',password:testPassword}});assert.equal(login.status,200);assert.equal(login.data.user.role,'inspector');
+    sessions.rolechange={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'rolechange'})).status,200);
+    const event=(await db.query("SELECT action,details FROM audit_log WHERE action='account.role' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.role,'inspector');assert.equal(event.details.reason,reason);
+  });
   await t.test('password changes revoke sessions and logout invalidates cookies',async()=>{
     const result=await request('/auth/password',{as:'alice',method:'POST',body:{currentPassword:testPassword,newPassword:'New-test-password-2026!'}});assert.equal(result.status,204);
     assert.equal((await request('/me/reports',{as:'alice'})).status,401);
