@@ -53,7 +53,7 @@ test('the least-privilege runtime role can create only the approved staff accoun
   const db=await testDatabase();const users=await fixtures(db);const session=await db.connect();
   try{
     await session.query('SET ROLE mafuta_app');
-    const runtime={query:session.query,connect:async()=>({query:session.query,release(){}}),end:async()=>{}};
+    const query=session.query.bind(session),runtime={query,connect:async()=>({query,release(){}}),end:async()=>{}};
     const account={email:'runtime.inspector@example.test',displayName:'Runtime Inspector',password:'Provisioned-password-2026!'};
     const created=await provisionStaffAccount(runtime,{request:{...request,requestId:'APPROVAL-2026-0006'},account,administrator:{email:users.admin.email,password:testPassword},github:{actor:'admin',runId:'41604059549',commit:'b'.repeat(40)}});
     assert.equal(created.created,true);
