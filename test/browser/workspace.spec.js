@@ -8,7 +8,8 @@ async function signIn(page,who='alice'){
   await page.goto('/#activity');await page.locator('#accountButton').click();
   await page.getByLabel('Email address').fill(`${who}@example.test`);await page.getByLabel('Password',{exact:true}).fill(testPassword);
   await page.locator('#authForm').getByRole('button',{name:'Sign in',exact:true}).click();
-  await expect(page.locator('#authDialog')).not.toBeVisible();await expect(page.getByRole('heading',{name:'Your contributions. In one place.'})).toBeVisible();
+  const titles={alice:'Citizen Dashboard',operator:'Assigned Station Workspace',inspector:'Inspection Workspace',analyst:'Market Intelligence Workspace',admin:'National Command Center'};
+  await expect(page.locator('#authDialog')).not.toBeVisible();await expect(page.getByRole('heading',{name:titles[who],exact:true})).toBeVisible();
 }
 for(const width of [360,768,1024,1440]){
   test(`dashboard shell is responsive and keyboard accessible at ${width}px`,async({page})=>{
@@ -43,7 +44,7 @@ for(const [who,role,workspace] of [['alice','citizen','My activity'],['operator'
     if(role==='citizen')await expect(page.locator('#navigation').getByRole('link',{name:'Operations dashboard'})).toHaveCount(0);
     if(['inspector','admin'].includes(role))await expect(page.getByRole('button',{name:'Consumer cases',exact:true})).toBeVisible();
     if(role==='admin'){
-      await expect(page.getByRole('heading',{name:'National Energy Command Center',exact:true})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
       await expect(page.locator('.readiness-card')).toContainText('Ready');
       const sessionResponse=await page.request.get('/api/v1/auth/session');expect(sessionResponse.status()).toBe(200);
       const session=await sessionResponse.json();
@@ -75,7 +76,7 @@ test('notification drawer reads real case updates and marks only displayed recor
 });
 test('analyst intelligence filters and exports accepted history without gaining operational permissions',async({page})=>{
   await signIn(page,'analyst');await openWorkspacePage(page,'Operations dashboard');
-  await expect(page.getByRole('heading',{name:'Fuel market intelligence',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Market Intelligence Workspace',exact:true})).toBeVisible();
   await expect(page.locator('#fuelDiscovery')).toBeVisible();
   const form=page.locator('#intelligenceFilter');await form.getByLabel('Fuel view').selectOption('diesel');await form.getByRole('button',{name:'Apply fuel view'}).click();
   await expect(page.getByRole('button',{name:'Export accepted history CSV'})).toBeDisabled();

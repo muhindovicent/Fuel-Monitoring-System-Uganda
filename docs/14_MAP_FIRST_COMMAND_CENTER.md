@@ -27,7 +27,7 @@ The reusable navy-sidebar/white-surface shell includes collapse/expand, account 
 
 | Existing role | Prioritized presentation |
 |---|---|
-| Administrator | National Energy Command Center, user verification/access, station registration, operator approvals, cases, sourced notices, audit and actual `/health/ready` status |
+| Administrator | National Command Center, user verification/access, station registration, operator approvals, cases, sourced notices, audit and actual `/health/ready` status |
 | Inspector | Assigned investigations from accessible case records, assignment/status filtering, evidence/conversation access, server-owned deadlines and authorized case decisions |
 | Analyst | Default price-intelligence view, fuel filtering, regional comparisons, actual accepted daily history, CSV exports, public station-network discovery and read-only activity records |
 | Assigned operator | Assigned station profile/current prices, audited pump-price editor, public station history/map actions, station-relevant observations/directives and scoped integration credentials |
@@ -35,7 +35,7 @@ The reusable navy-sidebar/white-surface shell includes collapse/expand, account 
 
 No new privileged rider, truck-driver, government or regulator role was created. Station operators cannot enter analyst/admin APIs; analysts cannot access moderation or operator APIs. The server remains the authorization boundary.
 
-Case-assignment filtering is explicitly scoped to the currently loaded page (50 records), not represented as an exhaustive server-side assignee search. Readiness confirms the existing endpoint's database/schema check; it is not an uptime/capacity prediction. Historical charts show returned accepted daily updates without fabricating missing dates or a continuous national index. Role changes remain an administrative CLI operation; the frontend only offers supported account actions.
+Case-assignment filtering is explicitly scoped to the currently loaded page (50 records), not represented as an exhaustive server-side assignee search. Readiness confirms the existing endpoint's database/schema check; it is not an uptime/capacity prediction. Historical charts show returned accepted daily updates without fabricating missing dates or a continuous national index. The public interface names Citizen Registration, Sign In, Station Operator Access Request and Authorized Staff Sign In explicitly. Sign-in lands on the workspace authorized by the account role, and restricted pages/API calls still return the server's denial. Inspector and analyst accounts are created only through the administrator-approved GitHub Actions request workflow. The generic CLI remains a deployment-operator tool and is not exposed through the browser.
 
 ## Accessibility and interaction
 
@@ -44,7 +44,7 @@ Case-assignment filtering is explicitly scoped to the currently loaded page (50 
 - Mobile filter controls use 16px inputs to avoid automatic iOS focus zoom and touch-sized actions. Search remains anonymous; changing filters does not open authentication unexpectedly.
 - Real loading skeletons expose busy/status state; decorative skeletons and icons do not obscure accessibility text. Reduced-motion preferences disable shimmer/transitions and map panning animation.
 - Native minimum-length attributes match the existing backend requirements. Failures preserve form entries and do not acknowledge unconfirmed submissions.
-- Shell cache v6 includes the new module. Private API data, evidence and unbounded map tiles remain excluded from the offline cache.
+- Shell cache v8 includes the new access-routing module. Private API data, evidence and unbounded map tiles remain excluded from the offline cache.
 
 ## Verification record
 
@@ -55,6 +55,7 @@ Each implementation phase was verified before the next phase:
 3. Command center: all 23 checks and 18 workspace/stakeholder browser journeys passed.
 4. Interaction hardening found and fixed the canonical district/road-name ambiguity; mobile workflows now explicitly expand their results sheet.
 5. Final: `npm run lint` passed; **`npm test`: 24 passed** (19 existing API/security checks plus 5 discovery checks); **`npm run test:e2e`: 32 passed**. The shell-v6 offline test also passed after the cache-version update. `npm audit --audit-level=moderate` reported 0 known vulnerabilities; `git diff --check` passed.
+6. Stakeholder access: the public interface now names Citizen Registration, Sign In, Station Operator Access Request and Authorized Staff Sign In; sign-in routes to the role-authorized workspace. **`npm test`: 35 passed**; **`npm run test:e2e`: 43 passed** across public, workflow, workspace and stakeholder-access suites, including every existing role at 360 and 1440px. Shell cache v8 includes the access-routing module.
 
 Local verification used Node.js 24.22.1 and installed Edge Chromium on Windows. CI continues to use Playwright Chromium. Public and workspace screenshots were inspected at all requested widths. New browser journeys cover bidirectional selection, actual API-published price records, analyst CSV/fuel filtering, a real case assignment/decision, assigned-operator profile/history/map access, denied GPS, missing map library, mobile sheets and reduced-motion loading. Tests retain existing server rate limits and security assertions.
 

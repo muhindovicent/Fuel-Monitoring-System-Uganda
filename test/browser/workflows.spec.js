@@ -63,7 +63,7 @@ test('operator and inspector workspaces, responsive navigation and accessible di
 test('service worker caches only shell resources and offline never acknowledges writes',async({page,context})=>{
   await page.goto('/');await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
   await page.evaluate(()=>navigator.serviceWorker.ready);await page.reload();
-  await login(page,'verified1');await page.goto('/#activity');await expect(page.getByRole('heading',{name:'Your contributions. In one place.'})).toBeVisible();
+  await login(page,'verified1');await page.goto('/#activity');await expect(page.getByRole('heading',{name:'Citizen Dashboard'})).toBeVisible();
   const cached=await page.evaluate(async()=>{const keys=await caches.keys();return (await Promise.all(keys.map(async key=>(await (await caches.open(key)).keys()).map(r=>r.url)))).flat();});
   expect(cached.some(url=>url.includes('/api/'))).toBe(false);
   await context.setOffline(true);await page.reload();

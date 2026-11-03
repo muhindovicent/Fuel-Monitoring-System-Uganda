@@ -73,7 +73,7 @@ test('header registration creates only a citizen and preserves server authorizat
   await page.locator('#consentLabel input').check();await page.locator('#authForm').getByRole('button',{name:'Create account',exact:true}).click();
   await expect(page.locator('#authDialog')).not.toBeVisible();await expect(page.locator('#accountButton')).toContainText('citizen');
   const admin=await page.request.get('/api/v1/admin/dashboard');expect(admin.status()).toBe(403);
-  await page.locator('#workspaceLink').click();await expect(page.getByRole('heading',{name:'Your contributions. In one place.'})).toBeVisible();
+  await page.locator('#workspaceLink').click();await expect(page.getByRole('heading',{name:'Citizen Dashboard'})).toBeVisible();
 });
 test('fresh verified discovery, insights and station history use records published through the real API',async({page,request,baseURL})=>{
   const origin=new URL(baseURL).origin;

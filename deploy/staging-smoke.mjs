@@ -55,7 +55,7 @@ export async function verifyHostedBrowser(email,password){
     const cookie=(await context.cookies(target.frontend)).find(c=>c.name==='mfw_session');
     if(session.user?.role!=='admin'||!cookie?.httpOnly||!cookie.secure||cookie.sameSite!=='Strict')throw new DeploymentError('Hosted browser session/cookie verification failed.');
     await page.locator('#workspaceLink').click();
-    await page.getByRole('heading',{name:'National Energy Command Center',exact:true}).waitFor();
+    await page.getByRole('heading',{name:'National Command Center',exact:true}).waitFor();
     const dashboard=await page.evaluate(()=>fetch('/api/v1/admin/dashboard',{cache:'no-store'}).then(r=>r.status));
     if(dashboard!==200)throw new DeploymentError('Hosted browser cannot access the authorized administrator workspace.');
     await page.locator('#logoutButton').click();await page.locator('#logoutButton').waitFor({state:'hidden'});
