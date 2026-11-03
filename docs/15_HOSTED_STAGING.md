@@ -49,11 +49,30 @@ vercel deploy --prod --scope vicent-s-projects1 --yes
 
 Rerun the successful staging workflow after frontend publication to verify Vercel's proxied login/session/logout. An identical live Render commit/environment is reused, while migrations/bootstrap are checked for repeatability.
 
+## Authorized staff provisioning
+
+`.github/workflows/mafuta-staff-provision.yml` creates inspector or analyst accounts without a local terminal and without changing any other account. Before first use, an administrator must configure:
+
+1. Repository variable `STAFF_PROVISIONERS` — comma-separated GitHub logins allowed to request or rerun provisioning. The workflow fails closed when this is unset or the triggering/rerunning actor is not listed.
+2. Environment `mafuta-staff-provisioning` with required reviewers (repository administrators). The provision job waits for that approval. The environment is the approval gate; the variable is the actor allowlist.
+3. Secrets `STAFF_ACCOUNT_EMAIL`, `STAFF_ACCOUNT_DISPLAY_NAME`, `STAFF_ACCOUNT_PASSWORD` for the one account being created. Keep them private and update/remove them between requests.
+
+Run **Provision authorized MafutaWatch staff** from the Actions tab with a non-secret `request_id` (8–64 characters), the role (`inspector` or `analyst`), and an authorization `reason` (20–500 characters). Alternatively commit `.github/staff-provisioning-request.json` with `enabled: true` and the same fields; keep it disabled otherwise. The workflow:
+
+- accepts only the authorized repository/feature branch and configured administrator actors;
+- re-authenticates an active application administrator from private secrets before writing;
+- creates only a new account, never elevates an existing email, and refuses any role other than the requested inspector/analyst;
+- requires the managed runtime database identity and least-privilege checks;
+- is idempotent for the same request/account payload and rejects a request ID reused for a different account;
+- appends an append-only audit event with the request ID, reason, administrator ID, GitHub actor, run ID and commit.
+
+No password or database credential is written to logs, artifacts or the repository. Password changes, session/token revocation and normal role enforcement remain in the application. Operator access still uses the existing citizen application and administrator approval flow.
+
 ## Local verification
 
 - Node 24.22.1; `npm run lint` passes.
-- `npm test`: 30 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial and public build exclusions.
-- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 32 passed at the documented mobile/tablet/desktop widths.
+- `npm test`: 35 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial, public build exclusions and staff-provisioning authorization/idempotency.
+- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 43 passed, including every role's login/logout, role navigation, denial of cross-role APIs, operator request continuity and 360/1440px layouts.
 - `npm run build` in `app`: passes with the locked Leaflet dependency.
 - The Docker healthcheck respects Render's `PORT` environment variable.
 

@@ -1,0 +1,82 @@
+name: Provision authorized MafutaWatch staff
+
+on:
+  push:
+    branches: [ui/map-first-command-center]
+    paths: [.github/staff-provisioning-request.json]
+  workflow_dispatch:
+    inputs:
+      role:
+        description: Existing staff role to provision
+        required: true
+        type: choice
+        options: [inspector, analyst]
+      request_id:
+        description: Unique non-secret approval reference (8–64 letters, digits, dots, underscores or hyphens)
+        required: true
+        type: string
+      reason:
+        description: Non-secret administrator authorization reason (20–500 characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mafutawatch-staff-provisioning
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/ui/map-first-command-center'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      requested: ${{ steps.request.outputs.requested }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate the request and configured administrator actors
+        id: request
+        env:
+          STAFF_PROVISIONERS: ${{ vars.STAFF_PROVISIONERS }}
+          STAFF_ROLE: ${{ inputs.role }}
+          STAFF_REQUEST_ID: ${{ inputs.request_id }}
+          STAFF_REASON: ${{ inputs.reason }}
+        run: node deploy/provision-staff.mjs validate
+  provision:
+    needs: validate
+    if: needs.validate.outputs.requested == 'true'
+    environment: mafuta-staff-provisioning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies without provisioning secrets
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Create approved staff account and append administrator audit event
+        env:
+          STAFF_PROVISIONERS: ${{ vars.STAFF_PROVISIONERS }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+          STAFF_ACCOUNT_EMAIL: ${{ secrets.STAFF_ACCOUNT_EMAIL }}
+          STAFF_ACCOUNT_DISPLAY_NAME: ${{ secrets.STAFF_ACCOUNT_DISPLAY_NAME }}
+          STAFF_ACCOUNT_PASSWORD: ${{ secrets.STAFF_ACCOUNT_PASSWORD }}
+          STAFF_ROLE: ${{ inputs.role }}
+          STAFF_REQUEST_ID: ${{ inputs.request_id }}
+          STAFF_REASON: ${{ inputs.reason }}
+        run: node deploy/provision-staff.mjs provision
