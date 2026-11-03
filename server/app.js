@@ -29,7 +29,7 @@ export function createApp(db,config) {
   app.use('/api',(_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   app.use(cookieParser());
   app.use('/api',async(req,res,next)=>{
-    await limit(db,`http:${req.ip}`,300,60);
+    await limit(db,`http:${req.ip}`,config.NODE_ENV==='test'?1000:300,60);
     await authenticate(db,req);
     if(req.apiToken) ensure(req.method==='PUT'&&/^\/v1\/stations\/\d+\/prices$/.test(req.path),403,'Credential is limited to station price updates.');
     next();

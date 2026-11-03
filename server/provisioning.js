@@ -6,12 +6,12 @@ import {audit,emailSchema,passwordSchema,passwordHash,passwordMatches,ensure} fr
 const accountSchema=z.object({email:emailSchema,password:passwordSchema,role:z.enum(['citizen','operator','inspector','analyst','admin']),displayName:z.string().trim().min(2).max(80)}).strict();
 export const staffRequestSchema=z.object({requestId:z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{7,63}$/),role:z.enum(['inspector','analyst']),reason:z.string().trim().min(20).max(500)}).strict();
 
-async function writeAccount(client,input,{createOnly=false,actorId=null,action='cli.account_provision',details={}}={}){
+async function writeAccount(client,input,{createOnly=false,actorId=null,action='cli.account_provision',details={},identityVerified=false}={}){
   const existing=(await client.query('SELECT id FROM users WHERE email=$1 FOR UPDATE',[input.email])).rows[0];
   ensure(!createOnly||!existing,409,'An account already exists. Staff provisioning cannot change its role, password, verification or access.');
   const id=existing?.id??randomUUID();
   const conflict=createOnly?'':' ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,display_name=EXCLUDED.display_name,disabled=false';
-  await client.query(`INSERT INTO users(id,email,display_name,password_hash,role) VALUES ($1,$2,$3,$4,$5)${conflict}`,[id,input.email,input.displayName,await passwordHash(input.password),input.role]);
+  await client.query(`INSERT INTO users(id,email,display_name,password_hash,role,identity_verified) VALUES ($1,$2,$3,$4,$5,$6)${conflict}`,[id,input.email,input.displayName,await passwordHash(input.password),input.role,identityVerified]);
   await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);
   await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1',[id]);
   await audit(client,actorId,action,id,{email:input.email,role:input.role,...details});
@@ -20,6 +20,18 @@ async function writeAccount(client,input,{createOnly=false,actorId=null,action='
 export async function provisionAccount(db,input){
   const account=accountSchema.parse(input);
   return transaction(db,client=>writeAccount(client,account));
+}
+export async function provisionStaffByAdministrator(db,{account,administrator,reason}){
+  const input=accountSchema.parse(account);
+  ensure(['inspector','analyst'].includes(input.role),400,'Only inspector and analyst accounts can be provisioned here.');
+  const adminId=z.uuid().parse(administrator.id),adminPassword=z.string().min(1).max(128).parse(administrator.password);
+  const authorization=z.string().trim().min(20).max(500).parse(reason);
+  return transaction(db,async client=>{
+    await client.query('SELECT pg_advisory_xact_lock(734183)');
+    const admin=(await client.query('SELECT id,role,disabled,password_hash FROM users WHERE id=$1 FOR UPDATE',[adminId])).rows[0];
+    ensure(admin&&admin.role==='admin'&&!admin.disabled&&await passwordMatches(adminPassword,admin.password_hash),403,'An active application administrator must authorize staff provisioning.');
+    return writeAccount(client,input,{createOnly:true,actorId:admin.id,action:'staff.account_provision_manual',details:{reason:authorization,displayName:input.displayName,identityVerified:true},identityVerified:true});
+  });
 }
 export async function provisionStaffAccount(db,{request,account,administrator,github}){
   const approved=staffRequestSchema.parse(request);

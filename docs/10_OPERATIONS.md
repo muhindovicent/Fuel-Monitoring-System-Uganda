@@ -69,7 +69,7 @@ Initial operating objectives should be agreed with the organization (for example
 - Operator credentials can be revoked in the station workspace. Password changes and CLI reprovisioning revoke all sessions/integration credentials for that account. Admin suspension blocks existing sessions on every request.
 - To recover an account, verify ownership through the operator's documented process, set a new `USER_PASSWORD`, use the owner CLI `user <email> <role> <name>`, clear the environment variable and notify the account holder out of band. No fake recovery emails are emitted.
 - Rotate runtime/owner/bootstrap database passwords using PostgreSQL role password changes and secret updates; restart dependent connections. Changing `.env` alone does not change an existing DB role password.
-- Review staff membership, case assignment and operator licenses regularly. Role changes are owner-CLI operations. Revoke station-specific assignments when staff leave a station.
+- Review staff membership, case assignment and operator licenses regularly. Non-administrator role changes and explicit station assignments are audited administrator operations; administrator roles remain owner-CLI operations. Revoke station-specific assignments when staff leave a station, and verify identity/appointment before provisioning an inspector or analyst.
 
 ## Launch validation
 

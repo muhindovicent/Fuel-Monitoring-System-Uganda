@@ -47,7 +47,7 @@ for(const width of [360,1440])for(const [account,role,route,title,endpoint,statu
     expect(authenticated.csrfToken).toBeTruthy();
   });
 }
-test('administrators assign a non-administrator role from the Accounts tab',async({page})=>{
+test('administrators assign a non-administrator role from User management',async({page})=>{
   await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Citizen Registration',exact:true}).click();
   await page.getByLabel('Display name').fill('Role Browser');await page.getByLabel('Email address').fill('role.browser@example.test');
   await page.getByLabel('Password',{exact:true}).fill(testPassword);await page.locator('#authForm input[name=consent]').check();
@@ -56,12 +56,54 @@ test('administrators assign a non-administrator role from the Accounts tab',asyn
   await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
   await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
   await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Accounts',exact:true}).click();await expect(page.getByRole('heading',{name:'Identity & account access',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'User management',exact:true}).click();await expect(page.getByRole('heading',{name:'Staff accounts & access',exact:true})).toBeVisible();
   page.on('dialog',async dialog=>dialog.type()==='confirm'?dialog.accept():dialog.accept('Role confirmed by the operating organization for this browser check.'));
   const row=page.locator('tbody tr').filter({hasText:'role.browser@example.test'});await expect(row.locator('select[data-role-for]')).toHaveValue('citizen');
   await row.locator('select[data-role-for]').selectOption('inspector');await row.getByRole('button',{name:'Update role',exact:true}).click();
   await expect(page.locator('#toast')).toContainText('Account role updated and recorded.');
   await expect(page.locator('tbody tr').filter({hasText:'role.browser@example.test'})).toContainText('inspector');
+});
+test('administrators provision an inspector account that can immediately sign in',async({page})=>{
+  const email='provisioned.inspector@example.test',password='Provisioned-staff-password-2026!';
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'User management',exact:true}).click();await expect(page.getByRole('heading',{name:'Staff accounts & access',exact:true})).toBeVisible();
+  const form=page.locator('#staffProvision');
+  await form.locator('[name=email]').fill(email);await form.locator('[name=displayName]').fill('Provisioned Inspector');
+  await form.locator('[name=role]').selectOption('inspector');await form.locator('[name=password]').fill(password);await form.locator('[name=confirmPassword]').fill(password);
+  await form.locator('[name=administratorPassword]').fill(testPassword);await form.locator('[name=reason]').fill('Identity and appointment verified through the approved staff procedure.');
+  await form.locator('[name=identityVerified]').check();await form.getByRole('button',{name:'Provision staff account',exact:true}).click();
+  await expect(page.locator('#toast')).toContainText('Staff account created.');
+  await expect(page.locator('tbody')).toContainText(email);
+  await page.locator('#logoutButton').click();
+  await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill(email);await page.getByLabel('Password',{exact:true}).fill(password);
+  await page.locator('#authForm button[type=submit]').click();
+  await expect(page).toHaveURL(/#admin$/);await expect(page.getByRole('heading',{name:'Inspection Workspace',exact:true})).toBeVisible();
+  expect((await page.request.get('/api/v1/admin/reports')).status()).toBe(200);
+  expect((await page.request.get('/api/v1/admin/users')).status()).toBe(403);
+});
+test('administrators assign an operator account to a station from the directory',async({page})=>{
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Station directory',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Assign an operator to a station',exact:true})).toBeVisible();
+  const form=page.locator('#stationAssign'),stationOption=form.locator('[name=stationId] option').nth(1);
+  const stationId=await stationOption.getAttribute('value'),stationName=(await stationOption.textContent()).replace(/ · .*$/,'');
+  await form.locator('[name=stationId]').selectOption(stationId);
+  const operatorValue=await form.locator('[name=userId] option').filter({hasText:'operator@example.test'}).getAttribute('value');
+  await form.locator('[name=userId]').selectOption(operatorValue);
+  await form.locator('[name=reason]').fill('Operator authorization confirmed for this station by the operating organization.');
+  await form.getByRole('button',{name:'Assign station access',exact:true}).click();
+  await expect(page.locator('#toast')).toContainText('Station assignment saved and audited.');
+  await expect(page.locator('.list-item').filter({hasText:'operator@example.test'}).filter({hasText:stationName})).toHaveCount(1);
+  await page.locator('#logoutButton').click();
+  await page.locator('#stakeholderAccess').getByRole('button',{name:'Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('operator@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'Assigned Station Workspace',exact:true})).toBeVisible();
+  await expect(page.locator(`#operatorPrice [name=stationId] option[value="${stationId}"]`)).toHaveCount(1);
 });
 test('operator request continues the citizen application flow without self-promotion',async({page})=>{
   await page.goto('/');await page.locator('#stakeholderAccess').getByRole('link',{name:'Station Operator Access Request'}).click();

@@ -206,6 +206,53 @@ test('API security, persistence and stakeholder workflows',async t=>{
     const event=(await db.query("SELECT action,details FROM audit_log WHERE action='account.role' ORDER BY id DESC LIMIT 1")).rows[0];
     assert.equal(event.details.role,'inspector');assert.equal(event.details.reason,reason);
   });
+  await t.test('administrators provision inspector and analyst accounts with re-authentication and no credential disclosure',async()=>{
+    const email='manual.inspector@example.test',password='Manual-staff-password-2026!',reason='Identity and appointment verified through the approved staff procedure.';
+    const body={email,displayName:'Manual Inspector',password,role:'inspector',administratorPassword:testPassword,identityVerified:true,reason};
+    assert.equal((await request('/admin/staff',{as:'analyst',method:'POST',body})).status,403);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,administratorPassword:'wrong-password'}})).status,403);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,role:'admin'}})).status,400);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,identityVerified:false}})).status,400);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,email:'operator@example.test'}})).status,409);
+    const created=await request('/admin/staff',{as:'admin',method:'POST',body});assert.equal(created.status,201,JSON.stringify(created.data));
+    assert.equal(created.data.role,'inspector');
+    const row=(await db.query('SELECT role,identity_verified,disabled FROM users WHERE email=$1',[email])).rows[0];
+    assert.deepEqual({...row},{role:'inspector',identity_verified:true,disabled:false});
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body})).status,409);
+    const event=(await db.query("SELECT details FROM audit_log WHERE action='staff.account_provision_manual' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.email,email);assert.equal(event.details.role,'inspector');assert.equal(event.details.reason,reason);
+    assert.doesNotMatch(JSON.stringify(event.details),/Manual-staff-password/);
+    const login=await request('/auth/login',{method:'POST',body:{email,password}});assert.equal(login.status,200);assert.equal(login.data.user.role,'inspector');
+    sessions.manualStaff={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'manualStaff'})).status,200);
+    assert.equal((await request('/admin/users',{as:'manualStaff'})).status,403);
+    assert.equal((await request('/admin/staff',{as:'manualStaff',method:'POST',body})).status,403);
+  });
+  await t.test('suspending a staff account revokes access until an administrator restores it',async()=>{
+    const id=sessions.manualStaff.user.id,email='manual.inspector@example.test',password='Manual-staff-password-2026!';
+    assert.equal((await request(`/admin/users/${users.admin.id}`,{as:'admin',method:'PATCH',body:{disabled:true,reason:'An administrator cannot suspend their own account.'}})).status,403);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{disabled:true,reason:'Suspension confirmed pending a security review.'}})).status,200);
+    assert.equal((await request('/me/reports',{as:'manualStaff'})).status,401);
+    assert.equal((await request('/auth/login',{method:'POST',body:{email,password}})).status,401);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{disabled:false,reason:'Security review complete; staff access restored.'}})).status,200);
+    const login=await request('/auth/login',{method:'POST',body:{email,password}});assert.equal(login.status,200);assert.equal(login.data.user.identity_verified,true);
+    sessions.manualStaff={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'manualStaff'})).status,200);
+  });
+  await t.test('station access is granted explicitly to an active operator and can be revoked',async()=>{
+    const reason='Operator authorization confirmed for this station by the operating organization.';
+    const assignment=()=>request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.operator.id,reason}});
+    assert.equal((await request('/admin/stations/2/staff',{as:'inspector',method:'POST',body:{userId:users.operator.id,reason}})).status,403);
+    assert.equal((await request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.alice.id,reason}})).status,409);
+    assert.equal((await assignment()).status,201);
+    assert.equal((await assignment()).status,409);
+    assert.ok((await request('/operator/stations',{as:'operator'})).data.items.some(s=>s.id===2));
+    assert.equal((await request('/stations/2/prices',{as:'operator',method:'PUT',body:{fuel:'petrol',price:5750}})).status,200);
+    const event=(await db.query("SELECT details FROM audit_log WHERE action='station.access_grant' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.userId,users.operator.id);assert.equal(event.details.reason,reason);
+    assert.equal((await request(`/admin/stations/2/staff/${users.operator.id}`,{as:'admin',method:'DELETE'})).status,204);
+    assert.equal((await request('/stations/2/prices',{as:'operator',method:'PUT',body:{fuel:'petrol',price:5760}})).status,403);
+  });
   await t.test('password changes revoke sessions and logout invalidates cookies',async()=>{
     const result=await request('/auth/password',{as:'alice',method:'POST',body:{currentPassword:testPassword,newPassword:'New-test-password-2026!'}});assert.equal(result.status,204);
     assert.equal((await request('/me/reports',{as:'alice'})).status,401);

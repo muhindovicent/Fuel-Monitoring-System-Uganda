@@ -50,9 +50,12 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | PATCH | `/admin/reports/:id` | Inspector/admin `{status:verified|rejected,reason}` |
 | GET | `/admin/officers` | Inspector/admin active assignees |
 | GET, PATCH | `/admin/users`, `/admin/users/:id` | Admin non-admin identity/suspension/role; `{identityVerified?,disabled?,role?,reason}`; role is citizen/operator/inspector/analyst |
+| POST | `/admin/staff` | Admin re-authenticated inspector/analyst provisioning; `{email,displayName,password,role,administratorPassword,identityVerified,reason}`; create-only, audited, no email sent |
+| GET | `/admin/operator-accounts` | Admin active operator accounts available for explicit station assignment |
 | POST | `/admin/operators` | Admin `{name,shortName}` |
 | POST | `/admin/rooms` | Admin `{name}`; create a real corridor room |
 | GET | `/admin/stations`, `/admin/assignments` | Admin full directory including inactive stations / current staff assignments |
+| POST | `/admin/stations/:id/staff` | Admin explicit `{userId,reason}` assignment for an active operator and active station; audited and notified |
 | DELETE | `/admin/stations/:id/staff/:userId` | Admin revokes assignment and its integration credentials |
 | POST, PATCH | `/admin/stations`, `/admin/stations/:id` | Admin create station / `{active,reason}` |
 | PUT | `/admin/caps` | Admin `{district,fuel,price,sourceUrl,effectiveFrom,effectiveUntil}` |

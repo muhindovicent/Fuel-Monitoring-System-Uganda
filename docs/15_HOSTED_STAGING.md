@@ -68,17 +68,19 @@ Run **Provision authorized MafutaWatch staff** from the Actions tab with a non-s
 
 No password or database credential is written to logs, artifacts or the repository. Password changes, session/token revocation and normal role enforcement remain in the application. Operator access still uses the existing citizen application and administrator approval flow.
 
-Existing non-administrator accounts can also be reassigned between citizen, operator, inspector and analyst from the admin **Accounts** tab. Each change requires a recorded authorization reason, revokes the account's sessions and API tokens, and removes station assignments when operator access is removed. Administrator accounts and roles remain CLI-managed.
+Alternatively, an administrator can create one inspector or analyst account directly from **User management → Staff accounts & access** by entering the account details, a temporary password, the administrator's own password, an explicit identity/appointment confirmation and an authorization reason. This path is create-only, hashes the password, appends an audit event, sends no email and displays no credential afterward; the administrator must deliver the temporary password through an approved secure channel. The protected workflow remains available for GitHub-mediated provisioning.
+
+Existing non-administrator accounts can also be reassigned between citizen, operator, inspector and analyst from **User management**. Each change requires a recorded authorization reason, revokes the account's sessions and API tokens, and removes station assignments when operator access is removed. Station access is granted explicitly from **Station directory** to an active operator account and revoked with its integration credentials. Administrator accounts and roles remain CLI-managed.
 
 ## Stakeholder credentials
 
-There are no shared stakeholder logins. Citizens register their own accounts; operator applicants keep that account and receive station access after document approval; inspector and analyst accounts are created with the private `STAFF_ACCOUNT_*` secrets through the approved workflow; the administrator uses the bootstrap account. Passwords are stored only as scrypt hashes and cannot be recovered from the database or repository.
+There are no shared stakeholder logins. Citizens register their own accounts; operator applicants keep that account and receive station access after document approval or explicit administrator assignment; inspector and analyst accounts are created by an authenticated administrator or with the private `STAFF_ACCOUNT_*` secrets through the approved workflow; the administrator uses the bootstrap account. Passwords are stored only as scrypt hashes and cannot be recovered from the database or repository.
 
 ## Local verification
 
 - Node 24.22.1; `npm run lint` passes.
-- `npm test`: 36 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial, public build exclusions, administrator role assignment and staff-provisioning authorization/idempotency.
-- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 44 passed, including every role's login/logout, role navigation, administrator role assignment, denial of cross-role APIs, operator request continuity and 360/1440px layouts.
+- `npm test`: 39 passed, including real SQL checks for bootstrap repeatability, credential preservation, runtime mutation denial, public build exclusions, administrator role assignment, manual staff provisioning with re-authentication, suspension/restore, explicit station assignment/revocation and staff-provisioning authorization/idempotency.
+- `PLAYWRIGHT_CHANNEL=msedge npm run test:e2e`: 46 passed, including every role's login/logout, role navigation, administrator role assignment, new-staff provisioning and sign-in, explicit station assignment, denial of cross-role APIs, operator request continuity and 360/1440px layouts.
 - `npm run build` in `app`: passes with the locked Leaflet dependency.
 - The Docker healthcheck respects Render's `PORT` environment variable.
 

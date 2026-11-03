@@ -65,9 +65,10 @@ Additional tables: `price_caps` (source and validity interval), `rate_limits`, `
 | Operational aggregates and audit read | — | — | — | Yes | Yes | Yes |
 | Approve operator access, directory/caps/advisory management | — | — | — | — | — | Yes |
 | Verify/suspend non-admin accounts | — | — | — | — | — | Yes |
-| Provision staff roles / administrator recovery | — | — | — | — | — | Owner CLI |
+| Provision inspector/analyst (create-only) | — | — | — | — | — | Yes (re-authenticated; workflow/CLI also available) |
+| Explicitly assign/revoke an operator's station access | — | — | — | — | — | Yes |
 
-Staff oversight is currently national. Add scoped district assignments before delegating regional-only case permissions. Admins cannot approve their own station applications or moderate their own reports. Administrator account changes use the owner CLI.
+Staff oversight is currently national. Add scoped district assignments before delegating regional-only case permissions. Admins cannot approve their own station applications, moderate their own reports, change their own role or suspend their own account. Administrator accounts and roles use the owner CLI; inspector/analyst provisioning is create-only through the re-authenticated admin UI or the protected workflow. Station assignments remain explicit even after an operator role is assigned.
 
 ## Publication workflow
 

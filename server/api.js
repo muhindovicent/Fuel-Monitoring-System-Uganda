@@ -5,6 +5,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
 import { audit, ensure, requireUser, roles, limit, hash, secret } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
+import { provisionStaffByAdministrator } from './provisioning.js';
 
 const uuid=z.uuid();
 const positiveId=z.coerce.number().int().positive().max(2147483647);
@@ -369,6 +370,15 @@ export function apiRoutes(db,config) {
       await audit(client,req.user.id,roleChanged?'account.role':'account.review',id,input);
     });res.json({saved:true});
   });
+  router.post('/admin/staff',roles('admin'),async(req,res)=>{
+    await limit(db,`staff-provision-manual:${req.user.id}`,10,3600);
+    const input=z.object({email:z.email().max(254),displayName:z.string().trim().min(2).max(80),password:z.string().min(12).max(128),role:z.enum(['inspector','analyst']),administratorPassword:z.string().min(1).max(128),identityVerified:z.literal(true),reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
+    const account=await provisionStaffByAdministrator(db,{account:{email:input.email,displayName:input.displayName,password:input.password,role:input.role},administrator:{id:req.user.id,password:input.administratorPassword},reason:input.reason});
+    res.status(201).json({id:account.id,role:account.role});
+  });
+  router.get('/admin/operator-accounts',roles('admin'),async(_req,res)=>{
+    res.json({items:(await db.query("SELECT id,email,display_name FROM users WHERE role='operator' AND NOT disabled ORDER BY display_name,email LIMIT 500")).rows});
+  });
   router.post('/admin/operators',roles('admin'),async(req,res)=>{
     const input=z.object({name:z.string().trim().min(2).max(150),shortName:z.string().trim().min(2).max(30)}).strict().parse(req.body);
     const result=await transaction(db,async client=>{
@@ -390,6 +400,21 @@ export function apiRoutes(db,config) {
     const {limit,offset}=pageSchema.parse(req.query);
     res.json({items:(await db.query(`SELECT ss.user_id,ss.station_id,s.name AS station_name,u.display_name,u.email
       FROM station_staff ss JOIN stations s ON s.id=ss.station_id JOIN users u ON u.id=ss.user_id ORDER BY s.id,u.display_name LIMIT $1 OFFSET $2`,[limit,offset])).rows});
+  });
+  router.post('/admin/stations/:id/staff',roles('admin'),async(req,res)=>{
+    await limit(db,`station-assign:${req.user.id}`,60,3600);
+    const stationId=positiveId.parse(req.params.id);
+    const input=z.object({userId:uuid,reason:z.string().trim().min(10).max(500)}).strict().parse(req.body);
+    await transaction(db,async client=>{
+      const station=(await client.query('SELECT id,name,active FROM stations WHERE id=$1 FOR UPDATE',[stationId])).rows[0];ensure(station,404,'Station not found.');
+      ensure(station.active,409,'Choose an active station.');
+      const user=(await client.query('SELECT id,role,disabled FROM users WHERE id=$1 FOR UPDATE',[input.userId])).rows[0];
+      ensure(user&&!user.disabled&&user.role==='operator',409,'Choose an active operator account.');
+      const inserted=(await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING station_id',[input.userId,stationId])).rows[0];
+      ensure(inserted,409,'That operator is already assigned to this station.');
+      await audit(client,req.user.id,'station.access_grant',stationId,{userId:input.userId,reason:input.reason});
+      await notify(client,input.userId,`You now have access to ${station.name}.`);
+    });res.status(201).json({saved:true});
   });
   router.delete('/admin/stations/:id/staff/:userId',roles('admin'),async(req,res)=>{
     const stationId=positiveId.parse(req.params.id),userId=uuid.parse(req.params.userId);

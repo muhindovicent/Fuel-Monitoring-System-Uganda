@@ -36,7 +36,7 @@ No default passwords, invented government releases, fabricated analytics, browse
 
 7. Run `npm run dev` and open **http://localhost:3000**. The server serves `app/` at `/`; opening HTML directly bypasses the API and is unsupported.
 
-Public registration creates only citizen accounts. Operators request access through the station workspace; an administrator verifies license evidence and approves their named station. Official staff accounts are provisioned using the CLI.
+Public registration creates only citizen accounts. Operators request access through the station workspace; an administrator verifies license evidence and approves or explicitly assigns their station access. Inspector and analyst accounts are provisioned by a re-authenticated administrator in **User management → Staff accounts & access** or through the protected provisioning workflow; administrator roles remain CLI-managed.
 
 ## Verification
 
