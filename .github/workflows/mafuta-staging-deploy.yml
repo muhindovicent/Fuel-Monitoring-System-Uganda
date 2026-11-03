@@ -5,10 +5,11 @@ on:
     branches: [ui/map-first-command-center]
     paths:
       - .github/workflows/mafuta-staging-deploy.yml
-      - deploy/staging-render.mjs
+      - deploy/*.mjs
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: mafutawatch-render-staging
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   staging:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - name: Check deployment secret presence
         shell: bash
@@ -25,9 +26,10 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           NEON_DIRECT_DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
           BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in RENDER_API_KEY NEON_DIRECT_DATABASE_URL BOOTSTRAP_ADMIN_EMAIL; do
+          for name in RENDER_API_KEY NEON_DIRECT_DATABASE_URL BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::A required staging deployment secret is missing: $name"
               exit 1
@@ -42,9 +44,25 @@ jobs:
           cache: npm
       - name: Install locked dependencies without deployment secrets
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Inspect Render and Neon without changing service or data
+      - name: Verify deployment code without deployment secrets
+        run: npm run lint && npm test
+      - name: Require complete application and Docker verification for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verification=""
+          for attempt in $(seq 1 12); do
+            verification="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --commit "$GITHUB_SHA" --json databaseId --jq '.[0].databaseId // empty')"
+            if [[ -n "$verification" ]]; then break; fi
+            sleep 5
+          done
+          if [[ -z "$verification" ]]; then echo '::error::Application verification run was not found.'; exit 1; fi
+          gh run watch "$verification" --repo "$GITHUB_REPOSITORY" --interval 15 --exit-status
+      - name: Deploy isolated database and matching Render application
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           NEON_DIRECT_DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
           BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
-        run: node deploy/staging-render.mjs inspect
+          BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+        run: node deploy/staging-render.mjs upgrade

@@ -14,7 +14,7 @@
     "db:maintain": "node --env-file-if-exists=.env server/cli.js maintain",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "test:e2e": "playwright test",
-    "lint": "eslint server app/js test deploy playwright.config.js",
+    "lint": "eslint server app/js app/build.mjs test deploy playwright.config.js",
     "check": "npm run lint && npm test"
   },
   "dependencies": {

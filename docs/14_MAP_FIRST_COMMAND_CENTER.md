@@ -1,6 +1,6 @@
 # Map-first mobility portal and energy command center
 
-Feature branch: `ui/map-first-command-center`. This extends the previously verified portal redesign, using the Node.js 24 / Express 5 / PostgreSQL application from `main` (`70acd33`). No server code, API contracts, authentication middleware, database migrations, deployment configuration or package dependencies were changed.
+Feature branch: `ui/map-first-command-center`. This extends the previously verified portal redesign, using the Node.js 24 / Express 5 / PostgreSQL application from `main` (`70acd33`). The original UI delivery preserved its server/API/authentication/migration contracts. Subsequent hosting changes are documented in [Hosted staging deployment](15_HOSTED_STAGING.md).
 
 ## Design A — mobility intelligence
 
@@ -65,5 +65,5 @@ The running local instance was additionally checked at **http://localhost:3030**
 - A live deployment needs its own approved station records, source notices and published support/controller contact details. No generic support-contact API is fabricated.
 - There is no live stock/queue telemetry, predictive pricing, automated external notifications or automatically authenticated government-release service. The UI does not advertise them as functional.
 - At larger register volumes, server-side advanced filters/assignee pagination and a production-suitable tile plan should be validated; current controls accurately describe their loaded-record scope.
-- This frontend work does not resolve the inherited Docker Compose deployment failure from run `41464598346` (the unquoted tmpfs comma becomes a second mount entry). Deployment files remain unchanged; Docker orchestration was not executed as part of this UI verification. That requires its targeted deployment fix before claiming production deployment readiness.
+- The inherited Docker Compose failure from run `41464598346` was subsequently fixed by quoting the tmpfs mount options in commit `93f0a78`. GitHub verification run `41591212909` passed, including Linux Docker Compose HTTPS/runtime-role checks. Hosted deployment is recorded separately in [Hosted staging deployment](15_HOSTED_STAGING.md).
 - Safari/Firefox/device testing, a formal WCAG audit and production load testing remain distinct rollout checks; the recorded results above are the checks actually executed.
