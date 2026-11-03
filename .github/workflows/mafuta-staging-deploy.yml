@@ -1,0 +1,50 @@
+name: MafutaWatch staging deployment
+
+on:
+  push:
+    branches: [ui/map-first-command-center]
+    paths:
+      - .github/workflows/mafuta-staging-deploy.yml
+      - deploy/staging-render.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mafutawatch-render-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check deployment secret presence
+        shell: bash
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          NEON_DIRECT_DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+        run: |
+          set -euo pipefail
+          for name in RENDER_API_KEY NEON_DIRECT_DATABASE_URL BOOTSTRAP_ADMIN_EMAIL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::A required staging deployment secret is missing: $name"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies without deployment secrets
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Inspect Render and Neon without changing service or data
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          NEON_DIRECT_DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+        run: node deploy/staging-render.mjs inspect
