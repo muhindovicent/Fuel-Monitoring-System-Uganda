@@ -14,7 +14,7 @@ export function createApp(db,config) {
   const logger=pino({level:config.LOG_LEVEL,redact:['password','token','cookie','authorization']});
   app.disable('x-powered-by');app.disable('etag');
   app.set('trust proxy',config.TRUST_PROXY_HOPS);
-  app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','https://*.tile.openstreetmap.org'],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],baseUri:["'self'"],formAction:["'self'"],upgradeInsecureRequests:config.NODE_ENV==='production'?[]:null}},strictTransportSecurity:config.NODE_ENV==='production'?{maxAge:31536000,includeSubDomains:true}:false}));
+  app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','https://*.tile.openstreetmap.org'],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],baseUri:["'self'"],formAction:["'self'"],upgradeInsecureRequests:config.NODE_ENV==='production'?[]:null}},xFrameOptions:{action:'deny'},strictTransportSecurity:config.NODE_ENV==='production'?{maxAge:31536000,includeSubDomains:true}:false}));
   app.use((req,res,next)=>{
     req.requestId=randomUUID();res.set('X-Request-Id',req.requestId);
     const start=performance.now();

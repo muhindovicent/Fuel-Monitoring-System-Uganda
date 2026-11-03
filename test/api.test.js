@@ -44,7 +44,7 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{origin:'https://evil.example'}})).status,403);
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{'x-csrf-token':'bad'}})).status,403);
     const headers=(await request('/auth/session',{as:'alice'})).response.headers;
-    assert.equal(headers.get('cache-control'),'no-store');assert.match(headers.get('content-security-policy'),/script-src 'self'/);
+    assert.equal(headers.get('cache-control'),'no-store');assert.match(headers.get('content-security-policy'),/script-src 'self'/);assert.equal(headers.get('x-frame-options'),'DENY');
   });
   await t.test('unverified repeat reports cannot manufacture consensus; retries are idempotent',async()=>{
     const requestKey=randomUUID();const first=await submit('alice',1,5400,requestKey);assert.equal(first.status,201);
