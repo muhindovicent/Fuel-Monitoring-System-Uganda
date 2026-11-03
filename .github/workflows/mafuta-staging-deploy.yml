@@ -5,7 +5,15 @@ on:
     branches: [ui/map-first-command-center]
     paths:
       - .github/workflows/mafuta-staging-deploy.yml
+      - .github/workflows/ci.yml
       - deploy/*.mjs
+      - server/**
+      - app/**
+      - package.json
+      - package-lock.json
+      - Dockerfile
+      - .dockerignore
+      - test/hosting*.test.js
 
 permissions:
   contents: read

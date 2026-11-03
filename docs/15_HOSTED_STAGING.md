@@ -22,7 +22,7 @@ If inspection finds additional legacy accounts/business records, the automatic t
 
 ## Deployment and verification
 
-`.github/workflows/mafuta-staging-deploy.yml` runs when its workflow or `deploy/*.mjs` changes on the feature branch. Required Actions secrets:
+`.github/workflows/mafuta-staging-deploy.yml` runs for application, dependency, deployment, CI or hosting-test changes on the feature branch. Required Actions secrets:
 
 - `RENDER_API_KEY`
 - `NEON_DIRECT_DATABASE_URL`
