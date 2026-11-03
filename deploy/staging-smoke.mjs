@@ -46,6 +46,9 @@ export async function verifyHostedBrowser(email,password){
     const errors=[];page.on('pageerror',()=>errors.push(true));
     await page.goto(target.frontend,{waitUntil:'domcontentloaded'});
     await page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true}).waitFor();
+    const access=page.locator('#stakeholderAccess');
+    for(const name of ['Citizen Registration','Sign In','Authorized Staff Sign In'])await access.getByRole('button',{name,exact:true}).waitFor();
+    await access.getByRole('link',{name:'Station Operator Access Request',exact:true}).waitFor();
     await page.locator('#accountButton').click();
     await page.locator('#authForm [name=email]').fill(email);
     await page.locator('#authForm [name=password]').fill(password);
