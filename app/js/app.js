@@ -284,9 +284,13 @@ function csv(rows,filename){
   const columns=Object.keys(rows[0]);const cell=value=>{let s=typeof value==='object'?JSON.stringify(value):String(value??'');if(/^[\s]*[=+\-@\t\r\n]/.test(s))s=`'${s}`;return `"${s.replace(/"/g,'""')}"`;};
   const text=[columns.map(cell).join(','),...rows.map(r=>columns.map(c=>cell(r[c])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff',text],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${filename}-${new Date().toISOString().slice(0,10)}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+const infoTitles={about:'About MafutaWatch',advisories:'Advisories & town halls',contact:'Help & contact',privacy:'Privacy & data use',credits:'Photography credits'};
+async function openInfo(kind){const renderer=renderers[kind];if(!renderer)return;let html;try{html=await renderer();}catch(error){html=`<div class="empty">${esc(error.message||'This information is unavailable right now.')}</div>`;}$('#infoTitle').textContent=infoTitles[kind]||'Information';$('#infoContent').innerHTML=html;$('#infoDialog').showModal();}
 async function action(button){
   const id=button.dataset.id,kind=button.dataset.action;
   if(kind==='skip'){$('#main').focus();return;}
+  if(kind==='open-info'){await openInfo(button.dataset.info);return;}
+  if(kind==='close-info'){$('#infoDialog').close();return;}
   if(kind==='auth')return openAuth();
   if(kind==='staff-auth')return openAuth('staff');
   if(kind==='register')return openAuth('register');
@@ -399,7 +403,7 @@ async function submit(form){
 }
 document.addEventListener('click',async event=>{
   const button=event.target.closest('[data-action]');if(!button)return;
-  if(button.tagName==='BUTTON'||button.dataset.action==='skip')event.preventDefault();
+  if(button.tagName==='BUTTON'||button.dataset.action==='skip'||button.dataset.action==='open-info')event.preventDefault();
   button.disabled=true;try{await action(button);}catch(error){showError(error);toast(error.message);}finally{button.disabled=false;}
 });
 document.addEventListener('submit',async event=>{

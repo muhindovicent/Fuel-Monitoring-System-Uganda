@@ -355,12 +355,16 @@ summary { cursor: pointer; padding: 11px 0; font-size: .86rem; font-weight: 650;
 .overflow-wrap { overflow-wrap: anywhere; }
 .nowrap { white-space: nowrap; }
 .result-value { font-size: 2.15rem; font-weight: 750; color: var(--green-deep); }
-dialog { width: calc(100% - 32px); max-width: 580px; max-height: 90dvh; border: 1px solid var(--line); border-radius: 17px; background: white; color: var(--ink); padding: 29px; box-shadow: 0 25px 100px rgb(4 24 48 / 25%); }
-dialog::backdrop { background: rgb(5 23 44 / 65%); backdrop-filter: blur(4px); }
+dialog { width: calc(100% - 32px); max-width: 580px; max-height: 90dvh; overflow-y: auto; border: 1px solid var(--line); border-radius: 17px; background: white; color: var(--ink); padding: 29px; box-shadow: 0 25px 100px rgb(4 24 48 / 25%); }
+dialog::backdrop { background: rgb(5 23 44 / 65%); backdrop-filter: blur(4px); animation: infoBackdrop 0.2s ease both; }
 dialog p { font-size: .83rem; }
+dialog[open] { animation: infoPanel 0.2s ease both; }
 .dialog-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .dialog-top h2 { margin-bottom: 0; }
 #detailDialog { max-width: 790px; }
+#infoDialog { max-width: 660px; }
+@keyframes infoPanel { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes infoBackdrop { from { opacity: 0; } to { opacity: 1; } }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(90vw, 640px); z-index: 3000; color: white; background: var(--navy-deep); border: 1px solid #6d88a7; border-radius: 10px; box-shadow: var(--shadow-lg); padding: 14px 22px; font-size: .82rem; }
 
 @media (min-width: 1500px) { .hero-inner { padding-block: 90px 85px; } }
