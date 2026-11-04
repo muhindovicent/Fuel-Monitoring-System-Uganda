@@ -19,6 +19,7 @@ const paths = {
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M9 10a2 2 0 1 1-4 0M9 10v10h4v-10zM12 10h2v10h-2z"/>',
   truck: '<path d="M3 17V5h11v12m0-8h4l3 4v4h-2M7 17h8"/><circle cx="5" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
   bike: '<circle cx="5" cy="17" r="4"/><circle cx="19" cy="17" r="4"/><path d="m5 17 5-9 6 9H5m3-13h4m1 4h5l1 9"/>',
 };

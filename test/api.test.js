@@ -260,3 +260,83 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/admin/reports',{as:'inspector'})).status,401);
   });
 });
+
+test('Citizen profile, preferences, avatars and account security',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['alice','bob']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=','base64');
+  const oversize=Buffer.alloc(2097153);
+
+  await t.test('profile retrieval exposes read-only identity fields and editable details',async()=>{
+    const me=await request('/me/profile',{as:'alice'});assert.equal(me.status,200);
+    assert.equal(me.data.profile.role,'citizen');assert.equal(me.data.profile.identityVerified,false);
+    assert.equal(me.data.profile.email,users.alice.email);assert.equal(me.data.profile.id,users.alice.id);
+    assert.equal(me.data.profile.displayName,'alice');assert.equal(me.data.profile.avatarUrl,null);
+  });
+
+  await t.test('profile updates only submitted editable fields and ignores privileged fields',async()=>{
+    const updated=await request('/me/profile',{as:'alice',method:'PATCH',body:{displayName:'Vinnie',preferredName:'Vincent',phone:'+256700000000',district:'Kampala'}});
+    assert.equal(updated.status,200);assert.equal(updated.data.profile.displayName,'Vinnie');
+    assert.equal(updated.data.profile.preferredName,'Vincent');assert.equal(updated.data.profile.phone,'+256700000000');
+    assert.equal(updated.data.profile.district,'Kampala');assert.equal(updated.data.profile.role,'citizen');
+    assert.equal(updated.data.profile.identityVerified,false);
+    const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users.alice.id]);
+    assert.equal(row.rows[0].role,'citizen');assert.equal(row.rows[0].identity_verified,false);
+  });
+
+  await t.test('phone and district validation rejects malformed input',async()=>{
+    assert.equal((await request('/me/profile',{as:'alice',method:'PATCH',body:{phone:'not-a-phone'}})).status,400);
+    assert.equal((await request('/me/profile',{as:'alice',method:'PATCH',body:{district:'X'}})).status,400);
+  });
+
+  await t.test('avatar upload accepts valid images, rejects bad type and oversize files',async()=>{
+    const put=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'image/png','x-file-name':'photo.png'},raw:png});
+    assert.equal(put.status,200);assert.equal(put.data.saved,true);
+    const served=await fetch(`${base}/api/v1/me/avatar`,{headers:{cookie:sessions.alice.cookie}});assert.equal(served.status,200);assert.equal(served.headers.get('content-type'),'image/png');
+    const me=await request('/me/profile',{as:'alice'});assert.ok(me.data.profile.avatarUrl);
+    const bad=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'text/plain','x-file-name':'photo.txt'},raw:Buffer.from('not an image')});assert.equal(bad.status,400);
+    const big=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'image/png','x-file-name':'big.png'},raw:oversize});assert.equal(big.status,413);
+    const removed=await request('/me/avatar',{as:'alice',method:'DELETE'});assert.equal(removed.status,204);
+    const gone=await fetch(`${base}/api/v1/me/avatar`,{headers:{cookie:sessions.alice.cookie}});assert.equal(gone.status,404);
+  });
+
+  await t.test('preferences are persisted and partially updated',async()=>{
+    const get=await request('/me/preferences',{as:'alice'});assert.equal(get.status,200);
+    assert.deepEqual(get.data.preferences,{fuelType:null,vehicleType:null,preferredDistrict:null,notifications:{},privacy:{}});
+    const set=await request('/me/preferences',{as:'alice',method:'PATCH',body:{fuelType:'diesel',vehicleType:'boda',preferredDistrict:'Jinja',notifications:{priceChanges:true},privacy:{publicDisplayName:false}}});
+    assert.equal(set.status,200);assert.equal(set.data.saved,true);
+    const again=await request('/me/preferences',{as:'alice'});assert.equal(again.data.preferences.fuelType,'diesel');assert.equal(again.data.preferences.vehicleType,'boda');
+    assert.equal(again.data.preferences.notifications.priceChanges,true);assert.equal(again.data.preferences.privacy.publicDisplayName,false);
+    const partial=await request('/me/preferences',{as:'alice',method:'PATCH',body:{vehicleType:'truck'}});assert.equal(partial.status,200);
+    const still=await request('/me/preferences',{as:'alice'});assert.equal(still.data.preferences.fuelType,'diesel');assert.equal(still.data.preferences.vehicleType,'truck');
+  });
+
+  await t.test('deletion request requires correct password and is recorded',async()=>{
+    const wrong=await request('/me/deletion-request',{as:'alice',method:'POST',body:{reason:'Leaving the platform.',password:'wrong-password'}});assert.equal(wrong.status,401);
+    const created=await request('/me/deletion-request',{as:'alice',method:'POST',body:{reason:'Leaving the platform.',password:testPassword}});assert.equal(created.status,202);assert.equal(created.data.accepted,true);
+    const status=await request('/me/deletion-request',{as:'alice'});assert.equal(status.data.request.status,'pending');assert.equal(status.data.request.reason,'Leaving the platform.');
+  });
+
+  await t.test('users cannot access or modify another account',async()=>{
+    assert.equal((await request('/me/profile',{as:'bob'})).data.profile.id,users.bob.id);
+    const cross=await request(`/me/profile`,{as:'bob',method:'PATCH',body:{displayName:'Hacked'}});assert.equal(cross.status,200);assert.equal(cross.data.profile.id,users.bob.id);
+    assert.equal((await db.query('SELECT display_name FROM users WHERE id=$1',[users.alice.id])).rows[0].display_name,'Vinnie');
+    assert.equal((await request('/me/avatar',{as:'bob',method:'DELETE'})).status,204);
+  });
+});
+

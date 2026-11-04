@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
-import { audit, ensure, requireUser, roles, limit, hash, secret } from './security.js';
+import { audit, ensure, requireUser, roles, limit, hash, secret, passwordMatches } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
 import { provisionStaffByAdministrator } from './provisioning.js';
 
@@ -125,6 +125,104 @@ export function apiRoutes(db,config) {
   router.post('/me/notifications/read',requireUser,async(req,res)=>{
     const ids=z.object({ids:z.array(uuid).max(100)}).strict().parse(req.body).ids;
     await db.query('UPDATE notifications SET read_at=now() WHERE user_id=$1 AND id=ANY($2::uuid[])',[req.user.id,ids]);res.json({saved:true});
+  });
+
+  const profileUpdate=z.object({
+    displayName:z.string().trim().min(2).max(80).optional(),
+    preferredName:z.string().trim().min(2).max(80).optional(),
+    phone:z.string().trim().regex(/^\+?[0-9]{7,15}$/).optional().nullable(),
+    district:z.string().trim().min(2).max(100).optional()
+  }).strict();
+
+  async function readProfile(userId){
+    const row=(await db.query('SELECT id,email,display_name,preferred_name,phone,district,role,identity_verified FROM users WHERE id=$1',[userId])).rows[0];
+    ensure(row,404,'Account not found.');
+    const avatar=(await db.query('SELECT media_type FROM user_avatars WHERE user_id=$1',[userId])).rows[0];
+    return {id:row.id,email:row.email,displayName:row.display_name,preferredName:row.preferred_name??null,phone:row.phone??null,district:row.district??null,avatarUrl:avatar?`/api/v1/me/avatar`:null,role:row.role,identityVerified:row.identity_verified};
+  }
+
+  router.get('/me/profile',requireUser,async(req,res)=>res.json({profile:await readProfile(req.user.id)}));
+
+  router.patch('/me/profile',requireUser,async(req,res)=>{
+    const input=profileUpdate.parse(req.body);const sets=[];const params=[req.user.id];let i=2;
+    const map={displayName:'display_name',preferredName:'preferred_name',phone:'phone',district:'district'};
+    for(const [key,column] of Object.entries(map)){
+      if(input[key]!==undefined){sets.push(`${column}=$${i++}`);params.push(input[key]===null?null:input[key]);}
+    }
+    if(!sets.length)return res.json({profile:await readProfile(req.user.id)});
+    await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id=$1`,params);
+    await audit(db,req.user.id,'profile.update',req.user.id,input);
+    res.json({profile:await readProfile(req.user.id)});
+  });
+
+  router.put('/me/avatar',requireUser,express.raw({type:()=>true,limit:'2mb'}),async(req,res)=>{
+    ensure(Buffer.isBuffer(req.body)&&req.body.length,400,'Choose an image.');
+    const detected=await fileTypeFromBuffer(req.body).catch(()=>null);
+    ensure(detected&&['image/jpeg','image/png','image/webp'].includes(detected.mime),400,'Only JPEG, PNG or WebP images are accepted.');
+    await limit(db,`avatar:${req.user.id}`,5,3600);
+    await db.query(`INSERT INTO user_avatars(user_id,media_type,content) VALUES ($1,$2,$3)
+      ON CONFLICT(user_id) DO UPDATE SET media_type=EXCLUDED.media_type,content=EXCLUDED.content,updated_at=now()`,
+      [req.user.id,detected.mime,req.body]);
+    await audit(db,req.user.id,'avatar.update',req.user.id);
+    res.json({saved:true});
+  });
+
+  router.get('/me/avatar',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT media_type,content FROM user_avatars WHERE user_id=$1',[req.user.id])).rows[0];
+    ensure(row,404,'No profile picture.');
+    res.type(row.media_type).set('Cache-Control','no-store').send(row.content);
+  });
+
+  router.delete('/me/avatar',requireUser,async(req,res)=>{
+    await db.query('DELETE FROM user_avatars WHERE user_id=$1',[req.user.id]);
+    await audit(db,req.user.id,'avatar.remove',req.user.id);
+    res.status(204).end();
+  });
+
+  const preferencesSchema=z.object({
+    fuelType:fuel.optional(),
+    vehicleType:z.enum(['private','boda','taxi','truck','other']).optional(),
+    preferredDistrict:z.string().trim().min(2).max(100).optional(),
+    notifications:z.object({priceChanges:z.boolean().optional(),reportUpdates:z.boolean().optional(),complaintUpdates:z.boolean().optional(),advisories:z.boolean().optional()}).strict().optional(),
+    privacy:z.object({publicDisplayName:z.boolean().optional()}).strict().optional()
+  }).strict();
+
+  router.get('/me/preferences',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT fuel_type,vehicle_type,preferred_district,notifications,privacy FROM user_preferences WHERE user_id=$1',[req.user.id])).rows[0];
+    res.json({preferences:{fuelType:row?.fuel_type??null,vehicleType:row?.vehicle_type??null,preferredDistrict:row?.preferred_district??null,notifications:row?.notifications??{},privacy:row?.privacy??{}}});
+  });
+
+  router.patch('/me/preferences',requireUser,async(req,res)=>{
+    const input=preferencesSchema.parse(req.body);
+    const cols=['user_id'];const vals=[req.user.id];
+    const scalar={fuelType:'fuel_type',vehicleType:'vehicle_type',preferredDistrict:'preferred_district'};
+    for(const [key,column] of Object.entries(scalar)){
+      if(input[key]!==undefined){cols.push(column);vals.push(input[key]);}
+    }
+    if(input.notifications!==undefined){cols.push('notifications');vals.push(JSON.stringify(input.notifications));}
+    if(input.privacy!==undefined){cols.push('privacy');vals.push(JSON.stringify(input.privacy));}
+    if(cols.length>1){
+      const updateSets=cols.slice(1).map((c,_)=>`${c}=EXCLUDED.${c}`).join(', ');
+      await db.query(`INSERT INTO user_preferences(${cols.join(',')}) VALUES (${vals.map((_,k)=>`$${k+1}`).join(',')})
+        ON CONFLICT(user_id) DO UPDATE SET ${updateSets},updated_at=now()`,vals);
+      await audit(db,req.user.id,'preferences.update',req.user.id,{fuelType:input.fuelType,vehicleType:input.vehicleType,preferredDistrict:input.preferredDistrict,notifications:input.notifications,privacy:input.privacy});
+    }
+    res.json({saved:true});
+  });
+
+  router.post('/me/deletion-request',requireUser,async(req,res)=>{
+    await limit(db,`deletion:${req.user.id}`,3,3600);
+    const input=z.object({reason:z.string().trim().min(5).max(1000),password:z.string().max(128)}).strict().parse(req.body);
+    const user=(await db.query('SELECT password_hash FROM users WHERE id=$1',[req.user.id])).rows[0];
+    ensure(await passwordMatches(input.password,user.password_hash),401,'Current password is required to request account deletion.');
+    await db.query('INSERT INTO deletion_requests(id,user_id,reason) VALUES ($1,$2,$3)',[randomUUID(),req.user.id,input.reason]);
+    await audit(db,req.user.id,'deletion.request',req.user.id,{reason:input.reason});
+    res.status(202).json({accepted:true});
+  });
+
+  router.get('/me/deletion-request',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT status,reason,created_at,reviewed_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
+    res.json({request:row??null});
   });
   router.post('/tickets',requireUser,async(req,res)=>{
     const input=z.object({stationId:positiveId,category:z.enum(['tampering','adulterated','overpricing','refusal','quality','other']),vehicleType:z.enum(['truck','boda','private','other']),incidentDate:z.iso.date(),description:z.string().trim().min(10).max(5000)}).strict().parse(req.body);
