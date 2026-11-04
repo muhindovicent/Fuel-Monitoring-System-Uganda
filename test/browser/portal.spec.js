@@ -26,7 +26,9 @@ for(const width of [360,768,1024,1440]){
     await expect(page.getByRole('heading',{name:'Every journey. A practical service.'})).toBeVisible();
     if(width<=900)await expect(page.locator('#menuToggle')).toHaveAttribute('aria-expanded','false');
     await page.locator('.site-footer').getByRole('link',{name:'Help & contact',exact:true}).click();
-    await expect(page.locator('#view')).toContainText('No public support phone number or email address has been configured.');
+    await expect(page.locator('#infoDialog')).toBeVisible();await expect(page.locator('#infoTitle')).toHaveText('Help & contact');
+    await expect(page.locator('#infoContent')).toContainText('No public support phone number or email address has been configured.');
+    await page.keyboard.press('Escape');await expect(page.locator('#infoDialog')).not.toBeVisible();
     expect(errors).toEqual([]);
   });
 }
@@ -63,8 +65,32 @@ test('public records stay truthful and photography attribution is accessible',as
   await expect(page.locator('.home-kpis .metric').nth(1).locator('strong')).toHaveText((expected.stations-expected.demo_stations).toLocaleString('en-UG'));
   await expect(page.locator('#demoBanner')).toBeVisible();await expect(page.locator('.hero-price-card')).toContainText('Awaiting data');
   await page.locator('.site-footer').getByRole('link',{name:'Photography credits'}).click();
-  await expect(page.locator('#view')).toContainText('Kyakwera');await expect(page.locator('#view')).toContainText('Owobusingye');
-  await expect(page.getByRole('link',{name:'CC BY-SA 4.0 ↗',exact:true})).toHaveAttribute('href','https://creativecommons.org/licenses/by-sa/4.0/');
+  await expect(page.locator('#infoDialog')).toBeVisible();
+  await expect(page.locator('#infoContent')).toContainText('Kyakwera');await expect(page.locator('#infoContent')).toContainText('Owobusingye');
+  await expect(page.locator('#infoContent').getByRole('link',{name:'CC BY-SA 4.0 ↗',exact:true})).toHaveAttribute('href','https://creativecommons.org/licenses/by-sa/4.0/');
+  await page.keyboard.press('Escape');await expect(page.locator('#infoDialog')).not.toBeVisible();
+});
+test('information popup supports internal sublinks, Back and preserves page position',async({page})=>{
+  await page.goto('/');
+  await page.locator('.site-footer').getByRole('link',{name:'About MafutaWatch',exact:true}).click();
+  await expect(page.locator('#infoDialog')).toBeVisible();await expect(page.locator('#infoTitle')).toHaveText('About MafutaWatch');
+  const scrollBefore=await page.evaluate(()=>window.scrollY);
+  await page.locator('#infoContent').getByRole('link',{name:'Read our data-use notice'}).click();
+  await expect(page.locator('#infoTitle')).toHaveText('Privacy & data use');
+  await expect(page.locator('#infoContent')).toContainText('What is collected');
+  await page.locator('#backInfo').click();
+  await expect(page.locator('#infoTitle')).toHaveText('About MafutaWatch');
+  await expect(page.locator('#infoContent')).toContainText('Know what is behind the price');
+  expect(await page.evaluate(()=>window.scrollY)).toBe(scrollBefore);
+  await page.keyboard.press('Escape');await expect(page.locator('#infoDialog')).not.toBeVisible();
+});
+test('information popup workflow links close popup and navigate to workspace',async({page})=>{
+  await page.goto('/');
+  await page.locator('.site-footer').getByRole('link',{name:'About MafutaWatch',exact:true}).click();
+  await expect(page.locator('#infoDialog')).toBeVisible();
+  await page.locator('#infoContent').getByRole('link',{name:'Open a consumer case'}).click();
+  await expect(page.locator('#infoDialog')).not.toBeVisible();
+  await expect(page).toHaveURL(/#complaints$/);
 });
 test('header registration creates only a citizen and preserves server authorization',async({page})=>{
   await page.goto('/');await page.locator('#registerButton').click();await expect(page.locator('#authTitle')).toHaveText('Create a citizen account');

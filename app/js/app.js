@@ -285,12 +285,17 @@ function csv(rows,filename){
   const text=[columns.map(cell).join(','),...rows.map(r=>columns.map(c=>cell(r[c])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff',text],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${filename}-${new Date().toISOString().slice(0,10)}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 const infoTitles={about:'About MafutaWatch',advisories:'Advisories & town halls',contact:'Help & contact',privacy:'Privacy & data use',credits:'Photography credits'};
-async function openInfo(kind){const renderer=renderers[kind];if(!renderer)return;let html;try{html=await renderer();}catch(error){html=`<div class="empty">${esc(error.message||'This information is unavailable right now.')}</div>`;}$('#infoTitle').textContent=infoTitles[kind]||'Information';$('#infoContent').innerHTML=html;$('#infoDialog').showModal();}
+const infoPages=new Set(['about','advisories','contact','privacy','credits']);
+let infoCurrent=null,infoStack=[];
+async function renderInfo(kind){const renderer=renderers[kind];if(!renderer)return'';try{return await renderer();}catch(error){return `<div class="empty">${esc(error.message||'This information is unavailable right now.')}</div>`;}}
+async function openInfo(kind){if(infoCurrent!==null&&infoCurrent!==kind)infoStack.push(infoCurrent);infoCurrent=kind;const html=await renderInfo(kind);$('#infoTitle').textContent=infoTitles[kind]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;$('#infoDialog').showModal();}
+async function showInfoBack(){const prev=infoStack.pop();if(prev===undefined)return;infoCurrent=prev;const html=await renderInfo(prev);$('#infoTitle').textContent=infoTitles[prev]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;}
 async function action(button){
   const id=button.dataset.id,kind=button.dataset.action;
   if(kind==='skip'){$('#main').focus();return;}
   if(kind==='open-info'){await openInfo(button.dataset.info);return;}
-  if(kind==='close-info'){$('#infoDialog').close();return;}
+  if(kind==='close-info'){$('#infoDialog').close();infoCurrent=null;infoStack=[];return;}
+  if(kind==='back-info'){await showInfoBack();return;}
   if(kind==='auth')return openAuth();
   if(kind==='staff-auth')return openAuth('staff');
   if(kind==='register')return openAuth('register');
@@ -405,6 +410,12 @@ document.addEventListener('click',async event=>{
   const button=event.target.closest('[data-action]');if(!button)return;
   if(button.tagName==='BUTTON'||button.dataset.action==='skip'||button.dataset.action==='open-info')event.preventDefault();
   button.disabled=true;try{await action(button);}catch(error){showError(error);toast(error.message);}finally{button.disabled=false;}
+});
+document.addEventListener('click',async event=>{
+  const link=event.target.closest('#infoContent a[href^="#"]');if(!link)return;
+  event.preventDefault();const kind=link.getAttribute('href').slice(1);
+  if(infoPages.has(kind)){await openInfo(kind);return;}
+  $('#infoDialog').close();infoCurrent=null;infoStack=[];location.hash=kind;
 });
 document.addEventListener('submit',async event=>{
   const form=event.target;event.preventDefault();if(form.dataset.busy)return;form.dataset.busy='true';
