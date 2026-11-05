@@ -1,9 +1,9 @@
 import express, { Router } from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
-import { audit, ensure, requireUser, roles, limit, hash, secret, passwordMatches } from './security.js';
+import { audit, ensure, requireUser, roles, limit, hash, secret, passwordMatches, emailSchema } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
 import { provisionStaffByAdministrator } from './provisioning.js';
 
@@ -223,6 +223,33 @@ export function apiRoutes(db,config) {
   router.get('/me/deletion-request',requireUser,async(req,res)=>{
     const row=(await db.query('SELECT status,reason,created_at,reviewed_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
     res.json({request:row??null});
+  });
+
+  router.post('/me/email/change-request',requireUser,async(req,res)=>{
+    await limit(db,`email-change:${req.user.id}`,3,3600);
+    const input=z.object({newEmail:emailSchema,currentPassword:z.string().max(128)}).strict().parse(req.body);
+    const user=(await db.query('SELECT password_hash,email FROM users WHERE id=$1',[req.user.id])).rows[0];
+    ensure(user.email!==input.newEmail,409,'The new email is the same as your current email.');
+    ensure(await passwordMatches(input.currentPassword,user.password_hash),401,'Current password is required to change your email.');
+    const existing=(await db.query('SELECT 1 FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL AND expires_at>now()',[req.user.id])).rows[0];
+    ensure(!existing,409,'An email change request is already pending. Check your verification channel.');
+    const token=secret(),tokenId=randomUUID();
+    await db.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash) VALUES ($1,$2,$3,$4)',[tokenId,req.user.id,input.newEmail,hash(token)]);
+    await audit(db,req.user.id,'email.change.request',req.user.id,{newEmail:input.newEmail});
+    res.status(202).json({accepted:true,token});
+  });
+
+  router.post('/me/email/confirm',requireUser,async(req,res)=>{
+    const input=z.object({token:z.string().min(1).max(64)}).strict().parse(req.body);
+    const row=(await db.query('SELECT * FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL AND expires_at>now() ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
+    ensure(row,404,'No pending email change request found.');
+    ensure(createHash('sha256').update(input.token).digest('hex')===row.token_hash,401,'Invalid or expired verification token.');
+    await db.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1',[row.id]);
+    await db.query('UPDATE users SET email=$1 WHERE id=$2',[row.new_email,req.user.id]);
+    await db.query('DELETE FROM sessions WHERE user_id=$1',[req.user.id]);
+    await db.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);
+    await audit(db,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email});
+    res.clearCookie('mfw_session',{httpOnly:true,sameSite:'strict',path:'/'}).status(204).end();
   });
   router.post('/tickets',requireUser,async(req,res)=>{
     const input=z.object({stationId:positiveId,category:z.enum(['tampering','adulterated','overpricing','refusal','quality','other']),vehicleType:z.enum(['truck','boda','private','other']),incidentDate:z.iso.date(),description:z.string().trim().min(10).max(5000)}).strict().parse(req.body);

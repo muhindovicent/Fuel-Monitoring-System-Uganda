@@ -340,3 +340,87 @@ test('Citizen profile, preferences, avatars and account security',async t=>{
   });
 });
 
+test('Stakeholder profile management for admin, inspector, analyst and operator',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['admin','inspector','analyst','operator']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
+
+  for(const [role,email] of [['admin','admin@example.test'],['inspector','inspector@example.test'],['analyst','analyst@example.test'],['operator','operator@example.test']]) {
+    await t.test(`stakeholder ${role} can retrieve and update their own profile`,async()=>{
+      const me=await request('/me/profile',{as:role});assert.equal(me.status,200);
+      assert.equal(me.data.profile.role,role);
+      assert.equal(me.data.profile.email,email);
+      assert.equal(me.data.profile.id,users[role].id);
+
+      const updated=await request('/me/profile',{as:role,method:'PATCH',body:{displayName:`Updated ${role}`,phone:'+256700111111',district:'Kampala'}});
+      assert.equal(updated.status,200);
+      assert.equal(updated.data.profile.displayName,`Updated ${role}`);
+      assert.equal(updated.data.profile.phone,'+256700111111');
+      assert.equal(updated.data.profile.district,'Kampala');
+
+      const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users[role].id]);
+      assert.equal(row.rows[0].role,role);
+    });
+  }
+
+  await t.test('stakeholders cannot modify privileged fields',async()=>{
+    const result=await request('/me/profile',{as:'admin',method:'PATCH',body:{role:'citizen',identity_verified:true}});
+    assert.equal(result.status,400,'Strict schema rejects unknown privileged fields.');
+    const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users.admin.id]);
+    assert.equal(row.rows[0].role,'admin');
+    assert.equal(row.rows[0].identity_verified,true);
+  });
+
+  await t.test('stakeholders cannot modify another user profile through /me',async()=>{
+    const adminBefore=await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id]).then(r=>r.rows[0].display_name);
+    await request('/me/profile',{as:'inspector',method:'PATCH',body:{displayName:'Hacked'}});
+    const adminAfter=await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id]).then(r=>r.rows[0].display_name);
+    assert.equal(adminAfter,adminBefore,'Inspector modifying their own profile did not change admin profile.');
+  });
+
+  await t.test('stakeholders can change password and invalidate sessions',async()=>{
+    const result=await request('/auth/password',{as:'operator',method:'POST',body:{currentPassword:testPassword,newPassword:'New-test-password-2026!'}});
+    assert.equal(result.status,204);
+    assert.equal((await request('/me/profile',{as:'operator'})).status,401);
+    const login=await request('/auth/login',{method:'POST',body:{email:users.operator.email,password:'New-test-password-2026!'}});
+    assert.equal(login.status,200);
+    sessions.operator={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+  });
+
+  await t.test('stakeholders can request email change with verification',async()=>{
+    const wrong=await request('/me/email/change-request',{as:'analyst',method:'POST',body:{newEmail:'other@example.test',currentPassword:'wrong-password'}});
+    assert.equal(wrong.status,401);
+    const created=await request('/me/email/change-request',{as:'analyst',method:'POST',body:{newEmail:'new-analyst@example.test',currentPassword:testPassword}});
+    assert.equal(created.status,202);
+    assert.equal(created.data.accepted,true);
+    assert.ok(created.data.token,'Verification token should be returned.');
+
+    const confirm=await request('/me/email/confirm',{as:'analyst',method:'POST',body:{token:created.data.token}});
+    assert.equal(confirm.status,204);
+    const me=await request('/me/profile',{as:'analyst'});
+    assert.equal(me.status,401,'Session should be invalidated after email change.');
+  });
+
+  await t.test('stakeholders cannot access another account profile',async()=>{
+    const inspectorBefore=await db.query('SELECT display_name FROM users WHERE id=$1',[users.inspector.id]).then(r=>r.rows[0].display_name);
+    await request('/me/profile',{as:'admin',method:'PATCH',body:{displayName:'Hacked'}});
+    const inspectorAfter=await db.query('SELECT display_name FROM users WHERE id=$1',[users.inspector.id]).then(r=>r.rows[0].display_name);
+    assert.equal(inspectorAfter,inspectorBefore,'Admin modifying their own profile did not change inspector profile.');
+  });
+});
+
+
