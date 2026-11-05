@@ -22,6 +22,11 @@ const paths = {
   user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M9 10a2 2 0 1 1-4 0M9 10v10h4v-10zM12 10h2v10h-2z"/>',
   truck: '<path d="M3 17V5h11v12m0-8h4l3 4v4h-2M7 17h8"/><circle cx="5" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
   bike: '<circle cx="5" cy="17" r="4"/><circle cx="19" cy="17" r="4"/><path d="m5 17 5-9 6 9H5m3-13h4m1 4h5l1 9"/>',
+  news: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="8 17 12 13 16 19"/><polyline points="16 17 12 13 16 9"/><line x1="8" y1="9" x2="16" y2="9"/>',
+  video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>',
+  gallery: '<path d="M8 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><line x1="8" y1="21" x2="8" y2="3"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="16" y1="13" x2="16" y2="21"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  camera: '<path d="M14.5 4h-5c-1.65 0-2.97 1.3-3 3L2 12c0 1.09.39 2.13 1 2.93v6.13c0 .88.5 1.67 1.29 2.04l3.39 1.39c.43.17.91.22 1.44.22h9.06c.53 0 1-.19 1.44-.44l3.42-1.41A3 3 0 0 0 22 18.13v-6.13c0-1.09-.39-2.13-1-2.93l-7.5-3.71c-.02-1.7-1.35-3-3-3z"/><circle cx="10" cy="12" r="3"/>',
 };
 
 export const icon = (name, className = '') => `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || paths.info}</svg>`;

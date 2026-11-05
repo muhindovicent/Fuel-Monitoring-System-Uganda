@@ -832,3 +832,62 @@ body[data-shell="workspace"] .footer-grid { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Photo carousel */
+.photo-carousel { position: relative; margin: 0 0 26px; overflow: hidden; border-radius: 16px; background: var(--navy-deep); color: white; }
+.carousel-track { display: flex; height: 340px; overflow: hidden; }
+.carousel-slide { display: none; width: 100%; flex: 0 0 100%; position: relative; }
+.carousel-slide img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.carousel-slide figcaption { position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 24px; background: linear-gradient(transparent, rgb(4 21 37 / 80%)); color: white; font-size: .85rem; }
+.carousel-credit { display: block; font-size: .65rem; margin-top: 4px; color: #ffc56e; }
+.carousel-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; background: rgb(255 255 255 / 15%); border: 1px solid rgb(255 255 255 / 30%); color: white; border-radius: 50%; cursor: pointer; z-index: 10; opacity: 0; transition: opacity .2s; }
+.photo-carousel:hover .carousel-nav { opacity: 1; }
+.carousel-prev { left: 12px; }
+.carousel-next { right: 12px; }
+.carousel-nav .icon { width: 20px; height: 20px; stroke: white; }
+.carousel-dots { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 10; }
+.carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / 40%); border: 0; cursor: pointer; padding: 0; }
+.carousel-dot.active { background: var(--amber); }
+
+/* Energy newsroom */
+.news-card { border-left: 3px solid var(--green); }
+.news-card .eyebrow { color: var(--green-deep); }
+
+/* Media gallery */
+.media-card { position: relative; overflow: hidden; border-radius: 12px; height: 100%; display: flex; flex-direction: column; }
+.media-card img { width: 100%; height: 200px; object-fit: cover; display: block; transition: transform .3s; }
+.media-card:hover img { transform: scale(1.03); }
+.media-card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; }
+.media-card h3 { font-size: 1rem; margin-bottom: 6px; }
+.media-card .actions { margin-top: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* Video centre */
+.video-card { overflow: hidden; border-radius: 12px; height: 100%; display: flex; flex-direction: column; }
+.video-thumb { position: relative; width: 100%; height: 200px; overflow: hidden; background: #000; cursor: pointer; }
+.video-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-play-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgb(0 0 0 / 50%); color: white; opacity: 0; transition: opacity .2s; }
+.video-thumb:hover .video-play-overlay { opacity: 1; }
+.video-play-overlay .icon { width: 44px; height: 44px; stroke: white; }
+.video-duration { position: absolute; bottom: 8px; right: 8px; background: rgb(0 0 0 / 70%); color: white; padding: 3px 8px; border-radius: 20px; font-size: .65rem; font-weight: 650; }
+.video-card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; }
+.video-card h3 { font-size: 1rem; margin-bottom: 6px; }
+.video-card .actions { margin-top: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* Lightbox / media dialog */
+#mediaLightbox { max-width: 900px; max-height: 85dvh; padding: 0; }
+#mediaLightbox .dialog-top { padding: 20px 24px; }
+#mediaLightbox #lightboxContent { padding: 20px 24px 24px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+#mediaLightbox iframe { border-radius: 8px; }
+
+/* Grid three for gallery/video */
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+@media (max-width: 900px) {
+  .photo-carousel { margin: 0 0 20px; }
+  .carousel-track { height: 260px; }
+  .grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #mediaLightbox { max-width: calc(100vw - 32px); }
+}
+@media (max-width: 620px) {
+  .grid.three { grid-template-columns: 1fr; }
+}
