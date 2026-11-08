@@ -300,6 +300,12 @@ input, select, textarea { width: 100%; max-width: 100%; min-height: 46px; border
 input::placeholder, textarea::placeholder { color: #7b8a9e; font-size: .8rem; }
 textarea { resize: vertical; min-height: 100px; }
 input[type="checkbox"] { width: 19px; min-height: 19px; accent-color: var(--green); }
+.password-field { position: relative; display: block; }
+.password-field input[type="password"], .password-field input[type="text"] { padding-right: 52px; }
+.password-toggle { position: absolute; right: 3px; bottom: 2px; min-height: 42px; height: 42px; width: 46px; padding: 0; display: grid; place-items: center; background: transparent; border-color: transparent; }
+.password-toggle:hover, .password-toggle:focus-visible { background: var(--navy-soft); border-color: #a8bbcf; }
+.password-toggle:focus-visible { outline: 2px solid var(--navy); outline-offset: 1px; }
+.password-toggle .icon { width: 19px; height: 19px; }
 .check { display: flex; align-items: flex-start; gap: 9px; font-weight: 400; }
 .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .form-error { color: #af2424; font-size: .8rem; margin: 0; }

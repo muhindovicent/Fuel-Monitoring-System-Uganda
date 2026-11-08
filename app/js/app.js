@@ -5,6 +5,7 @@ import {workspaceFor} from './access.js';
 import {loadLeaflet} from './leaflet.js';
 import {mediaManagementMarkup,mountMediaManagement} from './media-management.js';
 import {newsCard,imageCard,videoCard,videoPlayer,homepagePublishing,photoCarousel} from './media-content.js';
+import {mountPasswordToggles,resetPasswordVisibility} from './password-toggle.js';
 
 const $=selector=>document.querySelector(selector);
 const state={user:null,summary:null,page:'overview',adminTab:'dashboard',room:null,stations:[],assigned:[],ticket:null,authMode:'login',offset:0,activityOffset:0,adminOffset:0,filters:{q:'',district:'',fuel:'petrol',sort:'price',radius:'10'},position:null,carouselIndex:0};
@@ -61,6 +62,7 @@ function renderAuth(){
   $('#authForm button[type=submit]').textContent=register?'Create account':'Sign in';
   const password=$('#authForm [name=password]');password.minLength=register?12:1;password.autocomplete=register?'new-password':'current-password';
   $('#registerToggle').textContent=register?'Already registered? Sign in':'Create a citizen account';$('#authError').textContent='';
+  resetPasswordVisibility($('#authForm'));mountPasswordToggles($('#authForm'));
 }
 async function loadDirectory(){
   // Forms need the full approved register, not just a silently truncated first page.
@@ -321,7 +323,7 @@ async function navigate(){
   mediaManager?.destroy();mediaManager=null;discovery?.destroy();discovery=null;if(map){map.remove();map=null;}$('#view').setAttribute('aria-busy','true');$('#view').innerHTML='<div class="loading-surface"><p class="loading-message" role="status">Loading current records…</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>';
   try{await summary();const html=await renderers[state.page]();if(version!==routeVersion)return;$('#view').innerHTML=html;if(state.page==='overview')renderCarousel();if($('#fuelDiscovery')){discovery=mountDiscovery($('#fuelDiscovery'),state.discoveryStations,{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});if(state.locateOnArrival){state.locateOnArrival=false;discovery.locate();}if(state.mapStationOnArrival){discovery.select(state.mapStationOnArrival);state.mapStationOnArrival=null;}}if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}if(state.page==='complaints'&&state.citizenMode&&$('#complaintForm'))$('#complaintForm [name=vehicleType]').value=state.citizenMode;}
   catch(error){if(version!==routeVersion)return;$('#view').innerHTML=empty('Unable to load current records. Check your connection and use Refresh data.');showError(error);$('#connection').textContent='Unavailable';}
-  finally{if(version===routeVersion){$('#view').setAttribute('aria-busy','false');if($('#mediaManagement'))mediaManager=mountMediaManagement($('#mediaManagement'),state.mediaContent,{onSaved:announceContentUpdate});}}
+  finally{if(version===routeVersion){$('#view').setAttribute('aria-busy','false');mountPasswordToggles($('#view'));if($('#mediaManagement'))mediaManager=mountMediaManagement($('#mediaManagement'),state.mediaContent,{onSaved:announceContentUpdate});}}
 }
 function validateFiles(files){if(files.length>3)throw new Error('Choose no more than three files.');for(const file of files)if(file.size>5242880||!['image/png','image/jpeg','application/pdf'].includes(file.type))throw new Error('Use JPEG, PNG or PDF files, each no larger than 5 MiB.');}
 async function uploadFiles(kind,id,files){for(const file of files)await api(`/${kind}/${id}/attachments`,{method:'POST',headers:{'content-type':file.type,'x-file-name':file.name.replace(/[^\x20-\x7E]/g,'_')},raw:file});}

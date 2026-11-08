@@ -2,7 +2,7 @@ import { defineConfig,devices } from '@playwright/test';
 
 // Separate real app/database instances prevent suite data and shared-IP rate buckets
 // leaking between journeys. Production rate limits remain unchanged.
-const suites=[['public-portal','portal',3100],['stakeholder-workflows','workflows',3101],['workspace-shell','workspace',3102],['stakeholder-access','access',3103],['media-management','media',3104]];
+const suites=[['public-portal','portal',3100],['stakeholder-workflows','workflows',3101],['workspace-shell','workspace',3102],['stakeholder-access','access',3103],['media-management','media',3104],['password-toggle','password-toggle',3105]];
 export default defineConfig({
   testDir:'test/browser',fullyParallel:false,workers:1,retries:process.env.CI?1:0,
   use:{...devices['Desktop Chrome'],...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}),trace:'retain-on-failure',screenshot:'only-on-failure'},

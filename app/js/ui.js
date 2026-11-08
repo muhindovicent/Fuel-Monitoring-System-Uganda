@@ -27,6 +27,8 @@ const paths = {
   gallery: '<path d="M8 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><line x1="8" y1="21" x2="8" y2="3"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="16" y1="13" x2="16" y2="21"/>',
   play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   camera: '<path d="M14.5 4h-5c-1.65 0-2.97 1.3-3 3L2 12c0 1.09.39 2.13 1 2.93v6.13c0 .88.5 1.67 1.29 2.04l3.39 1.39c.43.17.91.22 1.44.22h9.06c.53 0 1-.19 1.44-.44l3.42-1.41A3 3 0 0 0 22 18.13v-6.13c0-1.09-.39-2.13-1-2.93l-7.5-3.71c-.02-1.7-1.35-3-3-3z"/><circle cx="10" cy="12" r="3"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  'eye-off': '<path d="m3 3 18 18"/><path d="M10.6 10.7a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17.8 17.8 0 0 1-3.4 4.3M6.6 6.7A17.5 17.5 0 0 0 2 12s3.6 7 10 7c1.4 0 2.7-.3 3.9-.7"/>',
 };
 
 export const icon = (name, className = '') => `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || paths.info}</svg>`;
