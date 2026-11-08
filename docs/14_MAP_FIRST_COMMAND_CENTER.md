@@ -1,4 +1,4 @@
-# Map-first mobility portal and energy command center
+# List-first mobility portal, optional map and energy command center
 
 Feature branch: `ui/map-first-command-center`. This extends the previously verified portal redesign, using the Node.js 24 / Express 5 / PostgreSQL application from `main` (`70acd33`). The original UI delivery preserved its server/API/authentication/migration contracts. Subsequent hosting changes are documented in [Hosted staging deployment](15_HOSTED_STAGING.md).
 
@@ -6,7 +6,8 @@ Feature branch: `ui/map-first-command-center`. This extends the previously verif
 
 - Sticky identity/account header and public navigation: Home, Find Fuel, Price Comparison, Trip Planner, Citizen Services, Community, Reports & Insights.
 - Exact requested hero headline, **“Find Affordable Fuel. Drive Smarter.”**, with real nearby-discovery, comparison and price-report actions. The existing licensed Kampala/Kabale photographs retain visible source/license attribution; no official logos or endorsements were added.
-- The shared station explorer is immediately below the hero/search area and also powers the full Find Fuel view. Desktop has a search/results rail on the left and a large Leaflet map on the right. Mobile has floating controls and an initially collapsed, expandable results sheet.
+- The shared station explorer is immediately below the hero/search area and also powers the full Find Fuel view. **List View** is the public default on desktop and mobile, with search controls and station cards visible. **Map View** or a card's **Show on map** action opens the existing Leaflet map; **Back to List** and **List View** restore the list without clearing filters, location or station selection. The homepage hero, search, comparisons and other sections remain in place.
+- On desktop the requested map appears beside its search/results rail. On mobile it opens in a full-screen native dialog with an inert background, focus containment, Back to List, Escape handling, floating filters and an expandable results sheet. The command center retains its embedded map.
 - Filters use the actual complete paginated station-register response: station/operator/area search, canonical district or registered city/area, fuel, fresh published-price order, 6/24/48-hour freshness, fresh-verified-only and consent-based GPS radius/distance.
 - Known district names match the district exactly: “Jinja” does not accidentally include “Jinja Road” in Kampala. Broad station-name search remains available independently.
 - Cards show station identity, recorded price, provenance, update time and optional straight-line distance. Card selection highlights and pans to its pin; keyboard/mouse pin selection highlights and reveals the associated card. The existing station detail/report/follow/directions/review/history workflows remain connected.
@@ -15,7 +16,7 @@ Feature branch: `ui/map-first-command-center`. This extends the previously verif
 
 ### Discovery module and limits
 
-`app/js/discovery.js` owns filtering, rendering, selection, keyboard interaction, GPS consent and map cleanup. Pure filter/distance functions have meaningful regression coverage. It uses the existing Leaflet dependency, no geocoder or additional framework. A ResizeObserver keeps maps aligned after sidebar/container size changes.
+`app/js/discovery.js` owns filtering, rendering, selection, keyboard interaction, GPS consent and map cleanup. Pure filter/distance functions have meaningful regression coverage. It uses the existing Leaflet dependency, no geocoder or additional framework. `app/js/leaflet.js` loads the local Leaflet script and stylesheet on demand. Public list rendering and filtering do not initialize Leaflet or request tiles. Closing a map removes its Leaflet instance; reopening rebuilds the markers from the preserved station/filter state. A ResizeObserver keeps maps aligned after sidebar/container size changes. The price-comparison table also keeps its map hidden until requested.
 
 Cards are incrementally rendered in batches of 50. The map initially renders the first 250 matches and tells users to narrow large result sets; selecting a further loaded card can add its pin. Filtering is currently client-side over the curated register loaded via the existing paginated API, not a new server search contract.
 
@@ -44,7 +45,7 @@ Case-assignment filtering is explicitly scoped to the currently loaded page (50 
 - Mobile filter controls use 16px inputs to avoid automatic iOS focus zoom and touch-sized actions. Search remains anonymous; changing filters does not open authentication unexpectedly.
 - Real loading skeletons expose busy/status state; decorative skeletons and icons do not obscure accessibility text. Reduced-motion preferences disable shimmer/transitions and map panning animation.
 - Native minimum-length attributes match the existing backend requirements. Failures preserve form entries and do not acknowledge unconfirmed submissions.
-- Shell cache v10 includes the access-routing, staff-provisioning and station-assignment interfaces. Private API data, evidence and unbounded map tiles remain excluded from the offline cache.
+- Shell cache v11 includes the list-first discovery interface and lazy-loader module. Leaflet vendor files are no longer pre-cached, so installing the shell does not download the map library. Private API data, evidence and map tiles remain excluded from the offline cache.
 
 ## Verification record
 
@@ -57,6 +58,7 @@ Each implementation phase was verified before the next phase:
 5. Final: `npm run lint` passed; **`npm test`: 24 passed** (19 existing API/security checks plus 5 discovery checks); **`npm run test:e2e`: 32 passed**. The shell-v6 offline test also passed after the cache-version update. `npm audit --audit-level=moderate` reported 0 known vulnerabilities; `git diff --check` passed.
 6. Stakeholder access: the public interface now names Citizen Registration, Sign In, Station Operator Access Request and Authorized Staff Sign In; sign-in routes to the role-authorized workspace. **`npm test`: 36 passed**; **`npm run test:e2e`: 44 passed** across public, workflow, workspace and stakeholder-access suites, including every existing role at 360 and 1440px and an administrator role assignment. Shell cache v9 included the access-routing and role-assignment interface.
 7. Staff administration: administrators can provision inspector/analyst accounts with re-authentication and create-only auditing, suspend/restore accounts, and explicitly assign or revoke an operator's station access. **`npm test`: 39 passed**; **`npm run test:e2e`: 46 passed**, including provisioning, new-staff sign-in, denial of admin APIs, explicit station assignment and the prior role/access journeys. Shell cache v10 covers these interfaces.
+8. Optional public map: `npm run check` passed with **62 tests** and no lint errors. The public-portal browser project passed **25 journeys**, including list-first defaults and map reopening on the homepage and Find Fuel at 360, 768 and 1440px, retained fuel/location/search filters and selected stations, keyboard pins, full-screen dialog controls, denied/successful GPS, lazy-loading cancellation, library retry and tile failure. The **32 existing stakeholder-workflow, workspace-shell and stakeholder-access journeys** also passed during the full browser run. Default-list network assertions confirm no Leaflet vendor or tile requests and no GPS calls. Homepage layout checks continue to cover 1024px as well.
 
 Local verification used Node.js 24.22.1 and installed Edge Chromium on Windows. CI continues to use Playwright Chromium. Public and workspace screenshots were inspected at all requested widths. New browser journeys cover bidirectional selection, actual API-published price records, analyst CSV/fuel filtering, a real case assignment/decision, assigned-operator profile/history/map access, denied GPS, missing map library, mobile sheets and reduced-motion loading. Tests retain existing server rate limits and security assertions.
 

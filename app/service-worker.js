@@ -1,5 +1,5 @@
-const CACHE='mafutawatch-shell-v10';
-const ASSETS=['/','/index.html','/css/style.css','/js/api.js','/js/ui.js','/js/discovery.js','/js/access.js','/js/app.js','/manifest.json','/icon.svg','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js'];
+const CACHE='mafutawatch-shell-v11';
+const ASSETS=['/','/index.html','/css/style.css','/js/api.js','/js/ui.js','/js/discovery.js','/js/leaflet.js','/js/access.js','/js/app.js','/manifest.json','/icon.svg'];
 const allowed=new Set(ASSETS);
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));

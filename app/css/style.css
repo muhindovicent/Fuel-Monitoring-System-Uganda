@@ -542,14 +542,24 @@ html { scroll-padding-top: 160px; }
 @media (max-width: 900px) { body[data-shell="public"] .navigation-bar { top: 84px; } }
 @media (max-width: 620px) { body[data-shell="public"] .navigation-bar { top: 80px; } }
 
-/* Map-first discovery: one component for the homepage and full station view. */
+/* List-first discovery, with an on-demand map using the same station records. */
 body.is-home .hero-inner { padding-block: 45px 48px; }
 body.is-home .hero-copy h1 { font-size: clamp(2.5rem, 4vw, 3.7rem); }
 body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
 .discovery-section { padding-block: 38px 24px; }
 .discovery-section .section-heading { margin-bottom: 23px; }
-.fuel-discovery { display: grid; grid-template-columns: 370px minmax(0, 1fr); height: 760px; background: white; border: 1px solid #cfdbe6; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-lg); position: relative; }
-.discovery-rail { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-right: 1px solid var(--line); background: white; z-index: 2; }
+.fuel-discovery { background: white; border: 1px solid #cfdbe6; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-lg); position: relative; }
+.fuel-discovery[data-view="map"] { display: grid; grid-template-columns: 370px minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); height: 850px; }
+.discovery-view-controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; grid-column: 1 / -1; }
+.discovery-view-controls button { min-height: 44px; }
+.discovery-view-controls [aria-pressed="true"] { background: var(--green); color: white; border-color: var(--green); }
+.discovery-view-controls [data-discovery="back"] { margin-left: auto; }
+.discovery-rail { grid-column: 1; grid-row: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--line); background: white; z-index: 2; }
+.fuel-discovery[data-view="list"] .discovery-rail { border-right: 0; }
+.fuel-discovery[data-view="list"] .discovery-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.fuel-discovery[data-view="list"] .discovery-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-height: 680px; }
+.fuel-discovery[data-view="list"] .discovery-card { margin: 0; }
+.fuel-discovery[data-view="list"] .discovery-more, .fuel-discovery[data-view="list"] .discovery-empty { grid-column: 1 / -1; }
 .discovery-rail-heading { display: flex; align-items: center; justify-content: space-between; padding: 18px 19px 13px; border-bottom: 1px solid #e9eef4; }
 .discovery-rail-heading .eyebrow { margin-bottom: 5px; font-size: .56rem; }
 .discovery-rail-heading h3 { margin-bottom: 0; font-size: 1.05rem; }
@@ -591,7 +601,7 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
 .station-card-actions .icon { width: 13px; height: 13px; }
 .discovery-more { width: 100%; font-size: .75rem; }
 .discovery-empty { background: white; font-size: .75rem; padding: 25px 14px; }
-.discovery-map-stage { position: relative; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; background: #e8eff4; }
+.discovery-map-stage { position: relative; grid-column: 2; grid-row: 3; min-width: 0; min-height: 0; background: #e8eff4; }
 .fuel-discovery .discovery-map { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; }
 .discovery-map .leaflet-interactive:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
 .discovery-map .leaflet-popup-content { font-size: .8rem; }
@@ -604,7 +614,11 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
 .discovery-map-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: absolute; left: 14px; bottom: 28px; z-index: 500; background: rgb(255 255 255 / 95%); border: 1px solid #d9e2eb; padding: 7px 10px; border-radius: 7px; font-size: .61rem; color: #4c637b; }
 .legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--green); }
 .legend-dot.sample { background: #a87917; }
-.discovery-map-status { position: absolute; left: 14px; right: 14px; bottom: 65px; z-index: 500; margin: 0; background: rgb(255 255 255 / 95%); border: 1px solid #d9e2eb; border-radius: 7px; padding: 8px 10px; font-size: .64rem; color: #4c637b; }
+.discovery-map-status { grid-column: 1 / -1; grid-row: 2; margin: 0; border-block: 1px solid #d9e2eb; padding: 8px 16px; font-size: .74rem; color: #4c637b; }
+.discovery-map-dialog { width: 100%; max-width: none; height: 100%; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; }
+.discovery-map-dialog[open] { animation: none; }
+.discovery-map-dialog::backdrop { background: var(--navy-deep); }
+body.discovery-map-open { overflow: hidden; }
 .discovery-followup { display: flex; align-items: flex-start; justify-content: space-between; gap: 25px; margin-top: 18px; color: #667c94; font-size: .75rem; }
 .discovery-followup > span { display: flex; gap: 8px; max-width: 650px; }
 .discovery-followup .icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 3px; }
@@ -621,17 +635,20 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
 .distribution-chart { display: grid; gap: 18px; padding-block: 10px; }
 .distribution-chart > div { display: grid; grid-template-columns: 90px 1fr 30px; align-items: center; gap: 13px; font-size: .77rem; }
 @media (max-width: 1100px) {
-  .fuel-discovery { grid-template-columns: 330px minmax(0, 1fr); }
+  .fuel-discovery[data-view="map"] { grid-template-columns: 330px minmax(0, 1fr); }
+  .fuel-discovery[data-view="list"] .discovery-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .discovery-controls { padding-inline: 14px; }
   .station-price-line strong { font-size: 1.05rem; }
   .discovery-map-caption { gap: 7px; font-size: .55rem; }
 }
 @media (max-width: 900px) {
-  .fuel-discovery { display: block; height: 700px; }
-  .discovery-map-stage { height: 100%; }
-  .discovery-rail { position: absolute; bottom: 0; left: 0; right: 0; height: 96px; border: 1px solid #d1dce7; border-radius: 17px 17px 0 0; z-index: 700; box-shadow: 0 -10px 35px rgb(15 45 82 / 13%); transition: height .2s; }
-  .fuel-discovery.sheet-expanded .discovery-rail { height: 330px; }
-  .fuel-discovery.filters-open .discovery-rail { height: 520px; max-height: 85%; }
+  .fuel-discovery[data-view="map"] { grid-template-columns: minmax(0, 1fr); height: 100%; border-radius: 0; border: 0; }
+  .fuel-discovery[data-embedded="true"] { height: 700px; border-radius: 13px; }
+  .fuel-discovery[data-view="list"] .discovery-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .discovery-map-stage { grid-column: 1; }
+  .fuel-discovery[data-view="map"] .discovery-rail { position: absolute; bottom: 0; left: 0; right: 0; height: 96px; border: 1px solid #d1dce7; border-radius: 17px 17px 0 0; z-index: 700; box-shadow: 0 -10px 35px rgb(15 45 82 / 13%); transition: height .2s; }
+  .fuel-discovery[data-view="map"].sheet-expanded .discovery-rail { height: min(330px, 45%); }
+  .fuel-discovery[data-view="map"].filters-open .discovery-rail { height: 520px; max-height: calc(100% - 160px); }
   .discovery-rail-heading { padding: 8px 16px 5px; min-height: 52px; border: 0; }
   .discovery-rail-heading .eyebrow { display: none; }
   .discovery-rail-heading h3 { font-size: .85rem; }
@@ -646,7 +663,6 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
   .discovery-floating { left: 52px; right: 12px; justify-content: flex-end; top: 13px; }
   .discovery-floating .discovery-mobile-filter { display: inline-flex; margin-right: auto; }
   .discovery-map-caption { top: 63px; bottom: auto; left: 12px; right: 12px; font-size: .58rem; width: fit-content; max-width: calc(100% - 24px); }
-  .discovery-map-status { bottom: auto; top: 108px; left: 12px; right: 12px; font-size: .6rem; }
   .discovery-map .map-feedback { top: 160px; }
   .discovery-followup { flex-direction: column; gap: 13px; }
   .station-price-line strong { font-size: 1.2rem; }
@@ -661,11 +677,12 @@ body.is-home .hero-copy > p { max-width: 560px; font-size: 1rem; }
   body.is-home .hero-actions { display: grid; grid-template-columns: 1fr; max-width: 300px; }
   .discovery-section { padding-block: 30px 20px; }
   .discovery-section .section-heading h2 { font-size: 1.5rem; }
-  .fuel-discovery { height: 680px; border-radius: 13px; }
+  .fuel-discovery { border-radius: 13px; }
+  .fuel-discovery[data-view="list"] .discovery-controls, .fuel-discovery[data-view="list"] .discovery-results { grid-template-columns: minmax(0, 1fr); }
+  .discovery-view-controls { padding: 8px; gap: 4px; }
+  .discovery-view-controls button { font-size: .73rem; padding-inline: 9px; }
   .discovery-floating button { font-size: .66rem; padding-inline: 9px; }
   .discovery-floating button .icon { width: 15px; height: 15px; }
-  .fuel-discovery.sheet-expanded .discovery-rail { height: 315px; }
-  .fuel-discovery.filters-open .discovery-rail { height: 510px; }
 }
 
 /* Role-specific command-center priorities and station operations. */

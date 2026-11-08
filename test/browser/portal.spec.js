@@ -8,7 +8,9 @@ for(const width of [360,768,1024,1440]){
     await expect(page.locator('.service-card')).toHaveCount(9);
     await page.getByRole('link',{name:'Skip to content',exact:true}).focus();await page.keyboard.press('Enter');
     await expect(page.locator('#main')).toBeFocused();expect(new URL(page.url()).hash).toBe('');
-    await expect(page.locator('#stationMap')).toHaveClass(/leaflet-container/);
+    await expect(page.locator('#fuelDiscovery')).toHaveAttribute('data-view','list');
+    await expect(page.locator('#stationMap')).not.toBeVisible();
+    await expect(page.locator('.discovery-card').first()).toBeVisible();
     expect(await page.locator('.hero-photograph').evaluate(img=>img.complete&&img.naturalWidth>0)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.locator('.citizen-photo').scrollIntoViewIfNeeded();
@@ -16,7 +18,7 @@ for(const width of [360,768,1024,1440]){
     await expect.poll(()=>page.locator('.citizen-photo img').evaluate(img=>img.complete&&img.naturalWidth>0)).toBe(true);
     await page.evaluate(()=>scrollTo(0,0));
     await page.screenshot({path:test.info().outputPath(`portal-${width}.png`),fullPage:true});
-    if(width===1440)await page.locator('#stationMap').screenshot({path:test.info().outputPath('station-map.png')});
+    if(width===1440)await page.locator('#fuelDiscovery').screenshot({path:test.info().outputPath('station-list.png')});
     if(width<=900){
       await page.locator('#menuToggle').click();await expect(page.locator('#menuToggle')).toHaveAttribute('aria-expanded','true');
       await page.keyboard.press('Escape');await expect(page.locator('#menuToggle')).toHaveAttribute('aria-expanded','false');
@@ -66,10 +68,13 @@ test('public search sends real district and fuel filters, then opens station det
   const response=page.waitForResponse(r=>r.url().includes('/api/v1/stations?')&&r.url().includes('district=Kampala')&&r.url().includes('fuel=diesel'));
   await form.getByRole('button',{name:'Search prices'}).click();expect((await response).status()).toBe(200);
   await expect(page).toHaveURL(/#prices$/);await expect(page.locator('#view')).toContainText('Total Ntinda');
+  await expect(page.locator('#stationMap')).not.toBeVisible();expect(await page.evaluate(()=>Boolean(window.L))).toBe(false);
   await expect(page.locator('#stationFilter [name=district]')).toHaveValue('Kampala');
   await page.getByRole('button',{name:'View station',exact:true}).first().click();
   await expect(page.locator('#detailDialog')).toBeVisible();await expect(page.locator('#detailTitle')).toHaveText('Total Ntinda');
   await page.keyboard.press('Escape');await expect(page.locator('#detailDialog')).not.toBeVisible();
+  await page.getByRole('button',{name:'Map View',exact:true}).click();await expect(page.locator('#stationMap .leaflet-overlay-pane > svg')).toBeVisible();
+  await page.getByRole('button',{name:'Back to List',exact:true}).click();await expect(page.locator('#stationMap')).not.toBeVisible();await expect(page.locator('#view')).toContainText('Total Ntinda');
 });
 test('homepage map supports real district filtering and consent-based GPS radius',async({page,context})=>{
   await context.grantPermissions(['geolocation']);await context.setGeolocation({latitude:0.3145,longitude:32.5795});
@@ -142,20 +147,54 @@ test('fresh verified discovery, insights and station history use records publish
   await expect(page.locator('.discovery-card .badge.verified')).toHaveCount(2);await expect(page.locator('.verified-update-feed')).toContainText('Browser operational station A');
   await page.locator('.discovery-card').first().getByRole('button',{name:'View station',exact:true}).click();await expect(page.locator('#detailContent')).toContainText('UGX 4,990');await expect(page.locator('#detailContent')).toContainText('operator');
 });
-for(const width of [360,768]){
-  test(`mobile station sheet and floating filters are usable at ${width}px`,async({page})=>{
-    await page.setViewportSize({width,height:1000});await page.goto('/');const root=page.locator('#fuelDiscovery');await expect(root).toBeVisible();
-    const toggle=root.locator('[data-discovery=sheet]');await expect(toggle).toHaveAttribute('aria-expanded','false');await expect(root.locator('#discoveryResults')).not.toBeVisible();
-    await toggle.click();await expect(root.locator('#discoveryResults')).toBeVisible();await toggle.click();await expect(root.locator('#discoveryResults')).not.toBeVisible();
-    const filters=root.getByRole('button',{name:'Search & filters',exact:true});await filters.click();
-    const form=root.locator('#homeMapFilter');await expect(form).toBeVisible();await expect(form.getByLabel('Station name or area')).toBeFocused();
-    expect(await form.getByLabel('Station name or area').evaluate(el=>getComputedStyle(el).fontSize)).toBe('16px');
-    await page.keyboard.press('Escape');await expect(form).not.toBeVisible();await expect(filters).toBeFocused();
-    await filters.click();await form.getByLabel('District or city').fill('Jinja');await form.getByRole('button',{name:'Apply filters'}).click();
-    await expect(root.locator('.discovery-card')).toHaveCount(2);await expect(form).not.toBeVisible();await expect(toggle).toHaveAttribute('aria-expanded','true');
-    await expect(page.locator('#authDialog')).not.toBeVisible();
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await root.screenshot({path:test.info().outputPath(`mobile-discovery-${width}.png`)});
+for(const width of [360,768,1440])for(const path of ['/','/#stations']){
+  test(`list-first discovery preserves filters and station selection at ${width}px on ${path}`,async({page})=>{
+    const errors=[],mapRequests=[];page.on('pageerror',error=>errors.push(error.message));
+    page.on('request',request=>{if(/\/vendor\/leaflet\/|tile\.openstreetmap\.org/.test(request.url()))mapRequests.push(request.url());});
+    await page.addInitScript(()=>{window.geoRequests=0;Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition(){window.geoRequests++;}}});});
+    await page.setViewportSize({width,height:900});await page.goto(path);
+    const root=page.locator('#fuelDiscovery'),form=root.locator('#homeMapFilter');
+    await expect(root).toHaveAttribute('data-view','list');await expect(root.getByRole('button',{name:'List View',exact:true})).toHaveAttribute('aria-pressed','true');
+    await expect(page.locator('#stationMap')).not.toBeVisible();await expect(root.locator('.discovery-card').first()).toBeVisible();
+    expect(await page.evaluate(()=>Boolean(window.L))).toBe(false);expect(mapRequests).toEqual([]);
+    await form.getByLabel('District or city').fill('Jinja');await form.getByLabel('Fuel type',{exact:true}).selectOption('diesel');await form.getByRole('button',{name:'Apply filters'}).click();
+    await expect(root.locator('.discovery-card')).toHaveCount(2);expect(mapRequests).toEqual([]);
+    const card=root.locator('[data-station-card]').filter({hasText:'Shell Jinja Main'});
+    await card.getByRole('button',{name:'Show on map',exact:true}).click();
+    await expect(root).toHaveAttribute('data-view','map');await expect(root.locator('#stationMap')).toHaveClass(/leaflet-container/);
+    await expect(card).toHaveClass(/selected/);await expect(page.locator('.leaflet-popup-content')).toContainText('diesel:');
+    await expect.poll(()=>mapRequests.some(url=>url.includes('tile.openstreetmap.org'))).toBe(true);
+    expect(await page.evaluate(()=>window.geoRequests)).toBe(0);
+    if(width<=900){
+      const dialog=page.locator('.discovery-map-dialog');await expect(dialog).toBeVisible();
+      expect(await dialog.evaluate(el=>{const r=el.getBoundingClientRect();return el.open&&r.x===0&&r.y===0&&r.width===innerWidth&&r.height===innerHeight;})).toBe(true);
+      await expect(root.getByRole('button',{name:'Back to List',exact:true})).toBeFocused();
+      const filters=root.getByRole('button',{name:'Search & filters',exact:true});await filters.click();
+      await expect(form.getByLabel('Station name or area')).toBeFocused();await expect(form.getByLabel('Fuel type',{exact:true})).toHaveValue('diesel');
+      expect(await form.getByLabel('Station name or area').evaluate(el=>getComputedStyle(el).fontSize)).toBe('16px');
+      await page.keyboard.press('Escape');await expect(form).not.toBeVisible();await expect(filters).toBeFocused();await expect(dialog).toBeVisible();
+      await filters.click();await form.getByLabel('Station name or area').fill('Jinja');await form.getByRole('button',{name:'Apply filters',exact:true}).click();
+      await expect(form).not.toBeVisible();await expect(root.locator('.discovery-card')).toHaveCount(2);await expect(card).toHaveClass(/selected/);
+    }
+    const pin=root.getByRole('button',{name:'Select Total Jinja on map',exact:true});await pin.focus();await pin.press('Enter');
+    await expect(root.locator('.discovery-card.selected')).toContainText('Total Jinja');
+    await root.getByRole('button',{name:'Back to List',exact:true}).click();
+    await expect(root).toHaveAttribute('data-view','list');await expect(page.locator('#stationMap')).not.toBeVisible();await expect(root.locator('.leaflet-map-pane')).toHaveCount(0);
+    await expect(form).toBeVisible();await expect(form.getByLabel('District or city')).toHaveValue('Jinja');await expect(form.getByLabel('Fuel type',{exact:true})).toHaveValue('diesel');
+    await expect(form.getByLabel('Station name or area')).toHaveValue(width<=900?'Jinja':'');
+    await expect(root.locator('.discovery-card.selected')).toContainText('Total Jinja');
+    await root.getByRole('button',{name:'Map View',exact:true}).click();await expect(root.locator('#stationMap')).toHaveClass(/leaflet-container/);
+    await expect(root.locator('.leaflet-popup-content')).toContainText('Total Jinja');
+    await root.locator('.leaflet-popup-content').getByRole('button',{name:'View station',exact:true}).click();
+    await expect(page.locator('#detailTitle')).toHaveText('Total Jinja');await expect(page.locator('#detailContent')).toContainText('Recent accepted price history');
+    await page.keyboard.press('Escape');await expect(page.locator('#detailDialog')).not.toBeVisible();
+    await root.getByRole('button',{name:'List View',exact:true}).click();await expect(root).toHaveAttribute('data-view','list');
+    await root.getByRole('button',{name:'Map View',exact:true}).click();await expect(root.locator('#stationMap')).toHaveClass(/leaflet-container/);
+    await page.keyboard.press('Escape');await expect(root).toHaveAttribute('data-view','list');
+    await expect(root.getByRole('button',{name:'Map View',exact:true})).toBeFocused();
+    expect(mapRequests.filter(url=>url.endsWith('/vendor/leaflet/leaflet.js'))).toHaveLength(1);
+    expect(mapRequests.filter(url=>url.endsWith('/vendor/leaflet/leaflet.css'))).toHaveLength(1);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
   });
 }
 test('denied GPS never fabricates proximity and keeps station discovery available',async({page})=>{
@@ -168,9 +207,46 @@ test('denied GPS never fabricates proximity and keeps station discovery availabl
 });
 test('map-library failure preserves real filtering and station details',async({page})=>{
   await page.route('**/vendor/leaflet/leaflet.js',route=>route.abort());await page.goto('/');
+  await page.getByRole('button',{name:'Map View',exact:true}).click();
   await expect(page.locator('#stationMap')).toContainText('Map library unavailable');
+  await page.getByRole('button',{name:'Back to List',exact:true}).click();
   const form=page.locator('#homeMapFilter');await form.getByLabel('District or city').fill('Jinja');await form.getByRole('button',{name:'Apply filters'}).click();
   await expect(page.locator('.discovery-card')).toHaveCount(2);await page.locator('#discoveryResults').getByRole('button',{name:'View station',exact:true}).first().click();await expect(page.locator('#detailDialog')).toBeVisible();
+  await page.keyboard.press('Escape');await page.unroute('**/vendor/leaflet/leaflet.js');
+  await page.getByRole('button',{name:'Map View',exact:true}).click();await expect(page.locator('#stationMap .leaflet-overlay-pane > svg')).toBeVisible();
+});
+test('mobile map handles denied GPS and unavailable tiles without losing stations',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.addInitScript(()=>{window.geoRequests=0;Object.defineProperty(navigator,'geolocation',{configurable:true,value:{getCurrentPosition(_ok,failed){window.geoRequests++;failed({code:1});}}});});
+  await page.route('https://*.tile.openstreetmap.org/**',route=>route.abort());
+  await page.goto('/#stations');await page.getByRole('button',{name:'Map View',exact:true}).click();
+  await expect(page.locator('#stationMap')).toContainText('Basemap tiles unavailable');
+  expect(await page.evaluate(()=>window.geoRequests)).toBe(0);
+  await page.getByRole('button',{name:'Find fuel near my location',exact:true}).click();
+  await expect(page.locator('#homeMapStatus')).toContainText('permission denied');expect(await page.evaluate(()=>window.geoRequests)).toBe(1);
+  await page.getByRole('button',{name:'Select Shell Jinja Main on map',exact:true}).focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.discovery-card.selected')).toContainText('Shell Jinja Main');
+  await page.getByRole('button',{name:'Back to List',exact:true}).click();
+  await expect(page.locator('.discovery-card.selected')).toBeVisible();await expect(page.locator('#discoveryResults')).not.toContainText('km away');
+});
+test('Near me works in the mobile list without opening a map',async({page,context})=>{
+  await page.setViewportSize({width:390,height:844});await context.grantPermissions(['geolocation']);await context.setGeolocation({latitude:0.3145,longitude:32.5795});
+  await page.goto('/#stations');await page.locator('#homeMapFilter').getByRole('button',{name:'Near me',exact:true}).click();
+  await expect(page.locator('#homeMapStatus')).toContainText('within 10 km');await expect(page.locator('#discoveryResults')).toContainText('km away');
+  await expect(page.locator('#fuelDiscovery')).toHaveAttribute('data-view','list');expect(await page.evaluate(()=>Boolean(window.L))).toBe(false);
+  await page.getByRole('button',{name:'Map View',exact:true}).click();await expect(page.locator('#stationMap .leaflet-overlay-pane > svg')).toBeVisible();
+  await page.getByRole('button',{name:'Back to List',exact:true}).click();await expect(page.locator('#homeMapFilter [name=sort]')).toHaveValue('distance');await expect(page.locator('#homeMapFilter [name=radius]')).toHaveValue('10');
+});
+test('closing a map during library loading does not initialize a hidden map',async({page})=>{
+  let release;const gate=new Promise(resolve=>{release=resolve;});
+  await page.route('**/vendor/leaflet/leaflet.js',async route=>{await gate;await route.continue();});
+  try{
+    await page.goto('/#stations');await page.getByRole('button',{name:'Map View',exact:true}).click();await expect(page.locator('#homeMapStatus')).toHaveText('Loading map…');
+    await page.getByRole('button',{name:'Back to List',exact:true}).click();
+  }finally{release();}
+  await expect.poll(()=>page.evaluate(()=>Boolean(window.L))).toBe(true);
+  await expect(page.locator('.leaflet-map-pane')).toHaveCount(0);await expect(page.locator('#fuelDiscovery')).toHaveAttribute('data-view','list');
+  await page.getByRole('button',{name:'Map View',exact:true}).click();await expect(page.locator('#stationMap .leaflet-overlay-pane > svg')).toBeVisible();
 });
 test('real data loading exposes a skeleton and honors reduced motion',async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});let release;const gate=new Promise(resolve=>{release=resolve;});

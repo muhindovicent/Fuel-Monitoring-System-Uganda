@@ -55,7 +55,7 @@ test('operator and inspector workspaces, responsive navigation and accessible di
   await page.setViewportSize({width:390,height:844});
   await openWorkspacePage(page,'Find fuel');
   await expect(page.getByRole('heading',{name:'Find your next fuel stop.'})).toBeVisible();
-  if(await page.locator('[data-discovery=sheet]').getAttribute('aria-expanded')==='false')await page.locator('[data-discovery=sheet]').click();
+  await expect(page.locator('#fuelDiscovery')).toHaveAttribute('data-view','list');
   await page.getByRole('button',{name:'View station'}).first().click();await expect(page.locator('#detailDialog')).toBeVisible();
   await page.keyboard.press('Escape');await expect(page.locator('#detailDialog')).not.toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
