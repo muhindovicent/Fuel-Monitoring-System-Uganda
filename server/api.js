@@ -461,7 +461,7 @@ export function apiRoutes(db,config) {
     featured:z.boolean().optional(),
     priority:z.number().int().min(0).max(100).optional()
   }).strict();
-  router.get('/news',async(_req,res)=>res.json({items:(await db.query('SELECT * FROM news_articles ORDER BY created_at DESC LIMIT 100')).rows}));
+  router.get('/news',async(_req,res)=>res.json({items:(await db.query('SELECT n.*,u.display_name AS author FROM news_articles n JOIN users u ON u.id=n.created_by WHERE n.status=$1 ORDER BY n.created_at DESC LIMIT 100',['published'])).rows}));
   router.post('/news',roles('admin'),async(req,res)=>{
     const input=newsSchema.parse(req.body);const id=randomUUID();await transaction(db,async client=>{
       await client.query(`INSERT INTO news_articles(id,title,summary,body,source_url,source_name,category,image_url,status,excerpt,tags,reading_time,featured,priority,created_by,published_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[id,input.title,input.summary,input.body,input.sourceUrl,input.sourceName,input.category,input.imageUrl??null,input.status??'published',input.excerpt??null,input.tags?JSON.stringify(input.tags):null,input.readingTime??null,input.featured??false,input.priority??0,req.user.id,input.status==='published'?new Date().toISOString():null]);await audit(client,req.user.id,'news.publish',id);

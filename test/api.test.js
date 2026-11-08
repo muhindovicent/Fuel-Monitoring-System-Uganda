@@ -491,15 +491,6 @@ test('Media gallery, news articles, and videos API',async t=>{
   });
 
   await t.test('news articles CRUD - admin can publish, public reads published only',async()=>{
-    // First create a media item to link
-    const media=await request('/media',{as:'admin',method:'POST',body:{
-      title:'News Photo',description:'News photo',category:'fuel-stations',
-      imageUrl:'https://example.test/news-photo.jpg',photographer:'User',source:'Wikimedia',
-      license:'CC BY 4.0'
-    }});
-    assert.equal(media.status,201);
-    const mediaId=media.data.id;
-
     // Clean up any existing news articles from previous tests
     await db.query('DELETE FROM news_article_photos');
     await db.query('DELETE FROM news_article_videos');
@@ -526,6 +517,20 @@ test('Media gallery, news articles, and videos API',async t=>{
     assert.equal(listed.data.items.length,initialCount+1);
     assert.equal(listed.data.items.find(a=>a.id===newsId).title,'Breaking News');
 
+    // New drafts and archived articles must never enter the public feed.
+    const hiddenIds=[];
+    for(const status of ['draft','archived']){
+      const hidden=await request('/news',{as:'admin',method:'POST',body:{
+        title:`Hidden ${status} article`,summary:'Unpublished news summary.',body:'Unpublished news body content.',
+        sourceUrl:'https://example.test/news/hidden',sourceName:'News Source',category:'fuel-prices',status
+      }});
+      assert.equal(hidden.status,201);
+      hiddenIds.push(hidden.data.id);
+    }
+    const withHidden=await request('/news');
+    assert.equal(withHidden.status,200);
+    assert.deepEqual(withHidden.data.items,listed.data.items);
+
     // Non-admin cannot create news
     const nonAdmin=await request('/news',{as:'alice',method:'POST',body:{
       title:'Unauthorized News',summary:'Should fail',body:'Should fail body.',
@@ -540,11 +545,30 @@ test('Media gallery, news articles, and videos API',async t=>{
 
     // After setting to draft, public read excludes it
     const afterDraft=await request('/news');
-    assert.equal(afterDraft.data.items.length,0);
+    assert.equal(afterDraft.status,200);
+    assert.equal(afterDraft.data.items.length,initialCount);
+    assert.ok(!afterDraft.data.items.some(a=>a.id===newsId));
+
+    // Republishing restores visibility, and archiving removes it again.
+    const republished=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{status:'published'}});
+    assert.equal(republished.status,200);
+    const afterPublish=await request('/news');
+    assert.equal(afterPublish.status,200);
+    assert.equal(afterPublish.data.items.length,initialCount+1);
+    assert.equal(afterPublish.data.items.find(a=>a.id===newsId).title,'Updated News');
+    const archived=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{status:'archived'}});
+    assert.equal(archived.status,200);
+    const afterArchive=await request('/news');
+    assert.equal(afterArchive.status,200);
+    assert.equal(afterArchive.data.items.length,initialCount);
+    assert.ok(!afterArchive.data.items.some(a=>a.id===newsId));
 
     // Admin can delete news
     const deleted=await request(`/news/${newsId}`,{as:'admin',method:'DELETE'});
     assert.equal(deleted.status,204);
+    for(const id of hiddenIds){
+      assert.equal((await request(`/news/${id}`,{as:'admin',method:'DELETE'})).status,204);
+    }
   });
 
   await t.test('videos CRUD - admin can publish, public can read',async()=>{

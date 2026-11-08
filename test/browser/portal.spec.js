@@ -32,6 +32,33 @@ for(const width of [360,768,1024,1440]){
     expect(errors).toEqual([]);
   });
 }
+test('homepage renders gallery and advisory API items',async({page})=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.route('**/api/v1/media',route=>route.fulfill({json:{items:[
+    {title:'Published gallery photograph',image_url:'/assets/kampala-road.jpg',photographer:'Gallery photographer'}
+  ]}}));
+  await page.route('**/api/v1/advisories',route=>route.fulfill({json:{items:[
+    {title:'Published source-linked advisory',body:'A published advisory body.',author:'Platform administrator',created_at:'2026-01-01T12:00:00Z',source_url:'https://example.test/advisory'}
+  ]}}));
+  await page.goto('/');
+  await expect(page.locator('.carousel-slide')).toHaveCount(1);
+  await expect(page.locator('.carousel-slide img')).toHaveAttribute('alt','Published gallery photograph');
+  await expect(page.locator('.carousel-slide')).toContainText('Gallery photographer');
+  await expect(page.locator('.advisory-card')).toContainText('Published source-linked advisory');
+  await expect(page.locator('.advisory-card a')).toHaveAttribute('href','https://example.test/advisory');
+  expect(errors).toEqual([]);
+});
+test('homepage stays usable when gallery and advisory requests fail',async({page})=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  for(const path of ['media','advisories'])await page.route(`**/api/v1/${path}`,route=>route.fulfill({status:503,json:{error:'Temporarily unavailable.'}}));
+  await page.goto('/');
+  await expect(page.locator('#homeSearch')).toBeVisible();
+  await expect(page.locator('.carousel-slide')).toHaveCount(2);
+  await expect(page.locator('.advisory-empty')).toBeVisible();
+  await page.getByRole('button',{name:'Next image',exact:true}).click();
+  await expect(page.locator('.carousel-slide').nth(1)).toBeVisible();
+  expect(errors).toEqual([]);
+});
 test('public search sends real district and fuel filters, then opens station details',async({page})=>{
   await page.goto('/');const form=page.locator('#homeSearch');await expect(form).toBeVisible();
   await form.getByLabel('Station name or area').fill('Ntinda');

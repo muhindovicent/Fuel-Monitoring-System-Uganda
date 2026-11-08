@@ -526,7 +526,8 @@ dialog[open] { animation: infoPanel 0.2s ease both; }
 /* Sticky public mobility navigation; workspace header has its own compact mode. */
 body[data-shell="public"] .site-header { position: sticky; top: 0; z-index: 1100; border-bottom: 1px solid #e7edf4; }
 body[data-shell="public"] .navigation-bar { top: 94px; }
-body[data-shell="public"] .primary-navigation { gap: 25px; }
+body[data-shell="public"] .primary-navigation { flex-wrap: wrap; gap: 0 25px; }
+@media (min-width: 901px) { body[data-shell="public"] .primary-navigation > a { min-height: 54px; } }
 html { scroll-padding-top: 160px; }
 .surface-title { display: flex; gap: 10px; align-items: center; }
 .surface-title .icon { color: var(--green); }
