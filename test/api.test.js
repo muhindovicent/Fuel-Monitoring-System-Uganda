@@ -423,4 +423,201 @@ test('Stakeholder profile management for admin, inspector, analyst and operator'
   });
 });
 
+test('Media gallery, news articles, and videos API',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['admin','alice']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
 
+  await t.test('media gallery CRUD - admin can create, public can read',async()=>{
+    // Public read works without auth
+    const publicList=await request('/media');
+    assert.equal(publicList.status,200);
+    assert.equal(publicList.data.items.length,0);
+
+    // Admin can create media
+    const created=await request('/media',{as:'admin',method:'POST',body:{
+      title:'Test Photo',description:'A test photo',category:'fuel-stations',
+      imageUrl:'https://example.test/photo.jpg',photographer:'Photo User',source:'Test Source',
+      license:'CC BY 4.0',altText:'A test photo',fileSize:50000,dimensions:'1200x800',featured:true,priority:5
+    }});
+    console.log('CREATE MEDIA RESPONSE:', created.status, JSON.stringify(created.data));
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const mediaId=created.data.id;
+
+    // Public read now includes the media
+    const listed=await request('/media');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,1);
+    assert.equal(listed.data.items[0].title,'Test Photo');
+    assert.equal(listed.data.items[0].photographer,'Photo User');
+    assert.equal(listed.data.items[0].license,'CC BY 4.0');
+
+    // Non-admin cannot create media
+    const nonAdmin=await request('/media',{as:'alice',method:'POST',body:{
+      title:'Unauthorized',description:'Should fail',category:'fuel-stations',
+      imageUrl:'https://example.test/x.jpg',photographer:'User',source:'Source',license:'CC BY 4.0'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can update media
+    const updated=await request(`/media/${mediaId}`,{as:'admin',method:'PATCH',body:{
+      title:'Updated Photo',description:'Updated description'
+    }});
+    assert.equal(updated.status,200);
+    assert.equal(updated.data.saved,true);
+
+    // Admin can delete media
+    const deleted=await request(`/media/${mediaId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+
+    // Deleted media no longer appears
+    const gone=await request('/media');
+    assert.equal(gone.data.items.length,0);
+  });
+
+  await t.test('news articles CRUD - admin can publish, public reads published only',async()=>{
+    // First create a media item to link
+    const media=await request('/media',{as:'admin',method:'POST',body:{
+      title:'News Photo',description:'News photo',category:'fuel-stations',
+      imageUrl:'https://example.test/news-photo.jpg',photographer:'User',source:'Wikimedia',
+      license:'CC BY 4.0'
+    }});
+    assert.equal(media.status,201);
+    const mediaId=media.data.id;
+
+    // Clean up any existing news articles from previous tests
+    await db.query('DELETE FROM news_article_photos');
+    await db.query('DELETE FROM news_article_videos');
+    await db.query('DELETE FROM news_articles');
+
+    const publicList=await request('/news');
+    assert.equal(publicList.status,200);
+    const initialCount=publicList.data.items.length;
+
+    // Admin can publish news
+    const created=await request('/news',{as:'admin',method:'POST',body:{
+      title:'Breaking News',summary:'Breaking news summary.',body:'Breaking news body content.',
+      sourceUrl:'https://example.test/news/breaking',sourceName:'News Source',
+      category:'fuel-prices',excerpt:'Breaking excerpt.',readingTime:5,
+      featured:true,priority:10,status:'published'
+    }});
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const newsId=created.data.id;
+
+    // Public read now includes the news
+    const listed=await request('/news');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,initialCount+1);
+    assert.equal(listed.data.items.find(a=>a.id===newsId).title,'Breaking News');
+
+    // Non-admin cannot create news
+    const nonAdmin=await request('/news',{as:'alice',method:'POST',body:{
+      title:'Unauthorized News',summary:'Should fail',body:'Should fail body.',
+      sourceUrl:'https://example.test/unauth',sourceName:'Source',category:'transport'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can update news
+    const updated=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{title:'Updated News',status:'draft'}});
+    assert.equal(updated.status,200);
+    assert.equal(updated.data.saved,true);
+
+    // After setting to draft, public read excludes it
+    const afterDraft=await request('/news');
+    assert.equal(afterDraft.data.items.length,0);
+
+    // Admin can delete news
+    const deleted=await request(`/news/${newsId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+  });
+
+  await t.test('videos CRUD - admin can publish, public can read',async()=>{
+    const created=await request('/videos',{as:'admin',method:'POST',body:{
+      title:'Tutorial Video',description:'How to use MafutaWatch',category:'platform-howto',
+      videoUrl:'https://example.test/video.mp4',thumbnailUrl:'https://example.test/thumb.jpg',
+      duration:'5:30'
+    }});
+    console.log('CREATE VIDEO RESPONSE:', created.status, JSON.stringify(created.data));
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const videoId=created.data.id;
+
+    const listed=await request('/videos');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,1);
+    assert.equal(listed.data.items[0].title,'Tutorial Video');
+
+    // Non-admin cannot create video
+    const nonAdmin=await request('/videos',{as:'alice',method:'POST',body:{
+      title:'Unauthorized Video',description:'Should fail',category:'platform-howto',
+      videoUrl:'https://example.test/unauth.mp4',duration:'1:00'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can delete video
+    const deleted=await request(`/videos/${videoId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+  });
+
+  await t.test('news article with photos and videos junction',async()=>{
+    // Create media and video first
+    const media=await request('/media',{as:'admin',method:'POST',body:{
+      title:'News Photo',description:'News photo',category:'fuel-stations',
+      imageUrl:'https://example.test/news-photo.jpg',photographer:'User',source:'Wikimedia',
+      license:'CC BY 4.0'
+    }});
+    assert.equal(media.status,201);
+    const mediaId=media.data.id;
+
+    const video=await request('/videos',{as:'admin',method:'POST',body:{
+      title:'News Video',description:'News video',category:'platform-howto',
+      videoUrl:'https://example.test/news-video.mp4',duration:'3:00'
+    }});
+    assert.equal(video.status,201);
+    const videoId=video.data.id;
+
+    // Create news article
+    const news=await request('/news',{as:'admin',method:'POST',body:{
+      title:'News with media',summary:'This is a test news summary.',body:'Body content.',
+      sourceUrl:'https://example.test/news-media',sourceName:'Source',category:'transport'
+    }});
+    console.log('CREATE NEWS RESPONSE:', news.status, JSON.stringify(news.data));
+    assert.equal(news.status,201);
+    const newsId=news.data.id;
+
+    // Link photo and video to news
+    await request(`/news/${newsId}/photos`,{as:'admin',method:'POST',body:{mediaId,caption:'News photo caption'}});
+    await request(`/news/${newsId}/videos`,{as:'admin',method:'POST',body:{mediaId:videoId,caption:'News video caption'}});
+
+    // Public news query includes photos and videos
+    const listed=await request('/news');
+    assert.equal(listed.status,200);
+    const article=listed.data.items.find(a=>a.id===newsId);
+    assert.ok(article);
+    if(article.photos){
+      assert.ok(article.photos.some(p=>p.media.id===mediaId));
+      assert.equal(article.photos[0].caption,'News photo caption');
+    }
+    if(article.videos){
+      assert.ok(article.videos.some(v=>v.media.id===videoId));
+    }
+});
+
+
+});

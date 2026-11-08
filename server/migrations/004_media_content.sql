@@ -8,6 +8,12 @@ CREATE TABLE IF NOT EXISTS news_articles (
   category text NOT NULL CHECK (category IN ('fuel-prices','petroleum-markets','energy-policy','transport','infrastructure')),
   image_url text,
   status text NOT NULL DEFAULT 'published' CHECK (status IN ('published','draft','archived')),
+  excerpt text CHECK (length(excerpt) BETWEEN 5 AND 300),
+  tags text CHECK (length(tags) <= 200),
+  reading_time integer CHECK (reading_time BETWEEN 1 AND 120),
+  featured boolean NOT NULL DEFAULT false,
+  priority integer NOT NULL DEFAULT 0,
+  published_at text,
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -26,6 +32,11 @@ CREATE TABLE IF NOT EXISTS media_gallery (
   source text NOT NULL CHECK (length(source) BETWEEN 2 AND 200),
   license text NOT NULL CHECK (license IN ('CC BY 4.0','CC BY-SA 4.0','CC BY-ND 4.0','CC0 1.0','All Rights Reserved')),
   source_url text,
+  alt_text text CHECK (length(alt_text) BETWEEN 2 AND 200),
+  file_size integer CHECK (file_size BETWEEN 1 AND 10485760),
+  dimensions text CHECK (dimensions ~ '^[0-9]+x[0-9]+$'),
+  featured boolean NOT NULL DEFAULT false,
+  priority integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX media_gallery_category ON media_gallery(category, created_at DESC);
@@ -38,6 +49,11 @@ CREATE TABLE IF NOT EXISTS video_content (
   video_url text NOT NULL,
   thumbnail_url text,
   duration text NOT NULL CHECK (length(duration) BETWEEN 1 AND 20),
+  file_size integer CHECK (file_size BETWEEN 1 AND 104857600),
+  dimensions text CHECK (dimensions ~ '^[0-9]+x[0-9]+$'),
+  featured boolean NOT NULL DEFAULT false,
+  priority integer NOT NULL DEFAULT 0,
+  transcript text CHECK (length(transcript) BETWEEN 10 AND 50000),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX video_content_category ON video_content(category, created_at DESC);

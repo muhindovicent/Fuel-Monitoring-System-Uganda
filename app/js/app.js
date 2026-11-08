@@ -67,7 +67,10 @@ async function loadDirectory(){
 }
 async function summary(){state.summary=await api('/summary');$('#demoBanner').hidden=!state.summary.demo_stations;$('#connection').textContent=`Updated ${new Date().toLocaleTimeString('en-UG',{timeZone:'Africa/Kampala',hour:'2-digit',minute:'2-digit'})} EAT`;}
 async function overview(){
-  const [notices,stations,media]=await Promise.all([api('/advisories'),loadDirectory(),api('/media')]);
+  let notices=[],stations=[],media=[];
+  try{notices=(await api('/advisories')).items??[];}catch(_e){notices=[];}
+  try{stations=await loadDirectory();}catch(_e){stations=[];}
+  try{media=(await api('/media')).items??[];}catch(_e){media=[];}
   const s=state.summary;state.discoveryStations=stations;
   const regions=new Set(s.regions.map(r=>r.region)).size;
   const galleryItems=(media.items??[]).slice(0,6);
@@ -332,7 +335,7 @@ let infoCurrent=null,infoStack=[];
 async function renderInfo(kind){const renderer=renderers[kind];if(!renderer)return'';try{return await renderer();}catch(error){return `<div class="empty">${esc(error.message||'This information is unavailable right now.')}</div>`;}}
 async function openInfo(kind){if(infoCurrent!==null&&infoCurrent!==kind)infoStack.push(infoCurrent);infoCurrent=kind;const html=await renderInfo(kind);$('#infoTitle').textContent=infoTitles[kind]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;$('#infoDialog').showModal();}
 async function showInfoBack(){const prev=infoStack.pop();if(prev===undefined)return;infoCurrent=prev;const html=await renderInfo(prev);$('#infoTitle').textContent=infoTitles[prev]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;}
-function renderCarousel(){const track=$('.carousel-track');const dots=$('.carousel-dots');if(!track)return;const slides=track.querySelectorAll('.carousel-slide');if(!slides.length)return;const idx=((state.carouselIndex%slides.length)+slides.length)%slides.length;state.carouselIndex=idx;slides.forEach((s,i)=>{s.style.display=i===idx?'block':'none';});dots.querySelectorAll('.carousel-dot').forEach((d,i)=>{d.classList.toggle('active',i===idx);});}
+function renderCarousel(){const track=$('.carousel-track');if(!track)return;const slides=track.querySelectorAll('.carousel-slide');if(!slides.length)return;const dots=$('.carousel-dots');const idx=((state.carouselIndex%slides.length)+slides.length)%slides.length;state.carouselIndex=idx;slides.forEach((s,i)=>{s.style.display=i===idx?'block':'none';});if(dots)dots.querySelectorAll('.carousel-dot').forEach((d,i)=>{d.classList.toggle('active',i===idx);});}
 async function action(button){
   const id=button.dataset.id,kind=button.dataset.action;
   if(kind==='skip'){$('#main').focus();return;}
