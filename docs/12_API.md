@@ -13,6 +13,9 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/auth/login` | `{email,password}`; sets session cookie, returns CSRF token |
 | POST | `/auth/logout` | Authenticated, revokes session |
 | POST | `/auth/password` | `{currentPassword,newPassword}`, revokes all sessions/tokens |
+| GET | `/me/email/status` | `{enabled,provider}`; whether this deployment can send verification email |
+| POST | `/me/email/change-request` | `{newEmail,currentPassword}`; 202 `{accepted,message}` with no token; 503 when no delivery provider is configured |
+| POST | `/me/email/confirm` | `{token}`; single use within 24 hours; 204 changes the address and revokes all sessions |
 | GET | `/stations` | Public `q,fuel,sort=name|price,district,lat,lng,radius(km),limit,offset` |
 | GET | `/stations/:id` | Public station, current prices, history and reviews |
 | GET | `/operators`, `/summary`, `/caps` | Public directory metadata and live aggregates |
@@ -69,6 +72,15 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/trip` | Public protected write-style request `{distanceKm,kmPerLitre,fuel,from?,to?}`; nullable cost if fresh prices missing |
 
 Pagination defaults to 50, max 100. Entity IDs are UUIDs except integer station/operator/room IDs. Prices are integer UGX/L, 100–100000; bounds are input sanity limits, **not regulatory caps**. Dates use ISO 8601. Coordinates are decimal degrees, and GPS context is not trusted as proof of presence. Health endpoints `/health/live` and `/health/ready` are outside the API prefix.
+
+## Email change verification
+
+Changing the sign-in address is a two-step, single-use flow and requires an active session plus the current password for password-based accounts:
+
+1. `POST /me/email/change-request` validates the address, the current password and the per-user rate limit (3 per hour), supersedes any outstanding link for that account, stores only a SHA-256 hash of a random token, then sends a notice to the current address and a confirmation link to the new one. The token is never returned in the response or logged. When no delivery provider is configured the endpoint answers 503 with an explanation instead of pretending to send.
+2. The link opens `/#email-verify?token=…` in the frontend, which calls `POST /me/email/confirm` after the account signs in. The endpoint looks the token up by hash and binds it to the requesting account, rejects expired/used/foreign tokens, refuses an address that has since been registered, and only then updates `users.email` in a transaction that deletes other pending tokens, all sessions and integration credentials.
+
+Until confirmation the original address keeps working. Rate limits: 3 change requests and 10 confirmations per account per hour.
 
 ## Operator integration example
 

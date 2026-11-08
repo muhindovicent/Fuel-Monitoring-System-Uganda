@@ -401,18 +401,17 @@ test('Stakeholder profile management for admin, inspector, analyst and operator'
     sessions.operator={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
   });
 
-  await t.test('stakeholders can request email change with verification',async()=>{
-    const wrong=await request('/me/email/change-request',{as:'analyst',method:'POST',body:{newEmail:'other@example.test',currentPassword:'wrong-password'}});
-    assert.equal(wrong.status,401);
+  await t.test('stakeholders cannot request email changes without a delivery provider',async()=>{
+    const status=await request('/me/email/status',{as:'analyst'});
+    assert.equal(status.status,200);
+    assert.deepEqual({enabled:status.data.enabled,provider:status.data.provider},{enabled:false,provider:''});
     const created=await request('/me/email/change-request',{as:'analyst',method:'POST',body:{newEmail:'new-analyst@example.test',currentPassword:testPassword}});
-    assert.equal(created.status,202);
-    assert.equal(created.data.accepted,true);
-    assert.ok(created.data.token,'Verification token should be returned.');
-
-    const confirm=await request('/me/email/confirm',{as:'analyst',method:'POST',body:{token:created.data.token}});
-    assert.equal(confirm.status,204);
-    const me=await request('/me/profile',{as:'analyst'});
-    assert.equal(me.status,401,'Session should be invalidated after email change.');
+    assert.equal(created.status,503,'Without a configured provider the API refuses instead of pretending to send.');
+    assert.match(created.data.error,/not configured/i);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM email_change_tokens')).rows[0].count,0);
+    assert.equal((await db.query('SELECT email FROM users WHERE id=$1',[users.analyst.id])).rows[0].email,users.analyst.email);
+    const confirm=await request('/me/email/confirm',{as:'analyst',method:'POST',body:{token:'a'.repeat(64)}});
+    assert.equal(confirm.status,400);
   });
 
   await t.test('stakeholders cannot access another account profile',async()=>{

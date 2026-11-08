@@ -1,12 +1,13 @@
 import express, { Router } from 'express';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
-import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema } from './security.js';
+import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema, HttpError } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
 import { provisionStaffByAdministrator } from './provisioning.js';
 import { mediaRoutes } from './media.js';
+import { createMailer, emailDisabledMessage } from './mailer.js';
 
 const uuid=z.uuid();
 const positiveId=z.coerce.number().int().positive().max(2147483647);
@@ -20,6 +21,8 @@ const reportInput=z.object({stationId:positiveId,fuel,price:amount,note:z.string
 
 export function apiRoutes(db,config) {
   const router=Router();
+  const mail=createMailer(config);
+  const verifyLink=token=>`${config.APP_ORIGIN}/#email-verify?token=${token}`;
   const key=req=>uuid.parse(req.get('idempotency-key'));
   async function ticketAccess(client,id,user,lock=false) {
     const ticket=(await client.query(`SELECT * FROM tickets WHERE id=$1 ${lock?'FOR UPDATE':''}`,[uuid.parse(id)])).rows[0];
@@ -232,30 +235,55 @@ export function apiRoutes(db,config) {
     res.json({request:row??null});
   });
 
+  router.get('/me/email/status',requireUser,async(_req,res)=>{
+    res.json({enabled:mail.enabled,provider:mail.enabled?mail.provider:''});
+  });
+
   router.post('/me/email/change-request',requireUser,async(req,res)=>{
     await limit(db,`email-change:${req.user.id}`,3,3600);
+    if(!mail.enabled)throw new HttpError(503,emailDisabledMessage,{expose:true});
     const input=z.object({newEmail:emailSchema,currentPassword:z.string().max(128)}).strict().parse(req.body);
-    const user=(await db.query('SELECT password_hash,email FROM users WHERE id=$1',[req.user.id])).rows[0];
+    const user=(await db.query('SELECT password_hash,email,display_name FROM users WHERE id=$1',[req.user.id])).rows[0];
     ensure(user.email!==input.newEmail,409,'The new email is the same as your current email.');
-    ensure(await passwordMatches(input.currentPassword,user.password_hash),401,'Current password is required to change your email.');
-    const existing=(await db.query('SELECT 1 FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL AND expires_at>now()',[req.user.id])).rows[0];
-    ensure(!existing,409,'An email change request is already pending. Check your verification channel.');
+    // Password-only accounts re-confirm with their current password before any address change.
+    if(user.password_hash)ensure(await passwordMatches(input.currentPassword,user.password_hash),401,'Current password is required to change your email.');
+    ensure(!(await db.query('SELECT 1 FROM users WHERE email=$1',[input.newEmail])).rows[0],409,'That email address is already registered to another account.');
     const token=secret(),tokenId=randomUUID();
+    // A newer request supersedes outstanding links so a wrong address can be corrected.
+    await db.query('DELETE FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL',[req.user.id]);
     await db.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash) VALUES ($1,$2,$3,$4)',[tokenId,req.user.id,input.newEmail,hash(token)]);
+    const notice=`A change of email address was requested for your MafutaWatch account.\n\nCurrent address: ${user.email}\nRequested new address: ${input.newEmail}\nRequested at: ${new Date().toISOString()}\n\nYour sign-in address does not change until the verification link sent to the new address is confirmed. If you did not request this change, sign in and change your password immediately.\n\nMafutaWatch Uganda`;
+    const confirmation=`Confirm this address as the new sign-in email for your MafutaWatch account.\n\nVerification link (single use, expires in 24 hours):\n${verifyLink(token)}\n\nYour current email address stays active until you confirm. After confirming, every existing session is signed out and you sign in with the new address from then on.\n\nIf you did not request this change, ignore this message; nothing has changed.\n\nMafutaWatch Uganda`;
+    try{
+      await mail.send({to:user.email,subject:'Email change requested for your MafutaWatch account',text:notice});
+      await mail.send({to:input.newEmail,subject:'Confirm your new MafutaWatch email address',text:confirmation});
+    }catch(_error){
+      await db.query('DELETE FROM email_change_tokens WHERE id=$1 AND used_at IS NULL',[tokenId]);
+      throw new HttpError(502,'The verification email could not be sent. Your email address has not been changed. Please retry in a few minutes.',{expose:true});
+    }
     await audit(db,req.user.id,'email.change.request',req.user.id,{newEmail:input.newEmail});
-    res.status(202).json({accepted:true,token});
+    res.status(202).json({accepted:true,message:'A verification link was sent to the new address. Your current email address stays active until you confirm that link, and the link expires in 24 hours.'});
   });
 
   router.post('/me/email/confirm',requireUser,async(req,res)=>{
-    const input=z.object({token:z.string().min(1).max(64)}).strict().parse(req.body);
-    const row=(await db.query('SELECT * FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL AND expires_at>now() ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
-    ensure(row,404,'No pending email change request found.');
-    ensure(createHash('sha256').update(input.token).digest('hex')===row.token_hash,401,'Invalid or expired verification token.');
-    await db.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1',[row.id]);
-    await db.query('UPDATE users SET email=$1 WHERE id=$2',[row.new_email,req.user.id]);
-    await db.query('DELETE FROM sessions WHERE user_id=$1',[req.user.id]);
-    await db.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);
-    await audit(db,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email});
+    await limit(db,`email-confirm:${req.user.id}`,10,3600);
+    const input=z.object({token:z.string().min(1).max(128)}).strict().parse(req.body);
+    ensure(/^[a-f0-9]{64}$/.test(input.token),400,'This verification link is invalid or has expired.');
+    const row=(await db.query('SELECT * FROM email_change_tokens WHERE token_hash=$1',[hash(input.token)])).rows[0];
+    ensure(row&&row.user_id===req.user.id,400,'This verification link is invalid or has expired.');
+    ensure(!row.used_at,400,'This verification link has already been used. Request a new email change.');
+    ensure(row.expires_at>new Date(),400,'This verification link has expired. Request a new email change.');
+    ensure(!(await db.query('SELECT 1 FROM users WHERE email=$1 AND id<>$2',[row.new_email,req.user.id])).rows[0],409,'That email address is already registered to another account.');
+    // Single-use claim: only the first confirmation can succeed, even for concurrent requests.
+    const claimed=await db.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1 AND used_at IS NULL',[row.id]);
+    ensure(claimed.rowCount===1,400,'This verification link has already been used. Request a new email change.');
+    await transaction(db,async client=>{
+      await client.query('UPDATE users SET email=$1 WHERE id=$2',[row.new_email,req.user.id]);
+      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1 AND id<>$2',[req.user.id,row.id]);
+      await client.query('DELETE FROM sessions WHERE user_id=$1',[req.user.id]);
+      await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);
+      await audit(client,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email});
+    });
     res.clearCookie('mfw_session',{httpOnly:true,sameSite:'strict',path:'/'}).status(204).end();
   });
   router.post('/tickets',requireUser,async(req,res)=>{

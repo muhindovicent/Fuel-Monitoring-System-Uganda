@@ -105,6 +105,36 @@ test('administrators assign an operator account to a station from the directory'
   await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'Assigned Station Workspace',exact:true})).toBeVisible();
   await expect(page.locator(`#operatorPrice [name=stationId] option[value="${stationId}"]`)).toHaveCount(1);
 });
+test('email address changes state the delivery limitation and verification links explain failures',async({page})=>{
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
+  await page.goto('/#profile');
+  await expect(page.locator('#view').getByRole('heading',{name:'Email address',exact:true})).toBeVisible();
+  await expect(page.locator('#view')).toContainText('Email changes are unavailable on this deployment');
+  await expect(page.locator('#view')).toContainText('an email delivery provider is not configured');
+  await expect(page.locator('#profileEmailForm')).toHaveCount(0,'The app must not offer a form it cannot complete.');
+  expect((await page.request.get('/api/v1/me/email/status')).status()).toBe(200);
+
+  const token='a'.repeat(64);
+  await page.locator('#logoutButton').click();await expect(page.locator('#stakeholderAccess')).toBeVisible();
+  await page.goto(`/#email-verify?token=${token}`);
+  await expect(page.locator('#view h1')).toHaveText('Sign in to confirm your new email address.');
+  await expect(page.locator('#view .card h2')).toHaveText('Sign in to confirm your new email address.');
+  await expect(page.locator('#view .card')).toContainText('valid for 24 hours');
+  await page.locator('#view .card').getByRole('button',{name:'Sign in to confirm',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();
+  await expect(page).toHaveURL(new RegExp(`#email-verify\\?token=${token}$`));
+  await expect(page.locator('#view h1')).toHaveText('We could not confirm this email address.');
+  await expect(page.locator('#view .card h2')).toHaveText('We could not confirm this email address.');
+  await expect(page.locator('#view .card')).toContainText('invalid or has expired');
+  expect((await(await page.request.get('/api/v1/auth/session')).json()).user.role).toBe('admin','A failed confirmation must not sign the account out.');
+  await page.locator('#view .card').getByRole('link',{name:'Go to my profile',exact:true}).click();
+  await expect(page).toHaveURL(/#profile$/);
+  expect((await(await page.request.get('/api/v1/auth/session')).json()).user.email).toBe('admin@example.test');
+});
+
 test('operator request continues the citizen application flow without self-promotion',async({page})=>{
   await page.goto('/');await page.locator('#stakeholderAccess').getByRole('link',{name:'Station Operator Access Request'}).click();
   await expect(page.getByRole('heading',{name:'Station Operator Access Request',exact:true})).toBeVisible();

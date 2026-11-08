@@ -9,7 +9,7 @@ export const emailSchema = z.email().max(254).transform(s => s.toLowerCase());
 export const passwordSchema = z.string().min(12).max(128);
 export const userFields = 'id,email,display_name,role,identity_verified';
 export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, options = {}) { super(message); this.status = status; this.expose = options.expose === true; }
 }
 export function ensure(condition, status, message) { if (!condition) throw new HttpError(status,message); }
 export async function passwordHash(password) {

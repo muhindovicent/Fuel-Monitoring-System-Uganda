@@ -65,11 +65,23 @@ Initial operating objectives should be agreed with the organization (for example
 - The 24h case response target is computed on server reads; an on-call case team must own the queue. This release has no external paging/SMS worker. Configure actual incident alerting through your monitoring platform.
 - Establish approved case/report/evidence/account/audit retention and deletion procedures. There is intentionally no unreviewed generic purge of investigation evidence. Database owners can execute reviewed, logged legal-access/erasure procedures; the API is not a substitute for controller policy.
 
+## Email delivery for account verification
+
+MafutaWatch sends transactional email only for the email-address change workflow (a notice to the current address and a single-use confirmation link to the new one). No marketing email is sent. Without configuration the feature is explicitly disabled: `GET /api/v1/me/email/status` reports `{"enabled":false}`, the profile page states that email changes are unavailable, and `POST /me/email/change-request` answers 503 with the same explanation. Nothing is ever sent and no token is created.
+
+Configure one provider through environment variables (never hardcode credentials in the image or repository):
+
+- Common: `EMAIL_PROVIDER=smtp|http`, `EMAIL_FROM="MafutaWatch Uganda <no-reply@fuel.example.org>"` (required whenever a provider is set; the address must accept bounces).
+- SMTP: `EMAIL_SMTP_HOST`, optional `EMAIL_SMTP_PORT` (default 587), `EMAIL_SMTP_SECURE=true` for port 465, `EMAIL_SMTP_USER` and `EMAIL_SMTP_PASSWORD` (API key/token is typical). Prefer a provider IP/ reputation with SPF, DKIM and DMARC aligned on the sending domain, and route bounces to a monitored mailbox.
+- HTTP relay: `EMAIL_HTTP_URL` (HTTPS only in production) and optional `EMAIL_HTTP_API_KEY` sent as a bearer token. The relay receives `POST {from,to,subject,text}`.
+
+Restart the API after changing `.env`, then verify: `/health/ready` is healthy, `GET /me/email/status` reports the provider, a test address change arrives with a working link, and a second click on the same link is rejected. Alert on 502/503 responses from `/me/email/change-request`, on provider rejections in the application log, and on undeliverable messages in the provider console. Rollback is disabling the provider (`EMAIL_PROVIDER=`), which immediately restores the truthful disabled state.
+
 ## Credentials and account recovery
 
 - Never store `.env`, backups, screenshots of one-time tokens or live credentials in git/issues.
 - Operator credentials can be revoked in the station workspace. Password changes and CLI reprovisioning revoke all sessions/integration credentials for that account. Admin suspension blocks existing sessions on every request.
-- To recover an account, verify ownership through the operator's documented process, set a new `USER_PASSWORD`, use the owner CLI `user <email> <role> <name>`, clear the environment variable and notify the account holder out of band. No fake recovery emails are emitted.
+- To recover an account, verify ownership through the operator's documented process, set a new `USER_PASSWORD`, use the owner CLI `user <email> <role> <name>`, clear the environment variable and notify the account holder out of band. No fake password-recovery emails are emitted. The only messages the application sends are the real email-change notifications described above, and only when a delivery provider is configured.
 - Rotate runtime/owner/bootstrap database passwords using PostgreSQL role password changes and secret updates; restart dependent connections. Changing `.env` alone does not change an existing DB role password.
 - Review staff membership, case assignment and operator licenses regularly. Non-administrator role changes and explicit station assignments are audited administrator operations; administrator roles remain owner-CLI operations. Revoke station-specific assignments when staff leave a station, and verify identity/appointment before provisioning an inspector or analyst.
 

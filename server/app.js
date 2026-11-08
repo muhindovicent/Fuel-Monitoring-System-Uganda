@@ -58,7 +58,7 @@ export function createApp(db,config) {
     if(error.type==='entity.parse.failed'){status=400;message='Invalid JSON body.';}
     if(error.type==='entity.too.large'){status=413;message='Request exceeds the allowed size.';}
     if(status===429)res.set('Retry-After','60');
-    if(status>=500){logger.error({requestId:req.requestId,code:error.code,err:error},'request failed');message='The service is temporarily unavailable. Please retry.';}
+    if(status>=500&&error.expose!==true){logger.error({requestId:req.requestId,code:error.code,err:error},'request failed');message='The service is temporarily unavailable. Please retry.';}
     res.status(status).json({error:message,requestId:req.requestId});
   });
   return app;

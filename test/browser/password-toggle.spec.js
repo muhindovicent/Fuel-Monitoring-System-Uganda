@@ -116,7 +116,10 @@ test('password change, confirmation and administrator reset fields toggle indepe
   await expect(reset.locator('[name=confirmPassword]')).toHaveAttribute('type','password');
   await expect(reset.locator('.password-toggle').first()).toHaveAttribute('aria-label','Hide New temporary password');
   await openWorkspacePage(page,'My profile');
-  for(const [form,expected] of [['#profilePasswordForm','Show Current password'],['#profileEmailForm','Show Current password'],['#deletionForm','Show Current password']]){
+  const forms=[['#profilePasswordForm','Show Current password'],['#deletionForm','Show Current password']];
+  if(await page.locator('#profileEmailForm').count())forms.splice(1,0,['#profileEmailForm','Show Current password']);
+  else await expect(page.locator('#view')).toContainText('Email changes are unavailable on this deployment');
+  for(const [form,expected] of forms){
     const field=page.locator(form);
     await expect(field.locator('.password-toggle').first()).toHaveAttribute('aria-label',expected);
     await expect(field.locator('.password-field input').first()).toHaveAttribute('type','password');

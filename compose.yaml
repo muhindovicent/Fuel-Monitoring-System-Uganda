@@ -8,6 +8,16 @@ x-api-environment: &api-environment
   TRUST_PROXY_HOPS: 1
   LOG_LEVEL: info
   ROUTING_URL: ${ROUTING_URL:-}
+  # Transactional email for address changes; empty EMAIL_PROVIDER disables it.
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
+  EMAIL_FROM: ${EMAIL_FROM:-}
+  EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+  EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-}
+  EMAIL_SMTP_SECURE: ${EMAIL_SMTP_SECURE:-}
+  EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+  EMAIL_SMTP_PASSWORD: ${EMAIL_SMTP_PASSWORD:-}
+  EMAIL_HTTP_URL: ${EMAIL_HTTP_URL:-}
+  EMAIL_HTTP_API_KEY: ${EMAIL_HTTP_API_KEY:-}
 services:
   db:
     image: postgres:17-bookworm
