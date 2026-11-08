@@ -6,6 +6,7 @@ import { transaction } from './db.js';
 import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
 import { provisionStaffByAdministrator } from './provisioning.js';
+import { mediaRoutes } from './media.js';
 
 const uuid=z.uuid();
 const positiveId=z.coerce.number().int().positive().max(2147483647);
@@ -445,109 +446,7 @@ export function apiRoutes(db,config) {
       ensure(updated.rowCount,404,'Question not found.'); await audit(client,req.user.id,'question.answer',req.params.id);
     });res.json({saved:true});
   });
-  // ---------- News articles ----------
-  const newsSchema=z.object({
-    title:z.string().trim().min(5).max(200),
-    summary:z.string().trim().min(10).max(500),
-    body:z.string().trim().min(10).max(10000),
-    sourceUrl:httpsUrl,
-    sourceName:z.string().trim().min(2).max(100),
-    category:z.enum(['fuel-prices','petroleum-markets','energy-policy','transport','infrastructure']),
-    imageUrl:z.string().url().max(2000).optional().nullable(),
-    status:z.enum(['published','draft','archived']).optional(),
-    excerpt:z.string().trim().min(5).max(300).optional().nullable(),
-    tags:z.array(z.string().trim().min(1).max(30)).max(10).optional().nullable(),
-    readingTime:z.number().int().min(1).max(120).optional().nullable(),
-    featured:z.boolean().optional(),
-    priority:z.number().int().min(0).max(100).optional()
-  }).strict();
-  router.get('/news',async(_req,res)=>res.json({items:(await db.query('SELECT n.*,u.display_name AS author FROM news_articles n JOIN users u ON u.id=n.created_by WHERE n.status=$1 ORDER BY n.created_at DESC LIMIT 100',['published'])).rows}));
-  router.post('/news',roles('admin'),async(req,res)=>{
-    const input=newsSchema.parse(req.body);const id=randomUUID();await transaction(db,async client=>{
-      await client.query(`INSERT INTO news_articles(id,title,summary,body,source_url,source_name,category,image_url,status,excerpt,tags,reading_time,featured,priority,created_by,published_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[id,input.title,input.summary,input.body,input.sourceUrl,input.sourceName,input.category,input.imageUrl??null,input.status??'published',input.excerpt??null,input.tags?JSON.stringify(input.tags):null,input.readingTime??null,input.featured??false,input.priority??0,req.user.id,input.status==='published'?new Date().toISOString():null]);await audit(client,req.user.id,'news.publish',id);
-    });res.status(201).json({id});
-  });
-  router.post('/news/:id/photos',roles('admin'),express.json({limit:'64kb'}),async(req,res)=>{
-    const id=uuid.parse(req.params.id);const input=z.object({mediaId:z.uuid(),caption:z.string().trim().min(2).max(300).optional().nullable(),position:z.number().int().min(0).optional()}).strict().parse(req.body);await transaction(db,async client=>{
-      await client.query('SELECT 1 FROM news_articles WHERE id=$1',[id]);ensure((await client.query('SELECT 1 FROM media_gallery WHERE id=$1',[input.mediaId])).rowCount,404,'Media item not found.');
-      await client.query(`INSERT INTO news_article_photos(id,news_article_id,media_gallery_id,caption,position) VALUES ($1,$2,$3,$4,$5)`,[randomUUID(),id,input.mediaId,input.caption??null,input.position??0]);await audit(client,req.user.id,'news.photo.add',id,{mediaId:input.mediaId});
-    });res.status(201).json({saved:true});
-  });
-  router.post('/news/:id/videos',roles('admin'),express.json({limit:'64kb'}),async(req,res)=>{
-    const id=uuid.parse(req.params.id);const input=z.object({mediaId:z.uuid(),caption:z.string().trim().min(2).max(300).optional().nullable(),position:z.number().int().min(0).optional()}).strict().parse(req.body);await transaction(db,async client=>{
-      await client.query('SELECT 1 FROM news_articles WHERE id=$1',[id]);ensure((await client.query('SELECT 1 FROM video_content WHERE id=$1',[input.mediaId])).rowCount,404,'Video not found.');
-      await client.query(`INSERT INTO news_article_videos(id,news_article_id,video_content_id,caption,position) VALUES ($1,$2,$3,$4,$5)`,[randomUUID(),id,input.mediaId,input.caption??null,input.position??0]);await audit(client,req.user.id,'news.video.add',id,{mediaId:input.mediaId});
-    });res.status(201).json({saved:true});
-  });
-  router.patch('/news/:id',roles('admin'),async(req,res)=>{
-    const input=newsSchema.partial().strict().parse(req.body);const id=uuid.parse(req.params.id);const sets=[];const params=[id];let i=2;    const map={title:'title',summary:'summary',body:'body',sourceUrl:'source_url',sourceName:'source_name',category:'category',imageUrl:'image_url',status:'status',excerpt:'excerpt',tags:'tags',readingTime:'reading_time',featured:'featured',priority:'priority'};
-    for(const [key,column] of Object.entries(map)){if(input[key]!==undefined){sets.push(`${column}=$${i++}`);params.push(input[key]);}}
-    if(!sets.length)return res.status(400).json({error:'No fields to update.'});
-    sets.push(`updated_at=now()`);await db.query(`UPDATE news_articles SET ${sets.join(', ')} WHERE id=$1`,params);await audit(db,req.user.id,'news.update',id,input);res.json({saved:true});
-  });
-  router.delete('/news/:id',roles('admin'),async(req,res)=>{
-    const id=uuid.parse(req.params.id);const result=await db.query('DELETE FROM news_articles WHERE id=$1 RETURNING id',[id]);ensure(result.rowCount,404,'News article not found.');await audit(db,req.user.id,'news.delete',id);res.status(204).end();
-  });
-
-  // ---------- Media gallery ----------
-  const mediaSchema=z.object({
-    title:z.string().trim().min(2).max(200),
-    description:z.string().trim().min(5).max(1000),
-    category:z.enum(['fuel-stations','transport','energy-infrastructure','public-events']),
-    imageUrl:z.string().url().max(2000),
-    thumbnailUrl:z.string().url().max(2000).optional().nullable(),
-    photographer:z.string().trim().min(2).max(100),
-    source:z.string().trim().min(2).max(200),
-    license:z.enum(['CC BY 4.0','CC BY-SA 4.0','CC BY-ND 4.0','CC0 1.0','All Rights Reserved']),
-    sourceUrl:z.string().url().max(2000).optional().nullable(),
-    altText:z.string().trim().min(2).max(200).optional().nullable(),
-    fileSize:z.number().int().min(1).max(10485760).optional().nullable(),
-    dimensions:z.string().max(50).optional().nullable(),
-    featured:z.boolean().optional(),
-    priority:z.number().int().min(0).max(100).optional()
-  }).strict();
-  router.get('/media',async(_req,res)=>res.json({items:(await db.query('SELECT * FROM media_gallery ORDER BY created_at DESC LIMIT 100')).rows}));
-  router.post('/media',roles('admin'),async(req,res)=>{
-    const input=mediaSchema.parse(req.body);const id=randomUUID();await transaction(db,async client=>{
-      await client.query(`INSERT INTO media_gallery(id,title,description,category,image_url,thumbnail_url,photographer,source,license,source_url) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[id,input.title,input.description,input.category,input.imageUrl,input.thumbnailUrl??null,input.photographer,input.source,input.license,input.sourceUrl??null]);await audit(client,req.user.id,'media.upload',id);
-    });res.status(201).json({id});
-  });
-  router.patch('/media/:id',roles('admin'),async(req,res)=>{
-    const input=mediaSchema.partial().strict().parse(req.body);const id=uuid.parse(req.params.id);const sets=[];const params=[id];let i=2;const map={title:'title',description:'description',category:'category',imageUrl:'image_url',thumbnailUrl:'thumbnail_url',photographer:'photographer',source:'source',license:'license',sourceUrl:'source_url'};
-    for(const [key,column] of Object.entries(map)){if(input[key]!==undefined){sets.push(`${column}=$${i++}`);params.push(input[key]);}}
-    if(!sets.length)return res.status(400).json({error:'No fields to update.'});
-    await db.query(`UPDATE media_gallery SET ${sets.join(', ')} WHERE id=$1`,params);await audit(db,req.user.id,'media.update',id,input);res.json({saved:true});
-  });
-  router.delete('/media/:id',roles('admin'),async(req,res)=>{
-    const id=uuid.parse(req.params.id);const result=await db.query('DELETE FROM media_gallery WHERE id=$1 RETURNING id',[id]);ensure(result.rowCount,404,'Media item not found.');await audit(db,req.user.id,'media.delete',id);res.status(204).end();
-  });
-
-  // ---------- Video content ----------
-  const videoSchema=z.object({
-    title:z.string().trim().min(5).max(200),
-    description:z.string().trim().min(10).max(1000),
-    category:z.enum(['platform-howto','fuel-saving','road-safety','boda-experiences','price-verification','energy-events']),
-    videoUrl:z.string().url().max(2000),
-    thumbnailUrl:z.string().url().max(2000).optional().nullable(),
-    duration:z.string().trim().min(1).max(20),
-    featured:z.boolean().optional(),
-    priority:z.number().int().min(0).max(100).optional()
-  }).strict();
-  router.get('/videos',async(_req,res)=>res.json({items:(await db.query('SELECT * FROM video_content ORDER BY created_at DESC LIMIT 100')).rows}));
-  router.post('/videos',roles('admin'),async(req,res)=>{
-    const input=videoSchema.parse(req.body);const id=randomUUID();await transaction(db,async client=>{
-      await client.query(`INSERT INTO video_content(id,title,description,category,video_url,thumbnail_url,duration,featured,priority) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[id,input.title,input.description,input.category,input.videoUrl,input.thumbnailUrl??null,input.duration,input.featured??false,input.priority??0]);await audit(client,req.user.id,'video.publish',id);
-    });res.status(201).json({id});
-  });
-  router.patch('/videos/:id',roles('admin'),async(req,res)=>{
-    const input=videoSchema.partial().strict().parse(req.body);const id=uuid.parse(req.params.id);const sets=[];const params=[id];let i=2;    const map={title:'title',description:'description',category:'category',videoUrl:'video_url',thumbnailUrl:'thumbnail_url',duration:'duration',featured:'featured',priority:'priority'};
-    for(const [key,column] of Object.entries(map)){if(input[key]!==undefined){sets.push(`${column}=$${i++}`);params.push(input[key]);}}
-    if(!sets.length)return res.status(400).json({error:'No fields to update.'});
-    await db.query(`UPDATE video_content SET ${sets.join(', ')} WHERE id=$1`,params);await audit(db,req.user.id,'video.update',id,input);res.json({saved:true});
-  });
-  router.delete('/videos/:id',roles('admin'),async(req,res)=>{
-    const id=uuid.parse(req.params.id);const result=await db.query('DELETE FROM video_content WHERE id=$1 RETURNING id',[id]);ensure(result.rowCount,404,'Video not found.');await audit(db,req.user.id,'video.delete',id);res.status(204).end();
-  });
+  router.use(mediaRoutes(db));
 
   router.get('/admin/dashboard',readers,async(_req,res)=>{
     const totals=(await db.query(`SELECT (SELECT count(*)::int FROM reports) AS reports,

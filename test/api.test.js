@@ -575,7 +575,7 @@ test('Media gallery, news articles, and videos API',async t=>{
     const created=await request('/videos',{as:'admin',method:'POST',body:{
       title:'Tutorial Video',description:'How to use MafutaWatch',category:'platform-howto',
       videoUrl:'https://example.test/video.mp4',thumbnailUrl:'https://example.test/thumb.jpg',
-      duration:'5:30'
+      duration:'5:30',source:'Test video producer',license:'All Rights Reserved'
     }});
     console.log('CREATE VIDEO RESPONSE:', created.status, JSON.stringify(created.data));
     assert.equal(created.status,201);
@@ -611,7 +611,7 @@ test('Media gallery, news articles, and videos API',async t=>{
 
     const video=await request('/videos',{as:'admin',method:'POST',body:{
       title:'News Video',description:'News video',category:'platform-howto',
-      videoUrl:'https://example.test/news-video.mp4',duration:'3:00'
+      videoUrl:'https://example.test/news-video.mp4',duration:'3:00',source:'Test video producer',license:'All Rights Reserved'
     }});
     assert.equal(video.status,201);
     const videoId=video.data.id;

@@ -63,6 +63,7 @@ Follow [`docs/10_OPERATIONS.md`](docs/10_OPERATIONS.md) for HTTPS Compose deploy
 | [`docs/09_ARCHITECTURE.md`](docs/09_ARCHITECTURE.md) | Implemented architecture, entities, access matrix and workflows |
 | [`docs/12_API.md`](docs/12_API.md) | API endpoint inventory and integration examples |
 | [`docs/14_MAP_FIRST_COMMAND_CENTER.md`](docs/14_MAP_FIRST_COMMAND_CENTER.md) | Map-first portal, role-specific command center, responsive verification and service boundaries |
+| [`docs/16_MEDIA_MANAGEMENT.md`](docs/16_MEDIA_MANAGEMENT.md) | Administrator device uploads, previews, publication workflows and durable Neon media storage |
 | `server/migrations/` | Executable, checksummed PostgreSQL migrations |
 | `server/` | API, authorization, transactional pricing and administrative CLI |
 | `app/` | API-backed PWA frontend |

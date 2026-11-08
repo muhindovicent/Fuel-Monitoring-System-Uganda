@@ -45,6 +45,13 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | GET, POST | `/town-halls` | Public read/admin create `{title,host,startsAt}` |
 | POST | `/town-halls/:id/questions` | Authenticated `{body}`, before session starts |
 | PATCH | `/questions/:id` | Admin `{answer}` |
+| GET | `/media`, `/videos`, `/news` | Public published gallery, videos and news; news respects publication date |
+| POST | `/media`, `/videos`, `/news` | Admin metadata create; existing paths retained; see [Media Management](16_MEDIA_MANAGEMENT.md) |
+| PATCH, DELETE | `/media/:id`, `/videos/:id`, `/news/:id` | Admin edit/status changes or delete; unused uploads are cleaned up |
+| GET | `/admin/media` | Admin published, draft and archived metadata plus upload limits/storage information |
+| POST | `/admin/media-assets` | Admin raw JPEG/PNG/WebP (10 MiB) or MP4/WebM (25 MiB); returns `{id,url,mediaType,size}` after database persistence |
+| DELETE | `/admin/media-assets/:id` | Admin remove an unreferenced file; 409 when content still uses it |
+| GET | `/media-assets/:id` | Public only when referenced by published content; admin private preview; no-store, byte ranges supported |
 | GET | `/admin/dashboard`, `/admin/audit` | Inspector/analyst/admin aggregates/audit |
 | GET | `/admin/reports` | Inspector/admin pending/flagged observations |
 | PATCH | `/admin/reports/:id` | Inspector/admin `{status:verified|rejected,reason}` |

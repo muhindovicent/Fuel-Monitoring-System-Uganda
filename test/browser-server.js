@@ -15,7 +15,7 @@ const accountDb={query:async(sql,params)=>{
 await fixtures(accountDb);
 await db.query('INSERT INTO messages(id,user_id,room_id,body) SELECT $1,id,1,$2 FROM users WHERE email=$3',[randomUUID(),'<img src=x onerror="window.XSS=true"> Browser test observation','bob@example.test']);
 const port=Number(process.env.BROWSER_TEST_PORT||3100);
-if(![3100,3101,3102,3103].includes(port))throw new Error('Browser fixtures must use their dedicated test ports.');
+if(![3100,3101,3102,3103,3104].includes(port))throw new Error('Browser fixtures must use their dedicated test ports.');
 const app=createApp(db,{APP_ORIGIN:`http://localhost:${port}`,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
 const server=app.listen(port,()=>console.log(`Browser fixture ready on ${port}`));
 async function stop(){server.close(async()=>{await db.end();process.exit(0);});}

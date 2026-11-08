@@ -36,6 +36,8 @@ Database TLS is disabled only on the isolated local Compose network. For managed
 
 ## Backup and restore
 
+Administrator image/video uploads use persistent PostgreSQL/Neon storage. See [Media Management](16_MEDIA_MANAGEMENT.md) for the migration, runtime grants, upload limits and publication/file lifecycle. No Render upload directory or external object-storage credentials are required.
+
 Backups contain account/case/evidence data. Encrypt them, restrict access, keep them off the application host, define retention with the controller and monitor job success. For the Compose service, a logical backup can be created using:
 
 ```sh
