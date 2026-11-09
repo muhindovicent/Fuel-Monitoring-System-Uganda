@@ -14,8 +14,8 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/auth/logout` | Authenticated, revokes session |
 | POST | `/auth/password` | `{currentPassword,newPassword}`, revokes all sessions/tokens |
 | GET | `/me/email/status` | `{enabled,provider}`; whether this deployment can send verification email |
-| POST | `/me/email/change-request` | `{newEmail,currentPassword}`; 202 `{accepted,message}` with no token; 503 when no delivery provider is configured |
-| POST | `/me/email/confirm` | `{token}`; single use within 24 hours; 204 changes the address and revokes all sessions |
+| POST | `/me/email/change-request` | `{newEmail,currentPassword}`; 202 `{accepted,message}` with no token; sends approval + confirmation links; 503 when no delivery provider is configured |
+| POST | `/me/email/confirm` | `{token}`; single use within 24 hours; 200 `{complete:false,approved}` while a second approval is outstanding; 204 changes the address and revokes all sessions |
 | GET | `/stations` | Public `q,fuel,sort=name|price,district,lat,lng,radius(km),limit,offset` |
 | GET | `/stations/:id` | Public station, current prices, history and reviews |
 | GET | `/operators`, `/summary`, `/caps` | Public directory metadata and live aggregates |
@@ -75,12 +75,13 @@ Pagination defaults to 50, max 100. Entity IDs are UUIDs except integer station/
 
 ## Email change verification
 
-Changing the sign-in address is a two-step, single-use flow and requires an active session plus the current password for password-based accounts:
+Changing the sign-in address is a dual-approval, single-use flow and requires an active session plus the current password for password-based accounts:
 
-1. `POST /me/email/change-request` validates the address, the current password and the per-user rate limit (3 per hour), supersedes any outstanding link for that account, stores only a SHA-256 hash of a random token, then sends a notice to the current address and a confirmation link to the new one. The token is never returned in the response or logged. When no delivery provider is configured the endpoint answers 503 with an explanation instead of pretending to send.
-2. The link opens `/#email-verify?token=…` in the frontend, which calls `POST /me/email/confirm` after the account signs in. The endpoint looks the token up by hash and binds it to the requesting account, rejects expired/used/foreign tokens, refuses an address that has since been registered, and only then updates `users.email` in a transaction that deletes other pending tokens, all sessions and integration credentials.
+1. `POST /me/email/change-request` validates the address, the current password and the per-user rate limit (3 per hour), stores only SHA-256 hashes of two random tokens (one per mailbox; every account in this release is password-based, so both are always issued), then sends an approval link to the **current** address and a confirmation link to the **new** one. Tokens are never returned in the response or logged. When no delivery provider is configured the endpoint answers 503 with an explanation instead of pretending to send.
+2. Each link opens `/#email-verify?token=…` in the frontend, which calls `POST /me/email/confirm` after the account signs in. The first approval answers 200 `{complete:false,approved}` and changes nothing: the address, sessions and audit trail stay untouched, and re-opening the same link repeats that pending answer. The second approval answers 204.
+3. Confirmation runs in a single PostgreSQL transaction that locks the account row, re-reads the token by hash (bound to the requesting account), rejects expired/foreign/duplicate-registered tokens, claims the token with `used_at IS NULL`, and only when every outstanding approval is consumed updates `users.email`, deletes the tokens, deletes all sessions, revokes integration credentials and appends the audit record. Any failure rolls the whole transaction back — a failed confirmation leaves the token unused and the account exactly as it was. The account row lock serialises concurrent confirmations, so a race can never apply half of a change.
 
-Until confirmation the original address keeps working. Rate limits: 3 change requests and 10 confirmations per account per hour.
+Until both approvals the original address keeps working. Rate limits: 3 change requests and 10 confirmations per account per hour.
 
 ## Operator integration example
 

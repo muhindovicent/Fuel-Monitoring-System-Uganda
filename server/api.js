@@ -248,42 +248,60 @@ export function apiRoutes(db,config) {
     // Password-only accounts re-confirm with their current password before any address change.
     if(user.password_hash)ensure(await passwordMatches(input.currentPassword,user.password_hash),401,'Current password is required to change your email.');
     ensure(!(await db.query('SELECT 1 FROM users WHERE email=$1',[input.newEmail])).rows[0],409,'That email address is already registered to another account.');
-    const token=secret(),tokenId=randomUUID();
-    // A newer request supersedes outstanding links so a wrong address can be corrected.
-    await db.query('DELETE FROM email_change_tokens WHERE user_id=$1 AND used_at IS NULL',[req.user.id]);
-    await db.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash) VALUES ($1,$2,$3,$4)',[tokenId,req.user.id,input.newEmail,hash(token)]);
-    const notice=`A change of email address was requested for your MafutaWatch account.\n\nCurrent address: ${user.email}\nRequested new address: ${input.newEmail}\nRequested at: ${new Date().toISOString()}\n\nYour sign-in address does not change until the verification link sent to the new address is confirmed. If you did not request this change, sign in and change your password immediately.\n\nMafutaWatch Uganda`;
-    const confirmation=`Confirm this address as the new sign-in email for your MafutaWatch account.\n\nVerification link (single use, expires in 24 hours):\n${verifyLink(token)}\n\nYour current email address stays active until you confirm. After confirming, every existing session is signed out and you sign in with the new address from then on.\n\nIf you did not request this change, ignore this message; nothing has changed.\n\nMafutaWatch Uganda`;
+    // OWASP dual control: password-only accounts approve from both mailboxes.
+    const dual=Boolean(user.password_hash);
+    const newToken=secret(),oldToken=secret();
+    await transaction(db,async client=>{
+      // A newer request supersedes every outstanding link so a wrong address can be corrected.
+      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
+      await client.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash,kind) VALUES ($1,$2,$3,$4,$5)',[randomUUID(),req.user.id,input.newEmail,hash(newToken),'new']);
+      if(dual)await client.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash,kind) VALUES ($1,$2,$3,$4,$5)',[randomUUID(),req.user.id,input.newEmail,hash(oldToken),'old']);
+    });
+    const approval=`A change of email address was requested for your MafutaWatch account.\n\nCurrent address: ${user.email}\nRequested new address: ${input.newEmail}\nRequested at: ${new Date().toISOString()}\n\nApprove this change from your current address (single use, expires in 24 hours):\n${verifyLink(oldToken)}\n\nYour address does not change until this approval and the confirmation sent to ${input.newEmail} are both used. If you did not request this change, ignore this message and change your password immediately.\n\nMafutaWatch Uganda`;
+    const confirmation=`Confirm this address as the new sign-in email for your MafutaWatch account.\n\nConfirmation link for the new address (single use, expires in 24 hours):\n${verifyLink(newToken)}\n\n${dual?`Because you sign in with a password, this change also needs approval from your current address; the address does not change until both links are used.`:`Your current email address stays active until you confirm.`} After both approvals every existing session is signed out and you sign in with the new address from then on.\n\nIf you did not request this change, ignore this message; nothing has changed.\n\nMafutaWatch Uganda`;
     try{
-      await mail.send({to:user.email,subject:'Email change requested for your MafutaWatch account',text:notice});
+      if(dual)await mail.send({to:user.email,subject:'Approve the email change for your MafutaWatch account',text:approval});
       await mail.send({to:input.newEmail,subject:'Confirm your new MafutaWatch email address',text:confirmation});
     }catch(_error){
-      await db.query('DELETE FROM email_change_tokens WHERE id=$1 AND used_at IS NULL',[tokenId]);
+      await db.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
       throw new HttpError(502,'The verification email could not be sent. Your email address has not been changed. Please retry in a few minutes.',{expose:true});
     }
-    await audit(db,req.user.id,'email.change.request',req.user.id,{newEmail:input.newEmail});
-    res.status(202).json({accepted:true,message:'A verification link was sent to the new address. Your current email address stays active until you confirm that link, and the link expires in 24 hours.'});
+    await audit(db,req.user.id,'email.change.request',req.user.id,{newEmail:input.newEmail,dual});
+    res.status(202).json({accepted:true,message:dual
+      ?'Two single-use links were sent: approve from your current address and confirm from the new one. Your address does not change until both are used, and each link expires in 24 hours.'
+      :'A verification link was sent to the new address. Your current email address stays active until you confirm that link, and the link expires in 24 hours.'});
   });
 
   router.post('/me/email/confirm',requireUser,async(req,res)=>{
     await limit(db,`email-confirm:${req.user.id}`,10,3600);
     const input=z.object({token:z.string().min(1).max(128)}).strict().parse(req.body);
     ensure(/^[a-f0-9]{64}$/.test(input.token),400,'This verification link is invalid or has expired.');
-    const row=(await db.query('SELECT * FROM email_change_tokens WHERE token_hash=$1',[hash(input.token)])).rows[0];
-    ensure(row&&row.user_id===req.user.id,400,'This verification link is invalid or has expired.');
-    ensure(!row.used_at,400,'This verification link has already been used. Request a new email change.');
-    ensure(row.expires_at>new Date(),400,'This verification link has expired. Request a new email change.');
-    ensure(!(await db.query('SELECT 1 FROM users WHERE email=$1 AND id<>$2',[row.new_email,req.user.id])).rows[0],409,'That email address is already registered to another account.');
-    // Single-use claim: only the first confirmation can succeed, even for concurrent requests.
-    const claimed=await db.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1 AND used_at IS NULL',[row.id]);
-    ensure(claimed.rowCount===1,400,'This verification link has already been used. Request a new email change.');
-    await transaction(db,async client=>{
+    // Claim, address update, session revocation and audit commit or roll back together.
+    const outcome=await transaction(db,async client=>{
+      const account=(await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[req.user.id])).rows[0];
+      ensure(account,400,'This verification link is invalid or has expired.');
+      const row=(await client.query('SELECT * FROM email_change_tokens WHERE token_hash=$1',[hash(input.token)])).rows[0];
+      ensure(row&&row.user_id===req.user.id,400,'This verification link is invalid or has expired.');
+      if(!row.used_at){
+        ensure(row.expires_at>new Date(),400,'This verification link has expired. Request a new email change.');
+        ensure(!(await client.query('SELECT 1 FROM users WHERE email=$1 AND id<>$2',[row.new_email,req.user.id])).rows[0],409,'That email address is already registered to another account.');
+        const claimed=await client.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1 AND used_at IS NULL',[row.id]);
+        ensure(claimed.rowCount===1,400,'This verification link has already been used. Request a new email change.');
+      }
+      const approvals=(await client.query('SELECT kind,used_at FROM email_change_tokens WHERE user_id=$1',[req.user.id])).rows;
+      if(!approvals.length||!approvals.every(token=>token.used_at))return {complete:false,approved:row.kind};
       await client.query('UPDATE users SET email=$1 WHERE id=$2',[row.new_email,req.user.id]);
-      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1 AND id<>$2',[req.user.id,row.id]);
+      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
       await client.query('DELETE FROM sessions WHERE user_id=$1',[req.user.id]);
       await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);
-      await audit(client,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email});
+      await audit(client,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email,approvals:approvals.map(token=>token.kind).sort()});
+      return {complete:true};
     });
+    if(!outcome.complete){
+      const approvedFrom=outcome.approved==='new'?'the new address':'your current address';
+      const remaining=outcome.approved==='new'?'your current address':'the new address';
+      return res.status(200).json({complete:false,approved:outcome.approved,message:`Approved from ${approvedFrom}. Open the link sent to ${remaining} to finish the change; your address stays active until then.`});
+    }
     res.clearCookie('mfw_session',{httpOnly:true,sameSite:'strict',path:'/'}).status(204).end();
   });
   router.post('/tickets',requireUser,async(req,res)=>{

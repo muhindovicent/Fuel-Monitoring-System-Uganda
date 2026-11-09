@@ -128,7 +128,7 @@ function roleSettingsHtml(emailChange){
   const role=state.user?.role;if(role==='citizen')return'';
   const emailRow=`<div class="actions" style="margin-top:10px;"><button class="primary" data-action="profile-email-save">Save email</button><span id="emailSaveStatus" class="small"></span></div>`;
   const common=emailChange?.enabled
-    ?`<section class="card"><h2>Email address</h2><p class="small">Changing your email requires verification. A single-use link is sent to the new address and a notice to your current address. Your address does not change until you confirm that link, and confirming signs out every session.</p><form id="profileEmailForm">${field('New email address','email',{type:'email',maxlength:254})}${field('Current password','emailPassword',{type:'password',maxlength:128})}${emailRow}</form></section>`
+    ?`<section class="card"><h2>Email address</h2><p class="small">Changing your email requires approval from both mailboxes: one single-use link is sent to your current address and another to the new one. Your address does not change until both are confirmed, each link expires in 24 hours, and confirming the second link signs out every session.</p><form id="profileEmailForm">${field('New email address','email',{type:'email',maxlength:254})}${field('Current password','emailPassword',{type:'password',maxlength:128})}${emailRow}</form></section>`
     :`<section class="card"><h2>Email address</h2><p class="banner warning" role="status">Email changes are unavailable on this deployment: an email delivery provider is not configured, so no verification link can be sent. Your address cannot be changed from the app right now. Contact the operator of this deployment to update it.</p></section>`;
   if(role==='admin')return `${common}<section class="card"><h2>Administrator settings</h2><label class="check"><input name="securityAlerts" type="checkbox"> Security alerts</label><label class="check"><input name="adminActivityHistory" type="checkbox"> Administrative activity history</label><label class="check"><input name="dashboardPreferences" type="checkbox"> Dashboard preferences</label><p class="small">These settings control which administrative notifications and dashboard customizations you receive.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save administrator settings</button></div></section>`;
   if(role==='inspector')return `${common}<section class="card"><h2>Inspector settings</h2><label class="check"><input name="assignedCaseNotifications" type="checkbox"> Assigned-case notifications</label><label class="check"><input name="inspectionAlerts" type="checkbox"> Inspection alerts</label><label class="check"><input name="workspacePreferences" type="checkbox"> Workspace preferences</label><p class="small">These settings control which case and inspection notifications you receive and how your investigation workspace is configured.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save inspector settings</button></div></section>`;
@@ -311,15 +311,24 @@ async function emailVerifyView(){
     if(!state.user)return emailVerifyMessage('Sign in to confirm your new email address.','Your verification link is valid for 24 hours. Sign in to the account you are changing and this confirmation completes automatically.',{signIn:true});
     pending.status='confirming';
     try{
-      await api('/me/email/confirm',{method:'POST',body:{token:pending.token}});
-      pending.status='done';state.user=null;setCsrf(null);updateAccount();refreshNotifications().catch(()=>{});
-      history.replaceState(null,'',`${location.pathname}#email-verified`);
-      state.page='email-verified';
-      return emailVerifiedView();
+      const result=await api('/me/email/confirm',{method:'POST',body:{token:pending.token}});
+      if(result&&result.complete===false){pending.status='awaiting';pending.approved=result.approved??'new';}
+      else{
+        pending.status='done';state.user=null;setCsrf(null);updateAccount();refreshNotifications().catch(()=>{});
+        history.replaceState(null,'',`${location.pathname}#email-verified`);
+        state.page='email-verified';
+        return emailVerifiedView();
+      }
     }catch(error){
       pending.status='error';pending.message=error.message;
       if(error.status===401){state.user=null;setCsrf(null);updateAccount();pending.signIn=true;}
     }
+  }
+  if(pending.status==='awaiting'){
+    const fromNew=pending.approved==='new';
+    return emailVerifyMessage('One more confirmation is needed.',fromNew
+      ?'Your new address is confirmed. Open the link we emailed to your current address to finish the change; until then your current address still signs you in and nothing has been modified.'
+      :'Your current address has approved the change. Open the link we emailed to your new address to finish; the address does not change until that confirmation arrives.',{signIn:false});
   }
   if(pending.status==='confirming')return emailVerifyMessage('Confirming your new email address…','This takes a moment. Refresh the page if the confirmation does not complete.',{signIn:false});
   if(pending.status==='done')return emailVerifiedView();
@@ -493,7 +502,7 @@ async function submit(form){
   if(form.id==='authForm'){
     const body={email:data.email,password:data.password};if(state.authMode==='register'){body.displayName=data.displayName;body.consent=data.consent==='on';}
     const session=await api(`/auth/${state.authMode==='register'?'register':'login'}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);updateAccount();refreshNotifications().catch(()=>{});$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);
-    if(state.emailVerify?.status==='pending'){const target=`#email-verify?token=${state.emailVerify.token}`;if(location.hash===target)return navigate();location.hash=target;return;}
+    if(['pending','awaiting'].includes(state.emailVerify?.status)){const target=`#email-verify?token=${state.emailVerify.token}`;if(location.hash===target)return navigate();location.hash=target;return;}
     const destination=workspaceFor(state.user.role).page;if(location.hash===`#${destination}`)return navigate();location.hash=destination;return;
   }
   if(form.id==='homeSearch'){state.filters={...state.filters,q:data.q,district:data.district,fuel:data.fuel,sort:'price'};state.position=null;state.offset=0;location.hash='prices';return;}

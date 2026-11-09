@@ -67,7 +67,7 @@ Initial operating objectives should be agreed with the organization (for example
 
 ## Email delivery for account verification
 
-MafutaWatch sends transactional email only for the email-address change workflow (a notice to the current address and a single-use confirmation link to the new one). No marketing email is sent. Without configuration the feature is explicitly disabled: `GET /api/v1/me/email/status` reports `{"enabled":false}`, the profile page states that email changes are unavailable, and `POST /me/email/change-request` answers 503 with the same explanation. Nothing is ever sent and no token is created.
+MafutaWatch sends transactional email only for the email-address change workflow (an approval link to the current address and a confirmation link to the new one; the address changes only after both single-use links are consumed). No marketing email is sent. Without configuration the feature is explicitly disabled: `GET /api/v1/me/email/status` reports `{"enabled":false}`, the profile page states that email changes are unavailable, and `POST /me/email/change-request` answers 503 with the same explanation. Nothing is ever sent and no token is created.
 
 Configure one provider through environment variables (never hardcode credentials in the image or repository):
 
@@ -81,7 +81,7 @@ Restart the API after changing `.env`, then verify: `/health/ready` is healthy, 
 
 - Never store `.env`, backups, screenshots of one-time tokens or live credentials in git/issues.
 - Operator credentials can be revoked in the station workspace. Password changes and CLI reprovisioning revoke all sessions/integration credentials for that account. Admin suspension blocks existing sessions on every request.
-- To recover an account, verify ownership through the operator's documented process, set a new `USER_PASSWORD`, use the owner CLI `user <email> <role> <name>`, clear the environment variable and notify the account holder out of band. No fake password-recovery emails are emitted. The only messages the application sends are the real email-change notifications described above, and only when a delivery provider is configured.
+- To recover an account, verify ownership through the operator's documented process, set a new `USER_PASSWORD`, use the owner CLI `user <email> <role> <name>`, clear the environment variable and notify the account holder out of band. No fake password-recovery emails are emitted. The only messages the application sends are the real email-change approval and confirmation links described above, and only when a delivery provider is configured.
 - Rotate runtime/owner/bootstrap database passwords using PostgreSQL role password changes and secret updates; restart dependent connections. Changing `.env` alone does not change an existing DB role password.
 - Review staff membership, case assignment and operator licenses regularly. Non-administrator role changes and explicit station assignments are audited administrator operations; administrator roles remain owner-CLI operations. Revoke station-specific assignments when staff leave a station, and verify identity/appointment before provisioning an inspector or analyst.
 

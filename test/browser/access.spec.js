@@ -135,6 +135,20 @@ test('email address changes state the delivery limitation and verification links
   expect((await(await page.request.get('/api/v1/auth/session')).json()).user.email).toBe('admin@example.test');
 });
 
+test('a first approval explains that the other mailbox must still confirm',async({page})=>{
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Authorized Staff Sign In',exact:true}).click();
+  await page.getByLabel('Email address').fill('admin@example.test');await page.getByLabel('Password',{exact:true}).fill(testPassword);
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'National Command Center',exact:true})).toBeVisible();
+  await page.route('**/api/v1/me/email/confirm',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({complete:false,approved:'new',message:'Approved from the new address.'})}));
+  await page.goto(`/#email-verify?token=${'b'.repeat(64)}`);
+  await expect(page.locator('#view h1')).toHaveText('One more confirmation is needed.');
+  await expect(page.locator('#view .card h2')).toHaveText('One more confirmation is needed.');
+  await expect(page.locator('#view .card')).toContainText('Open the link we emailed to your current address to finish the change');
+  await expect(page.locator('#view .card')).toContainText('your current address still signs you in');
+  await page.locator('#logoutButton').click();
+  await expect(page.locator('#stakeholderAccess')).toBeVisible();
+});
+
 test('operator request continues the citizen application flow without self-promotion',async({page})=>{
   await page.goto('/');await page.locator('#stakeholderAccess').getByRole('link',{name:'Station Operator Access Request'}).click();
   await expect(page.getByRole('heading',{name:'Station Operator Access Request',exact:true})).toBeVisible();
