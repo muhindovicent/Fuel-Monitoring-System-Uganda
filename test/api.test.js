@@ -135,7 +135,7 @@ test('API security, persistence and stakeholder workflows',async t=>{
     const body='<img src=x onerror=alert(1)> information';
     assert.equal((await request('/rooms/1/messages',{as:'alice',method:'POST',body:{body,userId:users.admin.id}})).status,400);
     await request('/rooms/1/messages',{as:'alice',method:'POST',body:{body}});
-    const message=(await request('/rooms/1/messages')).data.items[0];assert.equal(message.user_id,users.alice.id);
+    const message=(await request('/rooms/1/messages')).data.items[0];assert.equal(message.display_name,'Anonymous Member');assert.equal('user_id' in message,false);
     for(let i=0;i<2;i++)assert.equal((await request(`/messages/${message.id}/vote`,{as:'operator',method:'PUT',body:{}})).status,200);
     assert.equal((await request('/rooms/1/messages')).data.items[0].votes,1);
     assert.equal((await request(`/messages/${message.id}/vote`,{as:'alice',method:'PUT',body:{}})).status,400);

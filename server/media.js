@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {fileTypeFromBuffer} from 'file-type';
 import {z} from 'zod';
 import {transaction} from './db.js';
-import {audit,ensure,roles,limit} from './security.js';
+import {audit,ensure,roles,limit,officialAuthor} from './security.js';
 import {assetPattern,secureMediaUrl,videoSource} from '../app/js/media-utils.js';
 
 const admin=roles('admin'),uuid=z.uuid(),imageLimit=10*1024*1024,videoLimit=25*1024*1024;
@@ -79,7 +79,13 @@ export function mediaRoutes(db){
     res.set('Content-Length',String(asset.size)).end(bytes);
   });
   for(const [name,{table,schema,map}]of Object.entries(definitions)){
-    router.get(`/${name}`,async(_req,res)=>res.json({items:(await db.query(name==='news'?`SELECT n.*,u.display_name AS author FROM news_articles n JOIN users u ON u.id=n.created_by WHERE n.status='published' AND coalesce(n.published_at::timestamptz,n.created_at)<=now() ORDER BY coalesce(n.published_at::timestamptz,n.created_at) DESC,n.id LIMIT 100`:`SELECT * FROM ${table} WHERE status='published' ORDER BY featured DESC,priority DESC,created_at DESC,id LIMIT 100`)).rows}));
+    router.get(`/${name}`,async(_req,res)=>{
+      if(name==='news'){
+        const articles=(await db.query(`SELECT n.* FROM news_articles n WHERE ${publicNews} ORDER BY coalesce(n.published_at::timestamptz,n.created_at) DESC,n.id LIMIT 100`)).rows;
+        return res.json({items:articles.map(({created_by:_,...article})=>({...article,author:officialAuthor}))});
+      }
+      res.json({items:(await db.query(`SELECT * FROM ${table} WHERE status='published' ORDER BY featured DESC,priority DESC,created_at DESC,id LIMIT 100`)).rows});
+    });
     router.post(`/${name}`,admin,async(req,res)=>{
       const input=schema.parse(req.body),id=randomUUID();
       if(name==='videos')ensure(input.source&&input.license,400,'Video source attribution and license are required.');

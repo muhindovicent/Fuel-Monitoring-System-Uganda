@@ -8,6 +8,8 @@ export const hash = value => createHash('sha256').update(value).digest('hex');
 export const emailSchema = z.email().max(254).transform(s => s.toLowerCase());
 export const passwordSchema = z.string().min(12).max(128);
 export const userFields = 'id,email,display_name,role,identity_verified';
+export const officialAuthor = 'MafutaWatch Uganda';
+export const publicAuthorName = "CASE WHEN p.privacy->>'publicDisplayName'='true' THEN u.display_name ELSE 'Anonymous Member' END";
 export class HttpError extends Error {
   constructor(status, message, options = {}) { super(message); this.status = status; this.expose = options.expose === true; }
 }

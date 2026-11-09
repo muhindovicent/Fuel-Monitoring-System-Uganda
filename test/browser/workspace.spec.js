@@ -108,3 +108,39 @@ test('operator history and station-map actions stay tied to its assigned station
   await page.keyboard.press('Escape');await page.getByRole('button',{name:'Locate on map',exact:true}).click();
   await expect(page).toHaveURL(/#stations$/);await expect(page.locator('.discovery-card.selected')).toContainText('Shell Nasser Road');
 });
+test('privacy visibility checkbox saves the preference, persists across sign-in and drives public attribution',async({page})=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page);
+  await openWorkspacePage(page,'My profile');
+  const stored=async()=>(await (await page.request.get('/api/v1/me/preferences')).json()).preferences.privacy.publicDisplayName===true;
+  const privacy=page.locator('#preferencesForm details').filter({hasText:'Privacy & visibility'});
+  await privacy.locator('summary').click();
+  const box=page.locator('#preferencesForm [name=publicDisplayName]');
+  await expect(box).toHaveCount(1);
+  await expect(box).toBeChecked({checked:await stored()});
+  const target=!(await stored());
+  await box.setChecked(target);
+  await page.locator('#preferencesForm button[data-action=preferences-save]').first().click();
+  await expect.poll(stored).toBe(target);
+  await page.locator('#preferencesForm details').filter({hasText:'Privacy & visibility'}).locator('summary').click();
+  await expect(box).toBeChecked({checked:target});
+
+  await page.getByRole('button',{name:'Sign out',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();
+  await signIn(page);
+  await openWorkspacePage(page,'My profile');
+  await page.locator('#preferencesForm details').filter({hasText:'Privacy & visibility'}).locator('summary').click();
+  await expect(page.locator('#preferencesForm [name=publicDisplayName]')).toBeChecked({checked:target});
+  expect(await stored()).toBe(target);
+
+  await openWorkspacePage(page,'Driver community');
+  const text='Privacy preference check from the corridor.';
+  const messages=page.locator('#chatMessages');
+  if(!await messages.getByText(text).count()){
+    await page.locator('#messageForm textarea').fill(text);
+    await page.locator('#messageForm button[type=submit]').click();
+    await expect(messages).toContainText(text);
+  }
+  await expect(messages.locator('.message').filter({hasText:text})).toContainText(target?'alice':'Anonymous Member');
+  expect(errors).toEqual([]);
+});

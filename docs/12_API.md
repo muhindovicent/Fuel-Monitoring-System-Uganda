@@ -17,7 +17,7 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/me/email/change-request` | `{newEmail,currentPassword}`; 202 `{accepted,message}` with no token; sends approval + confirmation links; 503 when no delivery provider is configured |
 | POST | `/me/email/confirm` | `{token}`; single use within 24 hours; 200 `{complete:false,approved}` while a second approval is outstanding; 204 changes the address and revokes all sessions |
 | GET | `/stations` | Public `q,fuel,sort=name|price,district,lat,lng,radius(km),limit,offset` |
-| GET | `/stations/:id` | Public station, current prices, history and reviews |
+| GET | `/stations/:id` | Public station, current prices, history and reviews; review authors honor profile privacy |
 | GET | `/operators`, `/summary`, `/caps` | Public directory metadata and live aggregates |
 | POST | `/reports` | Authenticated `{stationId,fuel,price,note?,latitude?,longitude?}`; UUID `Idempotency-Key` required |
 | GET | `/me/reports` | Own observations, paginated |
@@ -40,15 +40,15 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | GET | `/attachments/:id` | Parent access authorization, forced download, no cache |
 | GET, POST | `/tokens` | Own metadata / generate `{stationId,name}`; operator/admin explicitly assigned |
 | DELETE | `/tokens/:id` | Own credential immediate revocation |
-| GET | `/rooms`, `/rooms/:id/messages` | Public corridor register/latest 50 messages |
+| GET | `/rooms`, `/rooms/:id/messages` | Public corridor register/latest 50 messages; authors honor profile privacy and carry no user identifiers |
 | POST | `/rooms/:id/messages` | Authenticated `{body}`; author from session |
 | PUT | `/messages/:id/vote` | Authenticated, unique account vote, no self-vote |
 | DELETE | `/messages/:id` | Inspector/admin hides abusive content and audits decision |
-| GET, POST | `/advisories` | Public read/admin create `{title,body,sourceUrl}` |
+| GET, POST | `/advisories` | Public read (author is MafutaWatch Uganda)/admin create `{title,body,sourceUrl}` |
 | GET, POST | `/town-halls` | Public read/admin create `{title,host,startsAt}` |
 | POST | `/town-halls/:id/questions` | Authenticated `{body}`, before session starts |
 | PATCH | `/questions/:id` | Admin `{answer}` |
-| GET | `/media`, `/videos`, `/news` | Public published gallery, videos and news; news respects publication date |
+| GET | `/media`, `/videos`, `/news` | Public published gallery, videos and news; news respects publication date and reports author MafutaWatch Uganda |
 | POST | `/media`, `/videos`, `/news` | Admin metadata create; existing paths retained; see [Media Management](16_MEDIA_MANAGEMENT.md) |
 | PATCH, DELETE | `/media/:id`, `/videos/:id`, `/news/:id` | Admin edit/status changes or delete; unused uploads are cleaned up |
 | GET | `/admin/media` | Admin published, draft and archived metadata plus upload limits/storage information |
@@ -72,6 +72,10 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/trip` | Public protected write-style request `{distanceKm,kmPerLitre,fuel,from?,to?}`; nullable cost if fresh prices missing |
 
 Pagination defaults to 50, max 100. Entity IDs are UUIDs except integer station/operator/room IDs. Prices are integer UGX/L, 100–100000; bounds are input sanity limits, **not regulatory caps**. Dates use ISO 8601. Coordinates are decimal degrees, and GPS context is not trusted as proof of presence. Health endpoints `/health/live` and `/health/ready` are outside the API prefix.
+
+## Public author visibility
+
+Station reviews and community messages expose only `display_name`, resolved at read time from `user_preferences.privacy.publicDisplayName`: the privacy-preserving default (no stored preference, or `false`) renders `Anonymous Member`, and an explicit `true` renders the member's display name for existing and new content alike. Public message rows carry no `user_id`. Advisories and published news never expose an authoring account: both report `author: "MafutaWatch Uganda"` and news omits `created_by`. Preferences are read and written only through `GET`/`PATCH /me/preferences` for the signed-in account, so one member's choice can never publish another member. Complaint cases, evidence, operator applications, staff directories and audit records keep their authenticated attribution unchanged.
 
 ## Email change verification
 

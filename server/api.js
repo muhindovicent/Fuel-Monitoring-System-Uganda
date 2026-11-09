@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
-import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema, HttpError } from './security.js';
+import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema, HttpError, officialAuthor, publicAuthorName } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
 import { provisionStaffByAdministrator } from './provisioning.js';
 import { mediaRoutes } from './media.js';
@@ -52,7 +52,8 @@ export function apiRoutes(db,config) {
   router.get('/stations/:id',async(req,res)=>{
     const station=(await db.query(`${stationProjection} WHERE s.id=$1 AND s.active`,[positiveId.parse(req.params.id)])).rows[0];
     ensure(station,404,'Station not found.');
-    const reviews=(await db.query(`SELECT r.id,r.rating,r.body,r.created_at,u.display_name FROM reviews r JOIN users u ON u.id=r.user_id WHERE station_id=$1 ORDER BY r.created_at DESC LIMIT 30`,[station.id])).rows;
+    const reviews=(await db.query(`SELECT r.id,r.rating,r.body,r.created_at,${publicAuthorName} AS display_name FROM reviews r
+      JOIN users u ON u.id=r.user_id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE station_id=$1 ORDER BY r.created_at DESC LIMIT 30`,[station.id])).rows;
     const history=(await db.query('SELECT fuel,price,source,created_at FROM price_history WHERE station_id=$1 ORDER BY created_at DESC LIMIT 90',[station.id])).rows;
     res.json({...station,reviews,history});
   });
@@ -443,8 +444,9 @@ export function apiRoutes(db,config) {
   });
   router.get('/rooms',async(_req,res)=>res.json({items:(await db.query('SELECT * FROM rooms ORDER BY name')).rows}));
   router.get('/rooms/:id/messages',async(req,res)=>{
-    res.json({items:(await db.query(`SELECT m.id,m.body,m.created_at,u.display_name,m.user_id,
-      (SELECT count(*)::int FROM message_votes v WHERE v.message_id=m.id) AS votes FROM messages m JOIN users u ON u.id=m.user_id
+    res.json({items:(await db.query(`SELECT m.id,m.body,m.created_at,${publicAuthorName} AS display_name,
+      (SELECT count(*)::int FROM message_votes v WHERE v.message_id=m.id) AS votes FROM messages m
+      JOIN users u ON u.id=m.user_id LEFT JOIN user_preferences p ON p.user_id=u.id
       WHERE m.room_id=$1 AND NOT m.hidden ORDER BY m.created_at DESC LIMIT 50`,[positiveId.parse(req.params.id)])).rows.reverse()});
   });
   router.post('/rooms/:id/messages',requireUser,async(req,res)=>{
@@ -463,7 +465,7 @@ export function apiRoutes(db,config) {
       ensure(result.rowCount,404,'Message not found.');await audit(client,req.user.id,'message.hide',req.params.id);
     });res.status(204).end();
   });
-  router.get('/advisories',async(_req,res)=>res.json({items:(await db.query('SELECT a.*,u.display_name AS author FROM advisories a JOIN users u ON u.id=a.author_id ORDER BY a.created_at DESC LIMIT 100')).rows}));
+  router.get('/advisories',async(_req,res)=>res.json({items:(await db.query(`SELECT a.id,a.title,a.body,a.source_url,a.created_at,'${officialAuthor}' AS author FROM advisories a ORDER BY a.created_at DESC LIMIT 100`)).rows}));
   router.post('/advisories',roles('admin'),async(req,res)=>{
     const input=z.object({title:z.string().trim().min(5).max(200),body:z.string().trim().min(10).max(10000),sourceUrl:httpsUrl}).strict().parse(req.body);
     const id=randomUUID();await transaction(db,async client=>{
