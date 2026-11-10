@@ -24,6 +24,10 @@ export function apiRoutes(db,config) {
   const mail=createMailer(config);
   const verifyLink=token=>`${config.APP_ORIGIN}/#email-verify?token=${token}`;
   const key=req=>uuid.parse(req.get('idempotency-key'));
+  async function alertAdministrators(client,actorId,message){
+    const admins=(await client.query("SELECT id FROM users WHERE role='admin' AND NOT disabled AND id<>$1",[actorId])).rows;
+    for(const admin of admins)await notify(client,admin.id,message,'securityAlerts');
+  }
   async function ticketAccess(client,id,user,lock=false) {
     const ticket=(await client.query(`SELECT * FROM tickets WHERE id=$1 ${lock?'FOR UPDATE':''}`,[uuid.parse(id)])).rows[0];
     ensure(ticket && (ticket.user_id===user.id||['admin','inspector'].includes(user.role)),404,'Ticket not found.');
@@ -195,16 +199,25 @@ export function apiRoutes(db,config) {
     vehicleType:z.enum(['private','boda','taxi','truck','other']).optional(),
     preferredDistrict:z.string().trim().min(2).max(100).optional(),
     notifications:z.object({priceChanges:z.boolean().optional(),reportUpdates:z.boolean().optional(),complaintUpdates:z.boolean().optional(),advisories:z.boolean().optional()}).strict().optional(),
-    privacy:z.object({publicDisplayName:z.boolean().optional()}).strict().optional()
+    privacy:z.object({publicDisplayName:z.boolean().optional()}).strict().optional(),
+    roleSettings:z.record(z.string().max(40),z.unknown()).optional()
   }).strict();
+  const roleSettingShapes={
+    citizen:z.object({}).strict(),
+    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','directory','publishing','media','users','audit']).optional()}).strict(),
+    inspector:z.object({assignedCaseNotifications:z.boolean().optional(),inspectionAlerts:z.boolean().optional(),workspacePreferences:z.boolean().optional(),lastCaseStatus:z.enum(['','open','investigating','dispatched','resolved','closed']).optional(),lastCaseAssignment:z.enum(['mine','all','unassigned']).optional()}).strict(),
+    analyst:z.object({savedChartFilters:z.boolean().optional(),lastFuelView:z.enum(['all','petrol','diesel','kerosene']).optional()}).strict(),
+    operator:z.object({priceUpdateNotifications:z.boolean().optional(),assignedStationDashboard:z.boolean().optional(),lastStationId:positiveId.optional()}).strict()
+  };
 
   router.get('/me/preferences',requireUser,async(req,res)=>{
-    const row=(await db.query('SELECT fuel_type,vehicle_type,preferred_district,notifications,privacy FROM user_preferences WHERE user_id=$1',[req.user.id])).rows[0];
-    res.json({preferences:{fuelType:row?.fuel_type??null,vehicleType:row?.vehicle_type??null,preferredDistrict:row?.preferred_district??null,notifications:row?.notifications??{},privacy:row?.privacy??{}}});
+    const row=(await db.query('SELECT fuel_type,vehicle_type,preferred_district,notifications,privacy,role_settings FROM user_preferences WHERE user_id=$1',[req.user.id])).rows[0];
+    res.json({preferences:{fuelType:row?.fuel_type??null,vehicleType:row?.vehicle_type??null,preferredDistrict:row?.preferred_district??null,notifications:row?.notifications??{},privacy:row?.privacy??{},roleSettings:row?.role_settings??{}}});
   });
 
   router.patch('/me/preferences',requireUser,async(req,res)=>{
     const input=preferencesSchema.parse(req.body);
+    const roleSettings=input.roleSettings===undefined?undefined:roleSettingShapes[req.user.role].parse(input.roleSettings);
     const cols=['user_id'];const vals=[req.user.id];
     const scalar={fuelType:'fuel_type',vehicleType:'vehicle_type',preferredDistrict:'preferred_district'};
     for(const [key,column] of Object.entries(scalar)){
@@ -212,11 +225,12 @@ export function apiRoutes(db,config) {
     }
     if(input.notifications!==undefined){cols.push('notifications');vals.push(JSON.stringify(input.notifications));}
     if(input.privacy!==undefined){cols.push('privacy');vals.push(JSON.stringify(input.privacy));}
+    if(roleSettings!==undefined){cols.push('role_settings');vals.push(JSON.stringify(roleSettings));}
     if(cols.length>1){
-      const updateSets=cols.slice(1).map((c,_)=>`${c}=EXCLUDED.${c}`).join(', ');
+      const updateSets=cols.slice(1).map(c=>`${c}=${['notifications','privacy','role_settings'].includes(c)?`user_preferences.${c} || `:''}EXCLUDED.${c}`).join(', ');
       await db.query(`INSERT INTO user_preferences(${cols.join(',')}) VALUES (${vals.map((_,k)=>`$${k+1}`).join(',')})
         ON CONFLICT(user_id) DO UPDATE SET ${updateSets},updated_at=now()`,vals);
-      await audit(db,req.user.id,'preferences.update',req.user.id,{fuelType:input.fuelType,vehicleType:input.vehicleType,preferredDistrict:input.preferredDistrict,notifications:input.notifications,privacy:input.privacy});
+      await audit(db,req.user.id,'preferences.update',req.user.id,{fuelType:input.fuelType,vehicleType:input.vehicleType,preferredDistrict:input.preferredDistrict,notifications:input.notifications,privacy:input.privacy,roleSettings});
     }
     res.json({saved:true});
   });
@@ -315,7 +329,10 @@ export function apiRoutes(db,config) {
       if(existing) { ensure(existing.station_id===input.stationId&&existing.description===input.description&&existing.category===input.category&&existing.vehicle_type===input.vehicleType&&new Date(existing.incident_date).toISOString().slice(0,10)===input.incidentDate,409,'Submission key already used.');return existing; }
       const id=randomUUID(),reference=`C2G-${new Date().getUTCFullYear()}-${id.slice(0,8).toUpperCase()}`;
       const ticket=(await client.query(`INSERT INTO tickets(id,reference,user_id,station_id,category,vehicle_type,incident_date,description,idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[id,reference,req.user.id,input.stationId,input.category,input.vehicleType,input.incidentDate,input.description,requestKey])).rows[0];
-      await audit(client,req.user.id,'ticket.create',id,{reference}); await notify(client,req.user.id,`Complaint ${reference} received. Track updates in My activity.`); return ticket;
+      await audit(client,req.user.id,'ticket.create',id,{reference}); await notify(client,req.user.id,`Complaint ${reference} received. Track updates in My activity.`,'complaintUpdates');
+      const officers=(await client.query("SELECT id FROM users WHERE role='inspector' AND NOT disabled AND id<>$1",[req.user.id])).rows;
+      for(const officer of officers)await notify(client,officer.id,`New consumer case ${reference} received.`,'inspectionAlerts');
+      return ticket;
     });
     res.status(201).json(result);
   });
@@ -341,7 +358,7 @@ export function apiRoutes(db,config) {
       await client.query('INSERT INTO ticket_messages(id,ticket_id,user_id,body) VALUES ($1,$2,$3,$4)',[randomUUID(),ticket.id,req.user.id,body]);
       if(['admin','inspector'].includes(req.user.role)) {
         await client.query('UPDATE tickets SET first_response_at=coalesce(first_response_at,now()) WHERE id=$1',[ticket.id]);
-        await notify(client,ticket.user_id,`A case officer replied to ${ticket.reference}.`);
+        await notify(client,ticket.user_id,`A case officer replied to ${ticket.reference}.`,'complaintUpdates');
       }
       await audit(client,req.user.id,'ticket.message',ticket.id);
     });res.status(201).json({saved:true});
@@ -358,7 +375,8 @@ export function apiRoutes(db,config) {
       await client.query(`UPDATE tickets SET status=$1,assigned_to=$2,updated_at=now(),version=version+1,
         first_response_at=coalesce(first_response_at,now()),resolved_at=CASE WHEN $1='resolved' THEN now() ELSE resolved_at END WHERE id=$3`,[input.status,assignee,ticket.id]);
       await client.query('INSERT INTO ticket_messages(id,ticket_id,user_id,body) VALUES ($1,$2,$3,$4)',[randomUUID(),ticket.id,req.user.id,`${input.status}: ${input.reason}`]);
-      await notify(client,ticket.user_id,`${ticket.reference}: ${input.status}. ${input.reason}`);
+      await notify(client,ticket.user_id,`${ticket.reference}: ${input.status}. ${input.reason}`,'complaintUpdates');
+      if(assignee!==ticket.assigned_to&&assignee!==req.user.id)await notify(client,assignee,`${ticket.reference} assigned to you. Open Consumer cases to review it.`,'assignedCaseNotifications');
       await audit(client,req.user.id,'ticket.transition',ticket.id,{from:ticket.status,to:input.status,assignee,reason:input.reason});
       return {saved:true};
     });res.json(result);
@@ -471,6 +489,8 @@ export function apiRoutes(db,config) {
     const id=randomUUID();await transaction(db,async client=>{
       await client.query('INSERT INTO advisories(id,author_id,title,body,source_url) VALUES ($1,$2,$3,$4,$5)',[id,req.user.id,input.title,input.body,input.sourceUrl]);
       await audit(client,req.user.id,'advisory.publish',id);
+      const recipients=(await client.query('SELECT id FROM users WHERE NOT disabled AND id<>$1',[req.user.id])).rows;
+      for(const recipient of recipients)await notify(client,recipient.id,`New advisory published: ${input.title}.`,'advisories');
     });res.status(201).json({id});
   });
   router.get('/town-halls',async(_req,res)=>res.json({items:(await db.query(`SELECT h.*,coalesce((SELECT jsonb_agg(jsonb_build_object('id',q.id,'body',q.body,'answer',q.answer)) FROM questions q WHERE q.hall_id=h.id),'[]') AS questions FROM town_halls h ORDER BY h.starts_at DESC LIMIT 30`)).rows}));
@@ -527,7 +547,7 @@ export function apiRoutes(db,config) {
         await publishPrice(client,req.user.id,report.station_id,report.fuel,report.price,'moderator',id);
       }
       await client.query('UPDATE reports SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',[input.status,input.reason,req.user.id,id]);
-      await audit(client,req.user.id,'report.review',id,input);await notify(client,report.user_id,`Price report ${input.status}: ${input.reason}`);
+      await audit(client,req.user.id,'report.review',id,input);await notify(client,report.user_id,`Price report ${input.status}: ${input.reason}`,'reportUpdates');
     });res.json({saved:true});
   });
   router.get('/admin/audit',readers,async(req,res)=>{
@@ -550,6 +570,8 @@ export function apiRoutes(db,config) {
       if(roleChanged&&input.role!=='operator')await client.query('DELETE FROM station_staff WHERE user_id=$1',[id]);
       if(input.disabled||roleChanged){await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[id]);}
       await audit(client,req.user.id,roleChanged?'account.role':'account.review',id,input);
+      await notify(client,id,'An administrator updated your account access or identity verification. Review your account details.');
+      await alertAdministrators(client,req.user.id,`Security alert: an administrator updated account ${id}.`);
     });res.json({saved:true});
   });
   router.post('/admin/users/:id/password',roles('admin'),async(req,res)=>{
@@ -567,12 +589,14 @@ export function apiRoutes(db,config) {
       await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[id]);
       await audit(client,admin.id,'account.password_reset',id,{reason:input.reason});
       await notify(client,id,'An administrator reset your MafutaWatch password. Sign in with the temporary password and change it immediately.');
+      await alertAdministrators(client,admin.id,`Security alert: an administrator reset the password for account ${id}.`);
     });res.json({saved:true});
   });
   router.post('/admin/staff',roles('admin'),async(req,res)=>{
     await limit(db,`staff-provision-manual:${req.user.id}`,10,3600);
     const input=z.object({email:z.email().max(254),displayName:z.string().trim().min(2).max(80),password:z.string().min(12).max(128),role:z.enum(['inspector','analyst']),administratorPassword:z.string().min(1).max(128),identityVerified:z.literal(true),reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
     const account=await provisionStaffByAdministrator(db,{account:{email:input.email,displayName:input.displayName,password:input.password,role:input.role},administrator:{id:req.user.id,password:input.administratorPassword},reason:input.reason});
+    await alertAdministrators(db,req.user.id,`Security alert: a ${account.role} account was provisioned (${account.id}).`);
     res.status(201).json({id:account.id,role:account.role});
   });
   router.get('/admin/operator-accounts',roles('admin'),async(_req,res)=>{

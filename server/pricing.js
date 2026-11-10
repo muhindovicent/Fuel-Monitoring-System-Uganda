@@ -15,10 +15,17 @@ export async function publishPrice(db, actor, stationId, fuel, price, source, re
   await audit(db,actor,'price.publish',stationId,{fuel,previous:previous?.price ?? null,price,source,reportId});
   if (previous?.price !== price) {
     const subscribers = (await db.query('SELECT user_id FROM subscriptions WHERE station_id=$1',[stationId])).rows;
-    for (const sub of subscribers) await notify(db,sub.user_id,`Station #${stationId}: ${fuel} updated to UGX ${price.toLocaleString('en-UG')}/L (${source}).`);
+    for (const sub of subscribers) await notify(db,sub.user_id,`Station #${stationId}: ${fuel} updated to UGX ${price.toLocaleString('en-UG')}/L (${source}).`,'priceChanges');
+    const staff=(await db.query('SELECT ss.user_id FROM station_staff ss JOIN users u ON u.id=ss.user_id WHERE ss.station_id=$1 AND NOT u.disabled AND u.role=\'operator\' AND u.id<>$2',[stationId,actor])).rows;
+    for(const member of staff)await notify(db,member.user_id,`Station #${stationId}: ${fuel} published at UGX ${price.toLocaleString('en-UG')}/L (${source}).`,'priceUpdateNotifications');
   }
 }
-export async function notify(db,userId,message) {
+export async function notify(db,userId,message,pref) {
+  if(pref!==undefined){
+    const row=(await db.query('SELECT notifications,role_settings FROM user_preferences WHERE user_id=$1',[userId])).rows[0];
+    const flags={...row?.notifications,...row?.role_settings};
+    if(flags[pref]===false)return;
+  }
   await db.query('INSERT INTO notifications(id,user_id,message) VALUES ($1,$2,$3)',[randomUUID(),userId,message]);
 }
 
@@ -52,7 +59,7 @@ export async function submitPriceReport(db, user, input, idempotencyKey) {
       const median = ordered.length%2 ? ordered[mid] : Math.round((ordered[mid-1]+ordered[mid])/2);
       for (const candidate of candidates) {
         await db.query("UPDATE reports SET status='verified',reviewed_at=now(),decision_reason='Independent verified-citizen consensus' WHERE id=$1",[candidate.id]);
-        await notify(db,candidate.user_id,'Your price report was verified by independent citizen consensus.');
+        await notify(db,candidate.user_id,'Your price report was verified by independent citizen consensus.','reportUpdates');
       }
       await publishPrice(db,user.id,input.stationId,input.fuel,median,'consensus',id);
     }

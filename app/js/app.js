@@ -33,7 +33,7 @@ function updateAccount(){
   $('#accountButton').dataset.action=state.user?'account':'auth';$('#logoutButton').hidden=!state.user;
   $('[data-page="admin"]').hidden=!['admin','inspector','analyst'].includes(state.user?.role);
   $('[data-page="operator"]').hidden=Boolean(state.user)&&!['citizen','operator','admin'].includes(state.user.role);
-  if(state.workspaceRole!==state.user?.role){state.adminTab=state.user?.role==='analyst'?'intelligence':'dashboard';state.caseAssignment=state.user?.role==='inspector'?'mine':'all';state.caseStatus='';state.workspaceRole=state.user?.role;}
+  if(state.workspaceRole!==state.user?.role){state.adminTab=state.user?.role==='analyst'?'intelligence':'dashboard';state.caseAssignment=state.user?.role==='inspector'?'mine':'all';state.caseStatus='';state.analyticsFuel=null;state.operatorStationId=null;state.workspaceRole=state.user?.role;applySavedWorkspacePreferences();}
   $('#registerButton').hidden=Boolean(state.user);
   const workspace=workspaceFor(state.user?.role);
   $('#workspaceLink').href=`#${workspace.page}`;
@@ -46,7 +46,26 @@ function updateAccount(){
   $('#workspaceName').textContent=state.user?.display_name||'Welcome to MafutaWatch';
   $('#workspaceIdentity').textContent=state.user?`${state.user.role} account`:'Sign in to contribute';
   $('#accountAvatar').textContent=(state.user?.display_name||'M').slice(0,1).toUpperCase();
-  if(!state.user){state.notifications=[];updateNotificationBadge();}
+  if(!state.user){state.preferences=null;state.notifications=[];updateNotificationBadge();}
+}
+function applySavedWorkspacePreferences(){
+  const settings=state.preferences?.roleSettings??{},role=state.user?.role;
+  if(role==='admin'&&settings.dashboardPreferences&&settings.lastAdminTab)state.adminTab=settings.lastAdminTab;
+  if(role==='inspector'&&settings.workspacePreferences){if(settings.lastCaseStatus!==undefined)state.caseStatus=settings.lastCaseStatus;if(settings.lastCaseAssignment)state.caseAssignment=settings.lastCaseAssignment;}
+  if(role==='analyst'&&settings.savedChartFilters&&settings.lastFuelView)state.analyticsFuel=settings.lastFuelView;
+  if(role==='operator'&&settings.assignedStationDashboard&&settings.lastStationId)state.operatorStationId=settings.lastStationId;
+}
+async function loadPreferences(){
+  state.preferences=null;if(!state.user)return;
+  const userId=state.user.id,result=await api('/me/preferences');
+  if(state.user?.id===userId)state.preferences=result.preferences;
+}
+async function rememberSetting(role,partial){
+  const toggle={admin:'dashboardPreferences',inspector:'workspacePreferences',analyst:'savedChartFilters',operator:'assignedStationDashboard'}[role];
+  if(state.user?.role!==role||state.preferences?.roleSettings?.[toggle]!==true)return;
+  const userId=state.user.id;
+  await api('/me/preferences',{method:'PATCH',body:{roleSettings:partial}});
+  if(state.user?.id===userId)state.preferences.roleSettings={...state.preferences.roleSettings,...partial};
 }
 function updateNotificationBadge(){const unread=(state.notifications||[]).filter(n=>!n.read_at).length;$('#notificationCount').textContent=unread;$('#notificationCount').hidden=!unread;$('#notificationButton').setAttribute('aria-label',unread?`Notifications, ${unread} unread in the latest 100`:'Notifications');}
 async function refreshNotifications(){if(!state.user)return;const userId=state.user.id;const result=await api('/me/notifications');if(state.user?.id!==userId)return;state.notifications=result.items;updateNotificationBadge();}
@@ -115,7 +134,7 @@ function contactView(){return `${heading('Find the right way to get help.','Use 
 function creditsView(){return `${heading('A real place. A credited photograph.','Documentary images of Ugandan transport and the fuel sector.','PHOTOGRAPHY CREDITS')}<div class="grid"><article class="card credit-card"><img src="/assets/kampala-road.jpg" alt="Evening traffic on Kampala Road" width="1600" height="1067" loading="lazy"><h2>Evening traffic jam setting in on Kampala road 05</h2><p>Kyakwera · 20 February 2020 · Kampala, Uganda.</p><p>Original JPEG retained; responsive cropping and a separate gradient overlay are used in the hero. This photograph remains under CC BY-SA 4.0.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Evening_traffic_jam_setting_in_on_Kampala_road_05.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0 ↗</a></div></article><article class="card credit-card"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town" width="1400" height="1050" loading="lazy"><h2>Agaba petrol station in Kabale town</h2><p>Owobusingye · 24 August 2025 · Kabale, Uganda.</p><p>Original JPEG retained, responsively cropped in the citizen-services feature. Depiction does not imply affiliation, a live price observation or endorsement.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Agaba_petrol_station_in_Kabale_town.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0 ↗</a></div></article></div>`;}
 async function profileView(){
   if(!state.user)return loginCard('Sign in to view your profile.');
-  let profile,preferences,subs,emailChange;try{const [p,pr,s,ec]=await Promise.all([api('/me/profile'),api('/me/preferences'),api('/me/subscriptions'),api('/me/email/status').catch(()=>null)]);profile=p;preferences=pr.preferences??{};subs=s.items??[];emailChange=ec;}catch(error){return `<div class="empty">Unable to load your profile. ${error.message}</div>`;}
+  let profile,preferences,subs,emailChange;try{const [p,pr,s,ec]=await Promise.all([api('/me/profile'),api('/me/preferences'),api('/me/subscriptions'),api('/me/email/status').catch(()=>null)]);profile=p;preferences=pr.preferences??{};state.preferences=preferences;preferences.notifications={priceChanges:true,reportUpdates:true,complaintUpdates:true,advisories:true,...preferences.notifications};subs=s.items??[];emailChange=ec;}catch(error){return `<div class="empty">Unable to load your profile. ${error.message}</div>`;}
   const initials=(profile.displayName??'U').split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
   const avatarImg=profile.avatarUrl?`<img src="${esc(profile.avatarUrl)}" alt="Profile picture" class="avatar">`:`<div class="avatar placeholder">${esc(initials)}</div>`;
   let stationsHtml;
@@ -126,14 +145,17 @@ async function profileView(){
 window.__avatarPreview=function(input){const preview=$('#avatarPreview');if(input.files&&input.files[0]){preview.src=URL.createObjectURL(input.files[0]);preview.hidden=false;}else{preview.hidden=true;}};
 function roleSettingsHtml(emailChange){
   const role=state.user?.role;if(role==='citizen')return'';
+  const settings=state.preferences?.roleSettings??{};
+  const check=(key,label,defaultOn=false)=>`<label class="check"><input name="${key}" type="checkbox"${(settings[key]??defaultOn)?' checked':''}> ${label}</label>`;
+  const card=(title,controls,description)=>`<section class="card"><h2>${title}</h2><form id="roleSettingsForm">${controls}<p class="small">${description}</p><div class="actions"><button class="primary" data-action="role-settings-save">Save settings</button><span id="roleSettingsStatus" class="small" role="status"></span></div></form></section>`;
   const emailRow=`<div class="actions" style="margin-top:10px;"><button class="primary" data-action="profile-email-save">Save email</button><span id="emailSaveStatus" class="small"></span></div>`;
   const common=emailChange?.enabled
     ?`<section class="card"><h2>Email address</h2><p class="small">Changing your email requires approval from both mailboxes: one single-use link is sent to your current address and another to the new one. Your address does not change until both are confirmed, each link expires in 24 hours, and confirming the second link signs out every session.</p><form id="profileEmailForm">${field('New email address','email',{type:'email',maxlength:254})}${field('Current password','emailPassword',{type:'password',maxlength:128})}${emailRow}</form></section>`
     :`<section class="card"><h2>Email address</h2><p class="banner warning" role="status">Email changes are unavailable on this deployment: an email delivery provider is not configured, so no verification link can be sent. Your address cannot be changed from the app right now. Contact the operator of this deployment to update it.</p></section>`;
-  if(role==='admin')return `${common}<section class="card"><h2>Administrator settings</h2><label class="check"><input name="securityAlerts" type="checkbox"> Security alerts</label><label class="check"><input name="adminActivityHistory" type="checkbox"> Administrative activity history</label><label class="check"><input name="dashboardPreferences" type="checkbox"> Dashboard preferences</label><p class="small">These settings control which administrative notifications and dashboard customizations you receive.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save administrator settings</button></div></section>`;
-  if(role==='inspector')return `${common}<section class="card"><h2>Inspector settings</h2><label class="check"><input name="assignedCaseNotifications" type="checkbox"> Assigned-case notifications</label><label class="check"><input name="inspectionAlerts" type="checkbox"> Inspection alerts</label><label class="check"><input name="workspacePreferences" type="checkbox"> Workspace preferences</label><p class="small">These settings control which case and inspection notifications you receive and how your investigation workspace is configured.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save inspector settings</button></div></section>`;
-  if(role==='analyst')return `${common}<section class="card"><h2>Analyst settings</h2><label class="check"><input name="savedChartFilters" type="checkbox"> Saved chart filters</label><label class="check"><input name="reportingPreferences" type="checkbox"> Reporting preferences</label><label class="check"><input name="dashboardCustomization" type="checkbox"> Dashboard customization</label><p class="small">These settings control which intelligence dashboards and chart configurations are saved for your analyst workspace.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save analyst settings</button></div></section>`;
-  if(role==='operator')return `${common}<section class="card"><h2>Station operator settings</h2><label class="check"><input name="priceUpdateNotifications" type="checkbox"> Fuel-price update notifications</label><label class="check"><input name="assignedStationDashboard" type="checkbox"> Assigned-station dashboard preferences</label><label class="check"><input name="accountSettings" type="checkbox"> Account settings</label><p class="small">These settings control which station and price notifications you receive and how your operator workspace is configured.</p><div class="actions"><button class="primary" data-action="role-settings-save">Save operator settings</button></div></section>`;
+  if(role==='admin')return common+card('Administrator settings',check('securityAlerts','Security alerts',true)+check('dashboardPreferences','Remember my selected operations tab'),'Security alerts cover account changes, password resets and staff provisioning by other administrators. Essential notices to the affected account are always delivered. Remembering restores your selected operations tab after sign-in.');
+  if(role==='inspector')return common+card('Inspector settings',check('assignedCaseNotifications','Assigned-case notifications',true)+check('inspectionAlerts','Inspection alerts',true)+check('workspacePreferences','Remember my case queue filters'),'Receive alerts when another officer assigns you a case or a new consumer case arrives. Remembering restores your case status and assignment filters after sign-in.');
+  if(role==='analyst')return common+card('Analyst settings',check('savedChartFilters','Remember my applied chart fuel view'),'Restore your last applied intelligence fuel view after sign-in.');
+  if(role==='operator')return common+card('Station operator settings',check('priceUpdateNotifications','Fuel-price update notifications',true)+check('assignedStationDashboard','Remember my selected station'),'Receive price changes published by others at your assigned stations. Remembering restores your station selection after sign-in; it does not grant station access.');
   return '';
 }
 function capTable(items){return items.length?`<div class="table-wrap"><table><thead><tr><th>District</th><th>Fuel</th><th>Maximum UGX/L</th><th>Expires (EAT)</th><th>Source</th></tr></thead><tbody>${items.map(c=>`<tr><td>${esc(c.district)}</td><td>${esc(c.fuel)}</td><td>${money(c.price)}</td><td>${date(c.effective_until)}</td><td><a href="${esc(c.source_url)}" target="_blank" rel="noopener noreferrer">View directive ↗</a></td></tr>`).join('')}</tbody></table></div>`:empty('No currently effective directives have been published.');}
@@ -425,7 +447,7 @@ async function action(button){
   if(kind==='activity-page'){state.activityOffset=Number(button.dataset.offset);return navigate();}
   if(kind==='admin-page'){state.adminOffset=Number(button.dataset.offset);return navigate();}
   if(kind==='room'){state.room=Number(id);return navigate();}
-  if(kind==='admin-tab'){state.adminTab=button.dataset.tab;if(button.dataset.assignment)state.caseAssignment=button.dataset.assignment;state.adminOffset=0;return navigate();}
+  if(kind==='admin-tab'){state.adminTab=button.dataset.tab;if(button.dataset.assignment)state.caseAssignment=button.dataset.assignment;state.adminOffset=0;await rememberSetting('admin',{lastAdminTab:state.adminTab});return navigate();}
   if(kind==='carousel-prev'){state.carouselIndex=(state.carouselIndex||0)-1;renderCarousel();return;}
   if(kind==='carousel-next'){state.carouselIndex=(state.carouselIndex||0)+1;renderCarousel();return;}
   if(kind==='carousel-dot'){state.carouselIndex=Number(button.dataset.index);renderCarousel();return;}
@@ -482,7 +504,12 @@ async function action(button){
     const notifications={priceChanges:!!form.priceChanges.checked,reportUpdates:!!form.reportUpdates.checked,complaintUpdates:!!form.complaintUpdates.checked,advisories:!!form.advisories.checked};
     const privacy={publicDisplayName:!!form.publicDisplayName.checked};
     await api('/me/preferences',{method:'PATCH',body:{fuelType:data.fuelType||undefined,vehicleType:data.vehicleType||undefined,preferredDistrict:data.preferredDistrict?.trim()||undefined,notifications,privacy}});
-    $('#prefSaveStatus').textContent='Saved.';setTimeout(()=>$('#prefSaveStatus').textContent='',3000);return navigate();
+    await loadPreferences();toast('Preferences saved.');return navigate();
+  }
+  if(kind==='role-settings-save'){
+    const roleSettings=Object.fromEntries([...$('#roleSettingsForm').querySelectorAll('input[type=checkbox]')].map(input=>[input.name,input.checked]));
+    await api('/me/preferences',{method:'PATCH',body:{roleSettings}});
+    await loadPreferences();$('#roleSettingsStatus').textContent='Saved.';return;
   }
   if(kind==='password-save'){
     const form=$('#profilePasswordForm');const data=Object.fromEntries(new FormData(form));
@@ -501,14 +528,14 @@ async function submit(form){
   const data=Object.fromEntries(new FormData(form));const number=name=>Number(data[name]);
   if(form.id==='authForm'){
     const body={email:data.email,password:data.password};if(state.authMode==='register'){body.displayName=data.displayName;body.consent=data.consent==='on';}
-    const session=await api(`/auth/${state.authMode==='register'?'register':'login'}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);updateAccount();refreshNotifications().catch(()=>{});$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);
+    const session=await api(`/auth/${state.authMode==='register'?'register':'login'}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);await loadPreferences();updateAccount();applySavedWorkspacePreferences();refreshNotifications().catch(()=>{});$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);
     if(['pending','awaiting'].includes(state.emailVerify?.status)){const target=`#email-verify?token=${state.emailVerify.token}`;if(location.hash===target)return navigate();location.hash=target;return;}
     const destination=workspaceFor(state.user.role).page;if(location.hash===`#${destination}`)return navigate();location.hash=destination;return;
   }
   if(form.id==='homeSearch'){state.filters={...state.filters,q:data.q,district:data.district,fuel:data.fuel,sort:'price'};state.position=null;state.offset=0;location.hash='prices';return;}
   if(form.id==='stationFilter'){state.filters={q:data.q,district:data.district,fuel:data.fuel,sort:data.sort,radius:data.radius};state.offset=0;return navigate();}
-  if(form.id==='intelligenceFilter'){state.analyticsFuel=data.fuelView;return navigate();}
-  if(form.id==='caseQueueFilter'){state.caseStatus=data.caseStatus;state.caseAssignment=data.caseAssignment;state.adminOffset=0;return navigate();}
+  if(form.id==='intelligenceFilter'){state.analyticsFuel=data.fuelView;await rememberSetting('analyst',{lastFuelView:data.fuelView});return navigate();}
+  if(form.id==='caseQueueFilter'){state.caseStatus=data.caseStatus;state.caseAssignment=data.caseAssignment;state.adminOffset=0;await rememberSetting('inspector',{lastCaseStatus:data.caseStatus,lastCaseAssignment:data.caseAssignment});return navigate();}
   if(form.id==='tripForm'){
     const result=await api('/trip',{method:'POST',body:{distanceKm:number('distanceKm'),kmPerLitre:number('kmPerLitre'),fuel:data.fuel}});
     $('#tripResult').innerHTML=`<div class="eyebrow">INDICATIVE TRIP COST</div><div class="result-value">${money(result.cost)}</div><p>${result.distanceKm.toFixed(1)} km · ${result.litres.toFixed(1)} litres of ${esc(data.fuel)}</p><p>Fresh average: ${money(result.averagePrice)} per litre</p><p class="small">${esc(result.method)}. ${result.cost==null?'No fresh operational prices are available for this fuel.':'Allow for traffic, detours and your actual consumption.'}</p>`;return;
@@ -576,6 +603,7 @@ document.addEventListener('submit',async event=>{
   finally{delete form.dataset.busy;if(button){button.disabled=false;button.textContent=text;}}
 });
 document.addEventListener('change',event=>{
+  if(event.target.matches('#operatorPrice [name=stationId]'))rememberSetting('operator',{lastStationId:Number(event.target.value)}).catch(showError);
   if(event.target.closest('#operatorPrice')){const form=$('#operatorPrice');const station=state.assigned.find(s=>s.id===Number(form.elements.stationId.value));state.operatorStationId=station?.id;const p=station?.prices.find(p=>p.fuel===form.elements.fuel.value);$('#currentPrice').textContent=p?`Current ${p.fuel}: ${money(p.price)} · ${p.source} · ${date(p.updated_at)}`:'No current published price for this fuel.';if($('#operatorStationOverview'))$('#operatorStationOverview').innerHTML=operatorProfile(station);}
 });
 window.addEventListener('hashchange',()=>{if($('#authDialog').open)$('#authDialog').close();if($('#detailDialog').open)$('#detailDialog').close();navigate();});
@@ -611,7 +639,7 @@ $('#mediaLightbox').addEventListener('close',()=>{$('#lightboxContent').replaceC
 async function initialize(){
   $('#copyrightYear').textContent=new Date().getFullYear();
   decorateWorkspaceNav();
-  try{const session=await api('/auth/session');state.user=session.user;setCsrf(session.csrfToken);updateAccount();}catch(error){showError(error);}
+  try{const session=await api('/auth/session');state.user=session.user;setCsrf(session.csrfToken);await loadPreferences();updateAccount();}catch(error){showError(error);}
   await navigate();
   refreshNotifications().catch(()=>{});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});

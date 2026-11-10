@@ -317,7 +317,7 @@ test('Citizen profile, preferences, avatars and account security',async t=>{
 
   await t.test('preferences are persisted and partially updated',async()=>{
     const get=await request('/me/preferences',{as:'alice'});assert.equal(get.status,200);
-    assert.deepEqual(get.data.preferences,{fuelType:null,vehicleType:null,preferredDistrict:null,notifications:{},privacy:{}});
+    assert.deepEqual(get.data.preferences,{fuelType:null,vehicleType:null,preferredDistrict:null,notifications:{},privacy:{},roleSettings:{}});
     const set=await request('/me/preferences',{as:'alice',method:'PATCH',body:{fuelType:'diesel',vehicleType:'boda',preferredDistrict:'Jinja',notifications:{priceChanges:true},privacy:{publicDisplayName:false}}});
     assert.equal(set.status,200);assert.equal(set.data.saved,true);
     const again=await request('/me/preferences',{as:'alice'});assert.equal(again.data.preferences.fuelType,'diesel');assert.equal(again.data.preferences.vehicleType,'boda');

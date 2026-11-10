@@ -4,6 +4,12 @@ import {openWorkspacePage} from './helpers.js';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 
+async function patchPreferences(page,data){
+  const session=await (await page.request.get('/api/v1/auth/session')).json();
+  const response=await page.request.patch('/api/v1/me/preferences',{headers:{Origin:new URL(page.url()).origin,'X-Requested-With':'MafutaWatch','X-CSRF-Token':session.csrfToken},data});
+  expect(response.status()).toBe(200);
+}
+
 async function signIn(page,who='alice'){
   await page.goto('/#activity');await page.locator('#accountButton').click();
   await page.getByLabel('Email address').fill(`${who}@example.test`);await page.getByLabel('Password',{exact:true}).fill(testPassword);
@@ -144,3 +150,75 @@ test('privacy visibility checkbox saves the preference, persists across sign-in 
   await expect(messages.locator('.message').filter({hasText:text})).toContainText(target?'alice':'Anonymous Member');
   expect(errors).toEqual([]);
 });
+
+for(const [who,key,defaultOn] of [['alice','complaintUpdates',true],['admin','securityAlerts',true],['inspector','assignedCaseNotifications',true],['analyst','savedChartFilters',false],['operator','priceUpdateNotifications',true]]){
+  test(`${who} preferences survive save, refresh and re-login`,async({page})=>{
+    await signIn(page,who);
+    const section=who==='alice'?'notifications':'roleSettings',form=who==='alice'?'#preferencesForm':'#roleSettingsForm';
+    const stored=async()=>(await (await page.request.get('/api/v1/me/preferences')).json()).preferences[section][key]??defaultOn;
+    const original=await stored(),target=!original;
+    const open=async()=>{
+      await openWorkspacePage(page,'My profile');
+      if(who==='alice')await page.locator(`${form} details`).filter({has:page.locator(`[name=${key}]`)}).locator('summary').click();
+    };
+    try{
+      await open();await expect(page.locator(`${form} [name=${key}]`)).toBeChecked({checked:original});
+      await page.locator(`${form} [name=${key}]`).setChecked(target);
+      await page.locator(`${form} button[data-action=${who==='alice'?'preferences-save':'role-settings-save'}]`).first().click();
+      await expect.poll(stored).toBe(target);
+      await page.reload();await open();await expect(page.locator(`${form} [name=${key}]`)).toBeChecked({checked:target});
+      await page.getByRole('button',{name:'Sign out',exact:true}).click();await signIn(page,who);
+      await open();await expect(page.locator(`${form} [name=${key}]`)).toBeChecked({checked:target});
+      expect(await stored()).toBe(target);
+    }finally{await patchPreferences(page,{[section]:{[key]:original}});}
+  });
+}
+
+for(const [who,toggle] of [['admin','dashboardPreferences'],['inspector','workspacePreferences'],['analyst','savedChartFilters'],['operator','assignedStationDashboard']]){
+  test(`${who} remembered workspace choices restore and respect the off switch`,async({page,request,baseURL})=>{
+    await signIn(page,who);
+    const original=(await (await page.request.get('/api/v1/me/preferences')).json()).preferences.roleSettings;
+    let adminHeaders,operatorId;
+    if(who==='operator'){
+      const session=await (await page.request.get('/api/v1/auth/session')).json();operatorId=session.user.id;
+      const login=await request.post('/api/v1/auth/login',{headers:{Origin:baseURL,'X-Requested-With':'MafutaWatch'},data:{email:'admin@example.test',password:testPassword}});expect(login.status()).toBe(200);
+      adminHeaders={Origin:baseURL,'X-Requested-With':'MafutaWatch','X-CSRF-Token':(await login.json()).csrfToken};
+      const assigned=await request.post('/api/v1/admin/stations/2/staff',{headers:adminHeaders,data:{userId:operatorId,reason:'Additional station for preference restoration test.'}});expect(assigned.status()).toBe(201);
+    }
+    const workspace=()=>openWorkspacePage(page,who==='operator'?'Station workspace':'Operations dashboard');
+    const verify=async remembered=>{
+      await workspace();
+      if(who==='admin')await expect(page.locator('.workspace-tabs button.active')).toHaveAttribute('data-tab',remembered?'audit':'dashboard');
+      if(who==='inspector'){
+        await page.getByRole('button',{name:'Consumer cases',exact:true}).click();
+        await expect(page.locator('#caseQueueFilter [name=caseStatus]')).toHaveValue(remembered?'open':'');
+        await expect(page.locator('#caseQueueFilter [name=caseAssignment]')).toHaveValue(remembered?'unassigned':'mine');
+      }
+      if(who==='analyst')await expect(page.locator('#intelligenceFilter [name=fuelView]')).toHaveValue(remembered?'diesel':'all');
+      if(who==='operator')await expect(page.locator('#operatorPrice [name=stationId]')).toHaveValue(remembered?'1':'2');
+    };
+    try{
+      await openWorkspacePage(page,'My profile');await page.locator(`#roleSettingsForm [name=${toggle}]`).check();
+      await page.locator('#roleSettingsForm [data-action=role-settings-save]').click();await expect(page.locator('#roleSettingsStatus')).toHaveText('Saved.');
+      await workspace();
+      let remembered;
+      if(who==='admin'){await page.getByRole('button',{name:'Audit trail',exact:true}).click();remembered={lastAdminTab:'audit'};}
+      if(who==='inspector'){
+        await page.getByRole('button',{name:'Consumer cases',exact:true}).click();
+        await page.locator('#caseQueueFilter [name=caseStatus]').selectOption('open');await page.locator('#caseQueueFilter [name=caseAssignment]').selectOption('unassigned');
+        await page.getByRole('button',{name:'Apply case filters'}).click();remembered={lastCaseStatus:'open',lastCaseAssignment:'unassigned'};
+      }
+      if(who==='analyst'){await page.locator('#intelligenceFilter [name=fuelView]').selectOption('diesel');await page.getByRole('button',{name:'Apply fuel view'}).click();remembered={lastFuelView:'diesel'};}
+      if(who==='operator'){await page.locator('#operatorPrice [name=stationId]').selectOption('1');remembered={lastStationId:1};}
+      await expect.poll(async()=>(await (await page.request.get('/api/v1/me/preferences')).json()).preferences.roleSettings).toMatchObject(remembered);
+      await page.reload();await verify(true);
+      await page.getByRole('button',{name:'Sign out',exact:true}).click();await signIn(page,who);await verify(true);
+      await openWorkspacePage(page,'My profile');await page.locator(`#roleSettingsForm [name=${toggle}]`).uncheck();
+      await page.locator('#roleSettingsForm [data-action=role-settings-save]').click();await expect(page.locator('#roleSettingsStatus')).toHaveText('Saved.');
+      await page.reload();await verify(false);
+    }finally{
+      await patchPreferences(page,{roleSettings:{...original,[toggle]:original[toggle]??false}});
+      if(operatorId){const removed=await request.delete(`/api/v1/admin/stations/2/staff/${operatorId}`,{headers:adminHeaders});expect(removed.status()).toBe(204);}
+    }
+  });
+}

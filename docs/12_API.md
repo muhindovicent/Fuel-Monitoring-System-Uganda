@@ -27,6 +27,7 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | GET | `/me/subscriptions` | Own followed stations |
 | PUT | `/stations/:id/subscription` | `{enabled:true|false}` |
 | GET | `/me/notifications` | Latest own 100 in-app notifications |
+| GET, PATCH | `/me/preferences` | Own profile preferences, notification choices, privacy and role-specific workspace settings; partial JSON objects merge by key |
 | POST | `/me/notifications/read` | `{ids:[UUID...]}`; modifies own records only |
 | POST | `/tickets` | `{stationId,category,vehicleType,incidentDate,description}`; UUID `Idempotency-Key` required |
 | GET | `/tickets` | Own cases; inspector/admin case queue; `status,limit,offset` |
@@ -76,6 +77,24 @@ Pagination defaults to 50, max 100. Entity IDs are UUIDs except integer station/
 ## Public author visibility
 
 Station reviews and community messages expose only `display_name`, resolved at read time from `user_preferences.privacy.publicDisplayName`: the privacy-preserving default (no stored preference, or `false`) renders `Anonymous Member`, and an explicit `true` renders the member's display name for existing and new content alike. Public message rows carry no `user_id`. Advisories and published news never expose an authoring account: both report `author: "MafutaWatch Uganda"` and news omits `created_by`. Preferences are read and written only through `GET`/`PATCH /me/preferences` for the signed-in account, so one member's choice can never publish another member. Complaint cases, evidence, operator applications, staff directories and audit records keep their authenticated attribution unchanged.
+
+## Account preferences
+
+`GET /me/preferences` returns `{preferences:{fuelType,vehicleType,preferredDistrict,notifications,privacy,roleSettings}}`. PATCH accepts any subset of those fields. Notification, privacy and role-setting objects merge atomically by key, preserving unrelated choices. Unknown keys, other roles' settings, and authority-changing fields are rejected. Station selection never grants access; the workspace still resolves it against assigned stations.
+
+Optional in-app notifications default **on** and are skipped only for an explicit `false` at event creation time. Existing notifications are retained. `notifications` supports `priceChanges` (followed stations), `reportUpdates` (moderation and consensus), `complaintUpdates` (receipt, officer replies and transitions), and `advisories` (new publications, excluding the publisher).
+
+Role settings:
+
+| Role | Notification controls | Remembered workspace controls (default off) |
+|---|---|---|
+| Administrator | `securityAlerts`: other administrators' account changes, password resets and staff provisioning | `dashboardPreferences`, `lastAdminTab` |
+| Inspector | `assignedCaseNotifications`: assignment by another officer; `inspectionAlerts`: new consumer cases | `workspacePreferences`, `lastCaseStatus`, `lastCaseAssignment` |
+| Analyst | None | `savedChartFilters`, `lastFuelView` (`all`, `petrol`, `diesel`, `kerosene`) |
+| Operator | `priceUpdateNotifications`: others' price publications at assigned stations | `assignedStationDashboard`, `lastStationId` |
+| Citizen | Common notification controls above | None in `roleSettings` |
+
+Remembered values are restored on refresh/sign-in only when their corresponding toggle is enabled. Essential notices to affected accounts (administrative account changes, password resets, access decisions and station access changes) bypass optional preferences. Email verification and security delivery are independent of these in-app notification settings.
 
 ## Email change verification
 
