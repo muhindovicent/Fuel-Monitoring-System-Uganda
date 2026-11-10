@@ -271,6 +271,14 @@ export function apiRoutes(db,config) {
       LIMIT $2 OFFSET $3`,[status??null,limit,offset])).rows});
   });
 
+  router.get('/admin/deletion-requests/:id',roles('admin'),async(req,res)=>{
+    const id=uuid.parse(req.params.id);
+    const rows=(await db.query(`SELECT d.id,d.status,d.reason,d.user_response,d.review_note,d.created_at,d.reviewed_at,
+      u.id AS user_id,u.email,u.display_name,u.role FROM deletion_requests d JOIN users u ON u.id=d.user_id WHERE d.id=$1`,[id])).rows;
+    ensure(rows.length,404,'Deletion request not found.');
+    res.json({request:rows[0]});
+  });
+
   router.patch('/admin/deletion-requests/:id',roles('admin'),async(req,res)=>{
     const input=z.object({action:z.enum(['approve','reject','request_info']),note:z.string().trim().min(10).max(1000)}).strict().parse(req.body);
     const id=uuid.parse(req.params.id);

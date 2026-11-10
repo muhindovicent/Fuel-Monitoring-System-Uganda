@@ -169,3 +169,13 @@ test('account deletion requests are reviewed with recorded reasons, notification
   const finalNotices=await (await page.request.get('/api/v1/me/notifications')).json();
   expect(finalNotices.items.some(item=>/approved/i.test(item.message))).toBe(true);
 });
+test('profile picture preview works through the delegated change listener without inline handlers',async({page})=>{
+  await page.goto('/');await login(page);
+  await page.goto('/#profile');await expect(page.locator('#avatarFile')).toBeVisible();
+  expect(await page.locator('#avatarFile').evaluate(input=>input.getAttribute('onchange')), 'Inline event handlers are blocked by the content security policy.').toBeNull();
+  await expect(page.locator('#avatarPreview')).toBeHidden();
+  await page.locator('#avatarFile').setInputFiles({name:'profile-preview.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=','base64')});
+  await expect(page.locator('#avatarPreview')).toBeVisible();
+  await expect(page.locator('#avatarPreview')).toHaveAttribute('src',/^blob:/);
+  await expect.poll(()=>page.locator('#avatarPreview').evaluate(img=>img.naturalWidth)).toBe(1);
+});

@@ -151,4 +151,32 @@ test('Account deletion requests require review, prevent duplicates and never era
     assert.equal(queue.filter(row=>row.user_id===users.bob.id).length,2,'Decided requests remain as reviewable history.');
     assert.ok(queue.every(row=>!('password_hash' in row)&&!('csrf_token' in row)));
   });
+
+  await t.test('review lookup and decisions work for requests beyond the first review page',async()=>{
+    await db.query(`INSERT INTO users(id,email,display_name,password_hash,role,identity_verified)
+      SELECT gen_random_uuid(),'queue-seed-'||g||'@example.test','Queue seed '||g,'seeded-placeholder-hash','citizen',false
+      FROM generate_series(1,60) g`);
+    await db.query(`INSERT INTO deletion_requests(id,user_id,reason,status,created_at)
+      SELECT gen_random_uuid(),id,'Seeded queue request for the review pagination check.','pending',now()-interval '1 second'*(row_number() OVER (ORDER BY email))
+      FROM users WHERE email LIKE 'queue-seed-%@example.test'`);
+    const pageOne=(await request('/admin/deletion-requests?limit=50&offset=0',{as:'admin'})).data.items;
+    const pageTwo=(await request('/admin/deletion-requests?limit=50&offset=50',{as:'admin'})).data.items;
+    const beyond=pageTwo.find(row=>row.status==='pending');
+    assert.ok(beyond,'A pending request must appear beyond the first review page.');
+    assert.ok(!pageOne.some(row=>row.id===beyond.id));
+    const single=await request(`/admin/deletion-requests/${beyond.id}`,{as:'admin'});
+    assert.equal(single.status,200);
+    assert.equal(single.data.request.id,beyond.id);
+    assert.equal(single.data.request.status,'pending');
+    assert.equal(single.data.request.display_name,beyond.display_name);
+    assert.equal((await request(`/admin/deletion-requests/${beyond.id}`)).status,401);
+    for(const as of ['alice','inspector','analyst'])assert.equal((await request(`/admin/deletion-requests/${beyond.id}`,{as})).status,403,`${as} must not read a single request`);
+    assert.equal((await request('/admin/deletion-requests/00000000-0000-4000-8000-000000000000',{as:'admin'})).status,404);
+    assert.equal((await request('/admin/deletion-requests/not-a-uuid',{as:'admin'})).status,400);
+    assert.equal((await request(`/admin/deletion-requests/${beyond.id}`,{as:'admin',method:'PATCH',body:{action:'request_info',note:'Please confirm the email address for this queued account.'}})).status,200);
+    assert.equal((await request(`/admin/deletion-requests/${beyond.id}`,{as:'admin'})).data.request.status,'info_requested');
+    await db.query("DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'queue-seed-%@example.test')");
+    await db.query("DELETE FROM deletion_requests WHERE reason='Seeded queue request for the review pagination check.'");
+    await db.query("DELETE FROM users WHERE email LIKE 'queue-seed-%@example.test'");
+  });
 });

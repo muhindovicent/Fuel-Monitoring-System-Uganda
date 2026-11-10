@@ -1,4 +1,4 @@
-const CACHE='mafutawatch-shell-v18';
+const CACHE='mafutawatch-shell-v19';
 const ASSETS=['/','/index.html','/css/style.css','/js/api.js','/js/ui.js','/js/discovery.js','/js/leaflet.js','/js/access.js','/js/media-utils.js','/js/media-content.js','/js/media-management.js','/js/password-toggle.js','/js/app.js','/manifest.json','/icon.svg'];
 const allowed=new Set(ASSETS);
 self.addEventListener('install',event=>{

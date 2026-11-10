@@ -2,7 +2,7 @@ import {escapeHtml as esc,date} from './api.js';
 import {icon} from './ui.js';
 import {secureMediaUrl,videoSource} from './media-utils.js';
 
-const image=(url,alt)=>url&&secureMediaUrl(url)?`<img src="${esc(url)}" loading="lazy" decoding="async" alt="${esc(alt)}">`:'';
+const image=(url,alt)=>url&&secureMediaUrl(url)?`<img src="${esc(url)}" loading="lazy" decoding="async" alt="${esc(alt)}">`:`<span class="media-fallback" role="img" aria-label="${esc(alt||'Image unavailable')}">Image unavailable</span>`;
 const sourceLink=(url,label='Original source')=>url&&secureMediaUrl(url)&&!url.startsWith('/')?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${label} ↗</a>`:'';
 export function newsCard(n){return `<article class="card news-card" data-content-id="${esc(n.id)}">${image(n.image_url,n.title)}<div class="eyebrow">${esc(n.category.replaceAll('-',' '))}</div><h3>${esc(n.title)}</h3><p>${esc(n.summary)}</p><p class="small">${date(n.published_at||n.created_at)} · ${esc(n.source_name)}</p><details><summary>Read article</summary><div class="article-body">${esc(n.body)}</div></details>${sourceLink(n.source_url,'Read original source')}</article>`;}
 export function imageCard(m){return `<article class="card media-card" data-content-id="${esc(m.id)}"><button class="media-image-button" data-action="open-lightbox" data-media="${esc(m.id)}" aria-label="View ${esc(m.title)}">${image(m.thumbnail_url||m.image_url,m.alt_text||m.title)}</button><div class="media-card-body"><h3>${esc(m.title)}</h3><p>${esc(m.description)}</p>${m.caption?`<p class="media-caption">${esc(m.caption)}</p>`:''}<p class="small">${esc(m.photographer)} · ${esc(m.source)} · ${esc(m.license)}</p>${sourceLink(m.source_url)}</div></article>`;}

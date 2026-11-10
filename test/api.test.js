@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createApp } from '../server/app.js';
 import { migrate,transaction } from '../server/db.js';
 import { configuration } from '../server/config.js';
@@ -44,7 +45,20 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{origin:'https://evil.example'}})).status,403);
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{'x-csrf-token':'bad'}})).status,403);
     const headers=(await request('/auth/session',{as:'alice'})).response.headers;
-    assert.equal(headers.get('cache-control'),'no-store');assert.match(headers.get('content-security-policy'),/script-src 'self'/);assert.equal(headers.get('x-frame-options'),'DENY');
+    assert.equal(headers.get('cache-control'),'no-store');assert.equal(headers.get('x-frame-options'),'DENY');
+    const csp=headers.get('content-security-policy');
+    const directive=name=>csp.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name} `));
+    assert.equal(directive('script-src'),'script-src \'self\'');
+    assert.ok(!csp.includes('unsafe-eval'));
+    assert.equal(directive('img-src'),'img-src \'self\' data: blob: https:');
+    assert.equal(directive('media-src'),'media-src \'self\' blob: https:');
+    assert.equal(directive('frame-src'),'frame-src https://www.youtube-nocookie.com https://player.vimeo.com');
+    const vercel=JSON.parse(await readFile(new URL('../app/vercel.json',import.meta.url),'utf8'));
+    const vercelCsp=vercel.headers.flatMap(entry=>entry.headers??[]).find(header=>header.key==='Content-Security-Policy').value;
+    const vercelDirective=name=>vercelCsp.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name} `));
+    for(const name of ['default-src','script-src','style-src','img-src','media-src','frame-src','connect-src','object-src','frame-ancestors','base-uri','form-action'])
+      assert.equal(vercelDirective(name),directive(name),`${name} must match the deployed Vercel header in app/vercel.json`);
+    assert.ok(!vercelCsp.includes('unsafe-eval'));
   });
   await t.test('unverified repeat reports cannot manufacture consensus; retries are idempotent',async()=>{
     const requestKey=randomUUID();const first=await submit('alice',1,5400,requestKey);assert.equal(first.status,201);
