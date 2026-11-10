@@ -85,6 +85,27 @@ Restart the API after changing `.env`, then verify: `/health/ready` is healthy, 
 - Rotate runtime/owner/bootstrap database passwords using PostgreSQL role password changes and secret updates; restart dependent connections. Changing `.env` alone does not change an existing DB role password.
 - Review staff membership, case assignment and operator licenses regularly. Non-administrator role changes and explicit station assignments are audited administrator operations; administrator roles remain owner-CLI operations. Revoke station-specific assignments when staff leave a station, and verify identity/appointment before provisioning an inspector or analyst.
 
+## Account deletion requests and retention
+
+Members request deletion from **My profile**; administrators review every request in the **Deletion requests** admin tab (see [API](12_API.md) for the endpoint contract). The workflow is `pending → info_requested → pending → approved | rejected`, one active request per account, every transition audited and notified. This section defines what an approval means operationally.
+
+**Approved retention policy.** The following records are retained for as long as the controller's policy requires and are never removed by the approval itself:
+
+- Investigation and consumer-case records (cases, messages, evidence, moderation actions) — required to defend active or foreseeable investigations and disputes.
+- Financial and price evidence (accepted observations, published price history, audit trail, report provenance) — required for regulatory and accounting obligations.
+- Legally required account and access records (sign-up consent, identity/suspension decisions, staff provisioning provenance, deletion-request decisions themselves) — kept for the statutory retention period.
+
+Ordinary profile data (display preferences, avatar, contact details) is only removed by the authorized procedure below, never by an automated job.
+
+**Authorized deletion procedure.** There is deliberately no automatic erasure and no generic purge endpoint:
+
+1. A qualified administrator approves the request in the admin tab with a recorded reason; approval only *authorizes* the procedure.
+2. The database owner (or a delegated operator with owner credentials) executes the reviewed procedure in a maintenance window: export and archive the legally required records listed above, anonymize or delete ordinary profile rows for that account, revoke sessions and integration credentials, and record the executed steps and the archive reference in the audit log.
+3. Two people verify the outcome (row-level check that the account is gone/anonymized and that retained records are intact), and the deletion-request row is updated to reflect completion.
+4. Any deviation — active investigation, legal hold, dispute — pauses the procedure; the request stays approved but unexecuted until the hold is cleared by the controller.
+
+Database backups follow the backup retention policy; erasure does not rewrite historical backups, so backup expiry dates are part of the approved retention policy. Report executed erasures and any hold to the controller as required.
+
 ## Launch validation
 
 Before real traffic, validate the actual station register, ministry/source affiliations, staff identities, contact and privacy-controller details, lawful directives and provider contracts. Run CI against the actual PostgreSQL version; exercise the Compose stack, remote TLS, restore, firewall and proxy topology; do staging load and browser/device/accessibility checks. USSD/WhatsApp/SMS/push channels are not implemented delivery channels in this release and must not be advertised as working. No 150,000-session capacity claim has been validated.

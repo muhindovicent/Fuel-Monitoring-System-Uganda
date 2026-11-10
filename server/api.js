@@ -204,7 +204,7 @@ export function apiRoutes(db,config) {
   }).strict();
   const roleSettingShapes={
     citizen:z.object({}).strict(),
-    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','directory','publishing','media','users','audit']).optional()}).strict(),
+    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','directory','publishing','media','users','deletions','audit']).optional()}).strict(),
     inspector:z.object({assignedCaseNotifications:z.boolean().optional(),inspectionAlerts:z.boolean().optional(),workspacePreferences:z.boolean().optional(),lastCaseStatus:z.enum(['','open','investigating','dispatched','resolved','closed']).optional(),lastCaseAssignment:z.enum(['mine','all','unassigned']).optional()}).strict(),
     analyst:z.object({savedChartFilters:z.boolean().optional(),lastFuelView:z.enum(['all','petrol','diesel','kerosene']).optional()}).strict(),
     operator:z.object({priceUpdateNotifications:z.boolean().optional(),assignedStationDashboard:z.boolean().optional(),lastStationId:positiveId.optional()}).strict()
@@ -240,14 +240,59 @@ export function apiRoutes(db,config) {
     const input=z.object({reason:z.string().trim().min(5).max(1000),password:z.string().max(128)}).strict().parse(req.body);
     const user=(await db.query('SELECT password_hash FROM users WHERE id=$1',[req.user.id])).rows[0];
     ensure(await passwordMatches(input.password,user.password_hash),401,'Current password is required to request account deletion.');
-    await db.query('INSERT INTO deletion_requests(id,user_id,reason) VALUES ($1,$2,$3)',[randomUUID(),req.user.id,input.reason]);
+    const duplicate='You already have an active deletion request. An administrator is reviewing it or has asked for more information.';
+    ensure(!(await db.query("SELECT 1 FROM deletion_requests WHERE user_id=$1 AND status IN ('pending','info_requested')",[req.user.id])).rowCount,409,duplicate);
+    try{
+      await db.query('INSERT INTO deletion_requests(id,user_id,reason) VALUES ($1,$2,$3)',[randomUUID(),req.user.id,input.reason]);
+    }catch(error){if(error?.code==='23505')ensure(false,409,duplicate);throw error;}
     await audit(db,req.user.id,'deletion.request',req.user.id,{reason:input.reason});
     res.status(202).json({accepted:true});
   });
 
   router.get('/me/deletion-request',requireUser,async(req,res)=>{
-    const row=(await db.query('SELECT status,reason,created_at,reviewed_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
+    const row=(await db.query('SELECT status,reason,review_note,user_response,created_at,reviewed_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
     res.json({request:row??null});
+  });
+
+  router.patch('/me/deletion-request',requireUser,async(req,res)=>{
+    const input=z.object({response:z.string().trim().min(10).max(2000)}).strict().parse(req.body);
+    const updated=(await db.query("UPDATE deletion_requests SET user_response=$1,status='pending' WHERE user_id=$2 AND status='info_requested' RETURNING id",[input.response,req.user.id]));
+    ensure(updated.rowCount,409,'Your deletion request is not waiting for additional information.');
+    await audit(db,req.user.id,'deletion.response',updated.rows[0].id,{response:input.response});
+    res.json({saved:true});
+  });
+
+  router.get('/admin/deletion-requests',roles('admin'),async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const status=z.enum(['pending','info_requested','approved','rejected']).optional().parse(req.query.status);
+    res.json({items:(await db.query(`SELECT d.id,d.status,d.reason,d.user_response,d.review_note,d.created_at,d.reviewed_at,
+      u.id AS user_id,u.email,u.display_name,u.role FROM deletion_requests d JOIN users u ON u.id=d.user_id
+      WHERE ($1::text IS NULL OR d.status=$1) ORDER BY CASE d.status WHEN 'info_requested' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,d.created_at DESC
+      LIMIT $2 OFFSET $3`,[status??null,limit,offset])).rows});
+  });
+
+  router.patch('/admin/deletion-requests/:id',roles('admin'),async(req,res)=>{
+    const input=z.object({action:z.enum(['approve','reject','request_info']),note:z.string().trim().min(10).max(1000)}).strict().parse(req.body);
+    const id=uuid.parse(req.params.id);
+    const result=await transaction(db,async client=>{
+      const request=(await client.query('SELECT d.*,u.display_name FROM deletion_requests d JOIN users u ON u.id=d.user_id WHERE d.id=$1 FOR UPDATE OF d',[id])).rows[0];
+      ensure(request,404,'Deletion request not found.');
+      ensure(request.user_id!==req.user.id,403,'You cannot review your own deletion request.');
+      const from=request.status;
+      ensure(from==='pending'||from==='info_requested',409,'This request has already been decided.');
+      ensure(input.action!=='request_info'||from==='pending',409,'Additional information has already been requested for this account.');
+      const to={approve:'approved',reject:'rejected',request_info:'info_requested'}[input.action];
+      await client.query('UPDATE deletion_requests SET status=$1,review_note=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',[to,input.note,req.user.id,id]);
+      await audit(client,req.user.id,'deletion.review',id,{action:input.action,from,to,subject:request.user_id,note:input.note});
+      const messages={
+        approve:`Your account deletion request was approved: ${input.note} The authorized deletion procedure runs separately and never erases accounts or evidence automatically. Investigation records, financial evidence and legally required data are retained under the approved retention policy.`,
+        reject:`Your account deletion request was rejected: ${input.note} Your account remains active.`,
+        request_info:`An administrator requested more information about your deletion request: ${input.note} Open My profile to respond.`
+      };
+      await notify(client,request.user_id,messages[input.action]);
+      return {saved:true};
+    });
+    res.json(result);
   });
 
   router.get('/me/email/status',requireUser,async(_req,res)=>{

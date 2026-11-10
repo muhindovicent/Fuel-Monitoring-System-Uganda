@@ -101,3 +101,71 @@ test('administrator can register real directory records and publish sourced info
   await test.info().attach('overview-mobile',{body:await page.screenshot({path:test.info().outputPath('overview-mobile.png'),fullPage:true}),contentType:'image/png'});
   expect(errors).toEqual([]);
 });
+test('account deletion requests are reviewed with recorded reasons, notifications and an audit trail',async({page})=>{
+  await page.goto('/');await page.locator('#stakeholderAccess').getByRole('button',{name:'Citizen Registration',exact:true}).click();
+  await page.getByLabel('Display name').fill('Deletion Requester');await page.getByLabel('Email address').fill('deletion.requester@example.test');
+  await page.getByLabel('Password',{exact:true}).fill(testPassword);await page.locator('#authForm input[name=consent]').check();
+  await page.locator('#authForm button[type=submit]').click();await expect(page.getByRole('heading',{name:'Citizen Dashboard',exact:true})).toBeVisible();
+
+  await page.goto('/#profile');await expect(page.locator('#deletionForm')).toBeVisible();
+  await page.locator('#deletionForm [name=reason]').fill('Leaving the country and no longer need fuel price alerts.');
+  await page.locator('#deletionForm [name=delPassword]').fill(testPassword);
+  await page.locator('#deletionForm button[data-action=deletion-request]').click();
+  await expect(page.locator('#toast')).toContainText('Deletion request submitted for administrator review.');
+  await expect(page.locator('#view')).toContainText('Deletion request:');
+  await expect(page.locator('#view')).toContainText('pending');
+  await expect(page.locator('#deletionForm')).toHaveCount(0,'An active request must not offer a second submission form.');
+
+  const session=await (await page.request.get('/api/v1/auth/session')).json();
+  const duplicate=await page.request.post('/api/v1/me/deletion-request',{headers:{Origin:new URL(page.url()).origin,'X-Requested-With':'MafutaWatch','X-CSRF-Token':session.csrfToken},data:{reason:'A second active request must be refused.',password:testPassword}});
+  expect(duplicate.status()).toBe(409);
+
+  await page.locator('#logoutButton').click();await login(page,'admin');
+  await page.getByRole('button',{name:'Deletion requests',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Account deletion requests',exact:true})).toBeVisible();
+  const row=page.locator('tbody tr').filter({hasText:'deletion.requester@example.test'});
+  await expect(row).toContainText('Deletion Requester');await expect(row).toContainText('citizen');
+  await expect(row).toContainText('Leaving the country');await expect(row).toContainText('pending');
+  await row.getByRole('button',{name:'Review',exact:true}).click();
+  await expect(page.locator('#detailDialog')).toBeVisible();
+  await expect(page.locator('#detailContent')).toContainText('Leaving the country');
+  await page.locator('#deletionReviewForm [name=note]').fill('Confirm the forwarding email address before any deletion runs.');
+  await page.locator('#deletionReviewForm [data-decision=request_info]').click();
+  await expect(page.locator('#toast')).toContainText('Decision recorded. The member was notified.');
+  await expect(row).toContainText('info requested');
+
+  await page.locator('#logoutButton').click();await login(page,'deletion.requester');
+  await page.goto('/#profile');
+  await expect(page.locator('#deletionResponseForm')).toBeVisible();
+  await expect(page.locator('#view')).toContainText('Confirm the forwarding email address');
+  await page.locator('#deletionResponseForm [name=response]').fill('Forward closure notices to requester.forward@example.test.');
+  await page.locator('#deletionResponseForm button[type=submit]').click();
+  await expect(page.locator('#toast')).toContainText('back in the administrator review queue');
+  await expect(page.locator('#deletionResponseForm')).toHaveCount(0);
+  const answered=await (await page.request.get('/api/v1/me/notifications')).json();
+  expect(answered.items.some(item=>/requested more information/i.test(item.message))).toBe(true);
+
+  await page.locator('#logoutButton').click();await login(page,'admin');
+  await page.getByRole('button',{name:'Deletion requests',exact:true}).click();
+  const decided=page.locator('tbody tr').filter({hasText:'deletion.requester@example.test'});
+  await expect(decided).toContainText('pending');
+  await expect(decided).toContainText('requester.forward@example.test');
+  await decided.getByRole('button',{name:'Review',exact:true}).click();
+  await expect(page.locator('#detailContent')).toContainText('requester.forward@example.test');
+  await page.locator('#deletionReviewForm [name=note]').fill('Approved after confirming the forwarding address with the member.');
+  await page.locator('#deletionReviewForm [data-decision=approve]').click();
+  await expect(page.locator('#toast')).toContainText('Decision recorded. The member was notified.');
+  await expect(decided).toContainText('approved');
+
+  const audit=await (await page.request.get('/api/v1/admin/audit?limit=50')).json();
+  const actions=audit.items.map(item=>item.action);
+  expect(actions).toContain('deletion.request');expect(actions).toContain('deletion.review');
+
+  await page.locator('#logoutButton').click();await login(page,'deletion.requester');
+  await page.goto('/#profile');
+  await expect(page.locator('#view')).toContainText('Approved.');
+  await expect(page.locator('#view')).toContainText('accounts and evidence are never erased automatically');
+  expect((await (await page.request.get('/api/v1/auth/session')).json()).user.email).toBe('deletion.requester@example.test');
+  const finalNotices=await (await page.request.get('/api/v1/me/notifications')).json();
+  expect(finalNotices.items.some(item=>/approved/i.test(item.message))).toBe(true);
+});

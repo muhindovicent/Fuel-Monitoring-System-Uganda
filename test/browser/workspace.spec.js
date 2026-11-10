@@ -80,6 +80,18 @@ test('notification drawer reads real case updates and marks only displayed recor
   await page.getByRole('button',{name:'Mark displayed notifications read',exact:true}).click();await expect(page.locator('#detailDialog')).not.toBeVisible();
   const records=await (await page.request.get('/api/v1/me/notifications')).json();expect(records.items.slice(0,10).every(n=>n.read_at)).toBe(true);
 });
+test('sign-in succeeds even when optional preference loading fails',async({page})=>{
+  let attempts=0;
+  await page.goto('/');
+  await page.route('**/api/v1/me/preferences',route=>{attempts++;route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Preferences are temporarily unavailable.'})});});
+  await signIn(page);
+  await expect(page.getByRole('heading',{name:'Citizen Dashboard',exact:true})).toBeVisible();
+  expect(attempts).toBeGreaterThan(0,'Login must have attempted to load preferences.');
+  await expect(page.locator('#errorBanner')).not.toBeVisible();
+  const session=await (await page.request.get('/api/v1/auth/session')).json();
+  expect(session.user?.email).toBe('alice@example.test');
+  expect(await page.locator('#accountButton').textContent()).toContain('alice');
+});
 test('analyst intelligence filters and exports accepted history without gaining operational permissions',async({page})=>{
   await signIn(page,'analyst');await openWorkspacePage(page,'Operations dashboard');
   await expect(page.getByRole('heading',{name:'Market Intelligence Workspace',exact:true})).toBeVisible();

@@ -28,6 +28,8 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | PUT | `/stations/:id/subscription` | `{enabled:true|false}` |
 | GET | `/me/notifications` | Latest own 100 in-app notifications |
 | GET, PATCH | `/me/preferences` | Own profile preferences, notification choices, privacy and role-specific workspace settings; partial JSON objects merge by key |
+| POST | `/me/deletion-request` | `{reason:5..1000,current password}`; 202 accepted; 409 while a request is `pending` or `info_requested`; 3 attempts per hour per account |
+| GET, PATCH | `/me/deletion-request` | Own latest request with `status,reason,review_note,user_response,created_at,reviewed_at`; PATCH `{response:10..2000}` only while `info_requested`, returns it to `pending` |
 | POST | `/me/notifications/read` | `{ids:[UUID...]}`; modifies own records only |
 | POST | `/tickets` | `{stationId,category,vehicleType,incidentDate,description}`; UUID `Idempotency-Key` required |
 | GET | `/tickets` | Own cases; inspector/admin case queue; `status,limit,offset` |
@@ -61,6 +63,8 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | PATCH | `/admin/reports/:id` | Inspector/admin `{status:verified|rejected,reason}` |
 | GET | `/admin/officers` | Inspector/admin active assignees |
 | GET, PATCH | `/admin/users`, `/admin/users/:id` | Admin non-admin identity/suspension/role; `{identityVerified?,disabled?,role?,reason}`; role is citizen/operator/inspector/analyst |
+| GET | `/admin/deletion-requests` | Admin review queue; `status=pending\|info_requested\|approved\|rejected,limit,offset`; rows carry requester name, email, role, reason, member response, note, status and dates |
+| PATCH | `/admin/deletion-requests/:id` | Admin `{action:approve\|reject\|request_info,note:10..1000}`; self-review 403, already-decided 409; audited as `deletion.review` and notifies the member |
 | POST | `/admin/staff` | Admin re-authenticated inspector/analyst provisioning; `{email,displayName,password,role,administratorPassword,identityVerified,reason}`; create-only, audited, no email sent |
 | GET | `/admin/operator-accounts` | Admin active operator accounts available for explicit station assignment |
 | POST | `/admin/operators` | Admin `{name,shortName}` |
@@ -105,6 +109,16 @@ Changing the sign-in address is a dual-approval, single-use flow and requires an
 3. Confirmation runs in a single PostgreSQL transaction that locks the account row, re-reads the token by hash (bound to the requesting account), rejects expired/foreign/duplicate-registered tokens, claims the token with `used_at IS NULL`, and only when every outstanding approval is consumed updates `users.email`, deletes the tokens, deletes all sessions, revokes integration credentials and appends the audit record. Any failure rolls the whole transaction back — a failed confirmation leaves the token unused and the account exactly as it was. The account row lock serialises concurrent confirmations, so a race can never apply half of a change.
 
 Until both approvals the original address keeps working. Rate limits: 3 change requests and 10 confirmations per account per hour.
+
+## Account deletion requests
+
+Deletion is an accountable review workflow, never a self-service erase. The lifecycle is `pending → info_requested → pending → approved | rejected`, stored in `deletion_requests`:
+
+1. **Submission** — `POST /me/deletion-request` requires the current password and a 5–1000 character reason. An account may hold at most one request in `pending` or `info_requested`: the API returns 409 for a duplicate, and a partial unique index (`deletion_requests_active_unique`) closes the race. Decided requests remain as history, so a member may submit again only after a decision. The attempt is rate limited to 3 per hour per account and audited as `deletion.request`.
+2. **Review queue** — administrators list requests with `GET /admin/deletion-requests`. Rows show the requester (name, email, role), the reason, the member's response, submission date and status. Only administrators can read or decide; ordinary members can only read their own request through `GET /me/deletion-request`, and an administrator cannot review their own request (403).
+3. **Decisions** — `PATCH /admin/deletion-requests/:id` accepts `approve`, `reject` or `request_info`, and every action requires a recorded reason of 10–1000 characters (400 otherwise). `request_info` is only valid from `pending`; a decided request answers 409. Each transition runs in a transaction that locks the request, updates `status`, `review_note`, `reviewed_by`, `reviewed_at`, appends the `deletion.review` audit record (action, from, to, member, note) and creates an in-app notification for the member.
+4. **Member response** — while `info_requested`, the member answers with `PATCH /me/deletion-request {response}` (10–2000 characters). The reply is stored in `user_response`, the request returns to `pending`, and `deletion.response` is audited. Answering outside that state answers 409.
+5. **No automatic erasure** — approval authorizes the separate, documented deletion procedure (see [Operations](10_OPERATIONS.md)); it never deletes accounts, cases or evidence by itself. Investigation records, financial evidence and legally required data are retained under the approved retention policy. All status-change notifications to the member are essential and are delivered even when every optional notification choice is off.
 
 ## Operator integration example
 
