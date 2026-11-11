@@ -8,7 +8,7 @@ import {newsCard,imageCard,videoCard,videoPlayer,homepagePublishing,photoCarouse
 import {mountPasswordToggles,resetPasswordVisibility} from './password-toggle.js';
 
 const $=selector=>document.querySelector(selector);
-const state={user:null,summary:null,page:'overview',adminTab:'dashboard',room:null,stations:[],assigned:[],ticket:null,authMode:'login',offset:0,activityOffset:0,adminOffset:0,filters:{q:'',district:'',fuel:'petrol',sort:'price',radius:'10'},position:null,carouselIndex:0};
+const state={user:null,summary:null,page:'overview',adminTab:'dashboard',room:null,stations:[],assigned:[],ticket:null,authMode:'login',offset:0,activityOffset:0,adminOffset:0,filters:{q:'',district:'',fuel:'petrol',sort:'price',radius:'10'},position:null,carouselIndex:0,bootError:null};
 let map,discovery,mediaManager,toastTimer,routeVersion=0;
 const isStaff=()=>['admin','inspector'].includes(state.user?.role);
 const isAdmin=()=>state.user?.role==='admin';
@@ -89,37 +89,97 @@ async function loadDirectory(){
   for(let offset=0;;offset+=100){const batch=await api(`/stations?limit=100&offset=${offset}`);stations.push(...batch.items);if(batch.items.length<100)break;}
   state.stations=stations;return stations;
 }
-async function summary(){state.summary=await api('/summary');$('#demoBanner').hidden=!state.summary.demo_stations;$('#connection').textContent=`Updated ${new Date().toLocaleTimeString('en-UG',{timeZone:'Africa/Kampala',hour:'2-digit',minute:'2-digit'})} EAT`;}
-async function overview(){
-  const [notices,stations,media,news,videos]=await Promise.all([
-    api('/advisories').then(result=>result.items??[]).catch(()=>[]),
-    loadDirectory().catch(()=>[]),
-    api('/media').then(result=>result.items??[]).catch(()=>[]),
-    api('/news').then(result=>result.items??[]).catch(()=>[]),
-    api('/videos').then(result=>result.items??[]).catch(()=>[])
-  ]);
-  const s=state.summary;state.discoveryStations=stations;
-  const regions=new Set(s.regions.map(r=>r.region)).size;
-  return `${photoCarousel(media)}
-  <section class="portal-hero" aria-labelledby="heroTitle">
-    <img class="hero-photograph" src="/assets/kampala-road.jpg" width="1600" height="1067" alt="Evening traffic on Kampala Road, Uganda" fetchpriority="high">
+async function loadStationBatch(offset=0){return (await api(`/stations?limit=100&offset=${offset}`)).items;}
+function syncDemoBanner(){
+  const banner=$('#demoBanner'),demo=Boolean(state.summary?.demo_stations);
+  if(state.page==='overview'){banner.hidden=false;banner.style.visibility=demo?'visible':'hidden';}
+  else{banner.style.visibility='';banner.hidden=!demo;}
+}
+async function summary(){
+  state.summary=await api('/summary');
+  syncDemoBanner();
+  $('#connection').textContent=`Updated ${new Date().toLocaleTimeString('en-UG',{timeZone:'Africa/Kampala',hour:'2-digit',minute:'2-digit'})} EAT`;
+}
+function skeletonFill(label){return `<div class="loading-surface"><p class="loading-message" role="status">${esc(label)}</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>`;}
+function advisoryGrid(notices){return notices.slice(0,3).map(a=>`<article class="card advisory-card"><span class="advisory-label">${icon('report')}SOURCE LINKED</span><h3>${esc(a.title)}</h3><p class="clamp-three">${esc(a.body)}</p><small>${date(a.created_at)} · ${esc(a.author)}</small><a class="text-link" href="${esc(a.source_url)}" target="_blank" rel="noopener noreferrer">Read original source ${icon('arrow')}</a></article>`).join('')||`<div class="empty advisory-empty">${icon('bell')}<h3>No published advisories yet</h3><p>Source-linked releases will appear here when a platform administrator publishes them.</p><a href="#advisories">Explore advisories & town halls →</a></div>`;}
+function overviewShell(){
+  return `<section class="portal-hero" aria-labelledby="heroTitle">
+    <img class="hero-photograph" src="/assets/kampala-road.jpg" srcset="/assets/kampala-road-960.jpg 960w, /assets/kampala-road-1280.jpg 1280w, /assets/kampala-road-1600.jpg 1600w, /assets/kampala-road.jpg 1920w" sizes="(max-width: 900px) 50vw, 100vw" width="1600" height="1067" alt="Evening traffic on Kampala Road, Uganda" fetchpriority="high">
     <div class="container hero-inner"><div class="hero-copy"><span class="hero-kicker"><span class="status-dot"></span>UGANDA · MOBILITY & FUEL INTELLIGENCE</span><h1 id="heroTitle">Find Affordable Fuel.<br><span>Drive Smarter.</span></h1><p>Discover fuel stations, compare verified prices, plan journeys, and report fuel market concerns across Uganda.</p><div class="actions hero-actions"><button class="button amber" data-action="find-nearby">${icon('pin')} Find Fuel Near Me</button><a class="button hero-outline" href="#prices">Compare Fuel Prices ${icon('arrow')}</a></div><a class="hero-concern" href="#report">${icon('report')} Report a Price ${icon('arrow')}</a><div class="hero-trust"><span>${icon('check')}Real sources. Clear freshness.</span><span>${icon('check')}Your voice, tracked.</span></div></div>
-    <aside class="hero-price-card"><div class="hero-price-heading">${icon('pump')} THE PRICE PICTURE</div><p>Fresh published price indicators</p><div class="hero-fuel-row"><span>Petrol <small>UGX / litre</small></span><strong>${fuelIndicator('petrol')}</strong></div><div class="hero-fuel-row"><span>Diesel <small>UGX / litre</small></span><strong>${fuelIndicator('diesel')}</strong></div><div class="hero-card-note">${icon('clock')}Regional averages weighted by sample count. Demo and stale prices excluded.</div><a href="#analytics">Explore the data ${icon('arrow')}</a></aside></div>
+    <aside class="hero-price-card"><div class="hero-price-heading">${icon('pump')} THE PRICE PICTURE</div><p>Fresh published price indicators</p><div class="hero-fuel-row"><span>Petrol <small>UGX / litre</small></span><strong data-hero-price="petrol">—</strong></div><div class="hero-fuel-row"><span>Diesel <small>UGX / litre</small></span><strong data-hero-price="diesel">—</strong></div><div class="hero-card-note">${icon('clock')}Regional averages weighted by sample count. Demo and stale prices excluded.</div><a href="#analytics">Explore the data ${icon('arrow')}</a></aside></div>
     <div class="container hero-credit"><a href="#credits">Kampala Road · Kyakwera / CC BY-SA 4.0</a></div>
   </section>
-  <section class="container search-section" aria-labelledby="searchTitle"><div class="search-panel"><div class="search-intro">${icon('search')}<div><h2 id="searchTitle">Where are you refuelling?</h2><p>Find a station. Check a price. Plan ahead.</p></div></div><form id="homeSearch" class="portal-search">${field('Station name or area','q',{required:false,placeholder:'Search a station or area'})}${districtSelect(stations)}${select('Fuel type','fuel',fuelOptions)}<button class="primary" type="submit">${icon('search')} Search prices</button></form></div></section>
-  <section class="portal-section discovery-section"><div class="container">${sectionHeading('EXPLORE THE FUEL NETWORK','Your next stop, in one clear view.','Search the directory, select a station, and inspect the source behind its price.','#stations','Open fuel discovery')}${discoveryMarkup(stations,state.discoveryPreferences)}</div></section>
-  <section class="container home-kpis" aria-label="Platform records"><div class="metrics">${publicMetric(s.verified_today,'Verified reports today','shield')}${publicMetric(s.stations-s.demo_stations,'Operational directory stations','pump')}${publicMetric(regions,'Regions with fresh prices','globe')}${publicMetric(s.resolved_tickets,'Resolved consumer cases','check')}</div><p class="data-note">${icon('info')}Metrics are actual platform records. ${s.demo_stations?`${s.demo_stations} demonstration directory entries are excluded from the operational station count.`:'Prices older than 48 hours are excluded from fresh-price insights.'}</p></section>
+  ${photoCarousel([])}
+  <section class="container search-section" aria-labelledby="searchTitle"><div class="search-panel"><div class="search-intro">${icon('search')}<div><h2 id="searchTitle">Where are you refuelling?</h2><p>Find a station. Check a price. Plan ahead.</p></div></div><form id="homeSearch" class="portal-search">${field('Station name or area','q',{required:false,placeholder:'Search a station or area'})}${districtSelect([])}${select('Fuel type','fuel',fuelOptions)}<button class="primary" type="submit">${icon('search')} Search prices</button></form></div></section>
+  <template id="homeRest">
+  <section class="portal-section discovery-section"><div class="container">${sectionHeading('EXPLORE THE FUEL NETWORK','Your next stop, in one clear view.','Search the directory, select a station, and inspect the source behind its price.','#stations','Open fuel discovery')}<div data-overview="discovery">${skeletonFill('Loading station discovery…')}</div></div></section>
+  <section class="container home-kpis" aria-label="Platform records"><div data-overview="kpis">${skeletonFill('Loading platform records…')}</div></section>
   <section class="portal-section services-section"><div class="container">${sectionHeading('YOUR QUICK LINKS','One platform. Practical services.','From the next fuel stop to a concern that deserves an answer.', '#services','All citizen services')}${serviceDirectory()}</div></section>
-  <section class="portal-section insights-section"><div class="container">${sectionHeading('FUEL MARKET INTELLIGENCE','Numbers with a source. Not a guess.','Compare fresh operational prices and understand what the available data can tell you.','#analytics','Reports & analytics')}<div class="grid insights-grid"><article class="card"><div class="card-head"><h3>Regional price snapshot</h3>${badge('Fresh · ≤48h')}</div><p class="small">UGX per litre · Accepted operational prices only.</p>${regionChart(s.regions)}<a class="text-link" href="#analytics">View regional data ${icon('arrow')}</a></article><article class="card"><div class="card-head"><h3>Lowest fresh published prices</h3>${icon('pump')}</div><p class="small">Across the directory · Petrol · Not a price guarantee.</p>${priceComparison(stations)}<a class="text-link" href="#prices">Compare fuel prices ${icon('arrow')}</a></article></div></div></section>
-  <section class="container record-insights"><div class="grid"><article class="card"><h2>Recent verified updates</h2><p class="small">Fresh operational records, with their actual publication source.</p>${recentPriceUpdates(stations)}</article><article class="card"><h2>Station distribution</h2><p class="small">Operational entries in this directory, not a measure of national coverage.</p>${stationDistribution(stations)}</article></div></section>
-  <section class="portal-section"><div class="container"><div class="citizen-feature"><div class="citizen-feature-copy"><span class="eyebrow">CITIZEN PARTICIPATION</span><h2>A concern deserves<br>more than a comment.</h2><p>Submit a station concern, attach private evidence, and follow the case through a documented response.</p><ol class="case-steps"><li><span>01</span>Describe the issue</li><li><span>02</span>Receive a tracked case</li><li><span>03</span>Follow the response</li></ol><a class="button amber" href="#complaints">Report a concern ${icon('arrow')}</a><a class="citizen-follow" href="#complaints">Already submitted? Track your case →</a></div><figure class="citizen-photo"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town, Uganda; an illustrative photograph" width="1400" height="1050" decoding="async" fetchpriority="low"><figcaption>Kabale, Uganda · Documentary photography, not an endorsement. <a href="#credits">Photo credits ↗</a></figcaption></figure></div></div></section>
-   <section class="portal-section advisory-section"><div class="container">${sectionHeading('PUBLIC INFORMATION','Advisories you can trace.','Published platform releases with links to their original sources.','#advisories','All advisories & town halls')}<div class="grid three">${notices.slice(0,3).map(a=>`<article class="card advisory-card"><span class="advisory-label">${icon('report')}SOURCE LINKED</span><h3>${esc(a.title)}</h3><p class="clamp-three">${esc(a.body)}</p><small>${date(a.created_at)} · ${esc(a.author)}</small><a class="text-link" href="${esc(a.source_url)}" target="_blank" rel="noopener noreferrer">Read original source ${icon('arrow')}</a></article>`).join('')||`<div class="empty advisory-empty">${icon('bell')}<h3>No published advisories yet</h3><p>Source-linked releases will appear here when a platform administrator publishes them.</p><a href="#advisories">Explore advisories & town halls →</a></div>`}</div></div></section>
-  ${homepagePublishing(news,videos)}<section class="container community-strip"><div>${icon('users')}<div><h2>Better journeys begin with shared information.</h2><p>Join the conversation along Uganda’s transport corridors.</p></div></div><a class="button primary" href="#community">Explore driver community ${icon('arrow')}</a></section>`;
+  <section class="portal-section insights-section"><div class="container">${sectionHeading('FUEL MARKET INTELLIGENCE','Numbers with a source. Not a guess.','Compare fresh operational prices and understand what the available data can tell you.','#analytics','Reports & analytics')}<div class="grid insights-grid"><article class="card"><div class="card-head"><h3>Regional price snapshot</h3>${badge('Fresh · ≤48h')}</div><p class="small">UGX per litre · Accepted operational prices only.</p><div data-overview="region-chart">${skeletonFill('Loading regional averages…')}</div><a class="text-link" href="#analytics">View regional data ${icon('arrow')}</a></article><article class="card"><div class="card-head"><h3>Lowest fresh published prices</h3>${icon('pump')}</div><p class="small">Across the directory · Petrol · Not a price guarantee.</p><div data-overview="price-comparison">${skeletonFill('Loading price comparison…')}</div><a class="text-link" href="#prices">Compare fuel prices ${icon('arrow')}</a></article></div></div></section>
+  <section class="container record-insights"><div class="grid"><article class="card"><h2>Recent verified updates</h2><p class="small">Fresh operational records, with their actual publication source.</p><div data-overview="recent-updates">${skeletonFill('Loading recent updates…')}</div></article><article class="card"><h2>Station distribution</h2><p class="small">Operational entries in this directory, not a measure of national coverage.</p><div data-overview="distribution">${skeletonFill('Loading station distribution…')}</div></article></div></section>
+  <section class="portal-section"><div class="container"><div class="citizen-feature"><div class="citizen-feature-copy"><span class="eyebrow">CITIZEN PARTICIPATION</span><h2>A concern deserves<br>more than a comment.</h2><p>Submit a station concern, attach private evidence, and follow the case through a documented response.</p><ol class="case-steps"><li><span>01</span>Describe the issue</li><li><span>02</span>Receive a tracked case</li><li><span>03</span>Follow the response</li></ol><a class="button amber" href="#complaints">Report a concern ${icon('arrow')}</a><a class="citizen-follow" href="#complaints">Already submitted? Track your case →</a></div><figure class="citizen-photo"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town, Uganda; an illustrative photograph" width="1400" height="1050" loading="lazy" decoding="async" fetchpriority="low"><figcaption>Kabale, Uganda · Documentary photography, not an endorsement. <a href="#credits">Photo credits ↗</a></figcaption></figure></div></div></section>
+   <section class="portal-section advisory-section"><div class="container">${sectionHeading('PUBLIC INFORMATION','Advisories you can trace.','Published platform releases with links to their original sources.','#advisories','All advisories & town halls')}<div class="grid three" data-overview="advisories">${skeletonFill('Loading advisories…')}</div></div></section>
+  <div data-overview="publishing">${skeletonFill('Loading newsroom…')}</div><section class="container community-strip"><div>${icon('users')}<div><h2>Better journeys begin with shared information.</h2><p>Join the conversation along Uganda’s transport corridors.</p></div></div><a class="button primary" href="#community">Explore driver community ${icon('arrow')}</a></section>
+  </template>`;
+}
+async function hydrateOverview(version){
+  const alive=()=>version===routeVersion;
+  let restReady=false;const pendingRest=[];
+  const fill=(name,html)=>{
+    if(!restReady){pendingRest.push(()=>fill(name,html));return;}
+    const el=document.querySelector(`[data-overview="${name}"]`);if(el&&alive())el.innerHTML=html;
+  };
+  const replace=(name,html)=>{
+    if(!restReady){pendingRest.push(()=>replace(name,html));return;}
+    const el=document.querySelector(`[data-overview="${name}"]`);if(el&&alive())el.outerHTML=html;
+  };
+  const summaryTask=summary().catch(error=>{
+    if(!alive())return;
+    showError(error);$('#connection').textContent='Unavailable';
+    fill('kpis',empty('Platform metrics are unavailable right now. Use Refresh data to try again.'));
+    fill('region-chart',empty('Regional averages are unavailable right now.'));
+  });
+  const stationsTask=loadStationBatch(0).catch(()=>[]);
+  const mediaTask=api('/media').then(result=>result.items??[]).catch(()=>[]);
+  const newsTask=api('/news').then(result=>result.items??[]).catch(()=>[]);
+  const videosTask=api('/videos').then(result=>result.items??[]).catch(()=>[]);
+  const advisoriesTask=api('/advisories').then(result=>result.items??[]).catch(()=>[]);
+  const fillStations=stations=>{
+    const district=$('#homeSearch [name=district]');
+    if(district?.closest('label'))district.closest('label').outerHTML=districtSelect(stations);
+    fill('price-comparison',priceComparison(stations));
+    fill('recent-updates',recentPriceUpdates(stations));
+    fill('distribution',stationDistribution(stations));
+    fill('discovery',discoveryMarkup(stations,state.discoveryPreferences));
+    mountFuelDiscovery();
+  };
+  await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+  if(!alive())return;
+  const rest=document.getElementById('homeRest');
+  if(rest)rest.replaceWith(...rest.content.childNodes);
+  restReady=true;
+  while(pendingRest.length)pendingRest.shift()();
+  const stations=await stationsTask;
+  if(!alive())return;
+  state.stations=stations;state.discoveryStations=stations;
+  fillStations(stations);
+  if(stations.length===100)loadDirectory().then(full=>{if(alive())fillStations(full);}).catch(()=>{});
+  summaryTask.then(()=>{
+    if(!alive()||!state.summary)return;
+    document.querySelectorAll('[data-hero-price]').forEach(el=>{el.innerHTML=fuelIndicator(el.dataset.heroPrice);});
+    const s=state.summary,regions=new Set(s.regions.map(r=>r.region)).size;
+    fill('kpis',`<div class="metrics">${publicMetric(s.verified_today,'Verified reports today','shield')}${publicMetric(s.stations-s.demo_stations,'Operational directory stations','pump')}${publicMetric(regions,'Regions with fresh prices','globe')}${publicMetric(s.resolved_tickets,'Resolved consumer cases','check')}</div><p class="data-note">${icon('info')}Metrics are actual platform records. ${s.demo_stations?`${s.demo_stations} demonstration directory entries are excluded from the operational station count.`:'Prices older than 48 hours are excluded from fresh-price insights.'}</p>`);
+    fill('region-chart',regionChart(s.regions));
+  });
+  mediaTask.then(media=>{if(!alive())return;const carousel=$('.photo-carousel');if(carousel){carousel.outerHTML=photoCarousel(media);renderCarousel();}});
+  Promise.all([newsTask,videosTask]).then(([news,videos])=>{if(alive())replace('publishing',homepagePublishing(news,videos));});
+  advisoriesTask.then(notices=>{if(alive())fill('advisories',advisoryGrid(notices));});
+  await Promise.all([summaryTask,stationsTask,mediaTask,newsTask,videosTask,advisoriesTask]);
 }
 function sectionHeading(kicker,title,text,href,label){return `<div class="section-heading"><div><span class="eyebrow">${esc(kicker)}</span><h2>${esc(title)}</h2><p>${esc(text)}</p></div>${href?`<a class="text-link" href="${href}">${esc(label)} ${icon('arrow')}</a>`:''}</div>`;}
 function serviceDirectory(){return `<div class="service-grid">${services.map((s,i)=>`<a class="service-card service-tone-${i%3}" href="${s.href}"><span class="service-icon">${icon(s.icon)}</span><span class="service-tag">${s.tag}</span><h3>${s.title}</h3><p>${s.description}</p><span class="service-arrow">${icon('arrow')}</span></a>`).join('')}</div>`;}
-function districtSelect(stations,selected=''){return select('District','district',[['','All districts'],...[...new Set(stations.map(s=>s.district))].sort().map(d=>[d,d])],selected,false);}
+function districtOptions(stations){return [['','All districts'],...[...new Set(stations.map(s=>s.district))].sort().map(d=>[d,d])];}
+function districtSelect(stations,selected=''){return select('District','district',districtOptions(stations),selected,false);}
 function publicMetric(value,label,name){return `<article class="metric public-metric"><span class="metric-icon">${icon(name)}</span><div><strong>${Number(value).toLocaleString('en-UG')}</strong><span class="label">${esc(label)}</span></div></article>`;}
 function fuelIndicator(fuel){const rows=state.summary.regions.filter(r=>r.fuel===fuel);const samples=rows.reduce((n,r)=>n+r.samples,0);return samples?Math.round(rows.reduce((n,r)=>n+r.average*r.samples,0)/samples).toLocaleString('en-UG'):'<span class="unavailable-price">Awaiting data</span>';}
 function regionChart(rows){if(!rows.length)return empty('No fresh operational prices yet. Accepted non-demo observations will appear here.');const max=Math.max(...rows.map(r=>r.average)),fuels=[...new Set(rows.map(r=>r.fuel))];return `<div class="region-chart" role="group" aria-label="Regional average published prices in UGX per litre"><div class="chart-legend">${fuels.map(f=>`<span class="legend-${esc(f)}">${esc(f.charAt(0).toUpperCase()+f.slice(1))}</span>`).join('')}</div>${rows.map(r=>`<div class="region-bar-row"><span>${esc(r.region)}<small>${esc(r.fuel)} · ${r.samples} samples</small></span><span class="region-bar-track" aria-hidden="true"><span class="region-bar ${r.fuel==='diesel'?'diesel':r.fuel==='kerosene'?'kerosene':''}" style="width:${r.average/max*100}%"></span></span><strong>${Number(r.average).toLocaleString('en-UG')}</strong></div>`).join('')}</div>`;}
@@ -360,8 +420,15 @@ async function emailVerifyView(){
   if(pending.status==='done')return emailVerifiedView();
   return emailVerifyMessage('We could not confirm this email address.',`${pending.message||'This link could not be used.'} Request a new email change from My profile to try again.`,{signIn:Boolean(pending.signIn)||!state.user});
 }
-const renderers={overview,prices:stationsView,stations:fuelDiscoveryView,services:servicesView,analytics:analyticsView,about:aboutView,contact:contactView,credits:creditsView,news:newsView,gallery:mediaGalleryView,videos:videoCentreView,profile:profileView,report:reportView,complaints:complaintsView,community:communityView,advisories:advisoriesView,trip:tripView,activity:activityView,operator:operatorView,admin:adminView,privacy:privacyView,'email-verify':emailVerifyView,'email-verified':emailVerifiedView};
+const renderers={overview:overviewShell,prices:stationsView,stations:fuelDiscoveryView,services:servicesView,analytics:analyticsView,about:aboutView,contact:contactView,credits:creditsView,news:newsView,gallery:mediaGalleryView,videos:videoCentreView,profile:profileView,report:reportView,complaints:complaintsView,community:communityView,advisories:advisoriesView,trip:tripView,activity:activityView,operator:operatorView,admin:adminView,privacy:privacyView,'email-verify':emailVerifyView,'email-verified':emailVerifiedView};
 const publicPages=new Set(['overview','prices','stations','services','analytics','advisories','about','contact','credits','privacy','news','gallery','videos']);
+const summaryPages=new Set(['overview','analytics','admin','stations']);
+function mountFuelDiscovery(){
+  if(!$('#fuelDiscovery'))return;
+  discovery=mountDiscovery($('#fuelDiscovery'),state.discoveryStations,{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary?.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});
+  if(state.locateOnArrival){state.locateOnArrival=false;discovery.locate();}
+  if(state.mapStationOnArrival){discovery.select(state.mapStationOnArrival);state.mapStationOnArrival=null;}
+}
 function closeMenu(){const nav=$('#primaryNavigation');nav.classList.remove('is-open');$('#menuToggle').setAttribute('aria-expanded','false');$('#menuToggle').setAttribute('aria-label','Open navigation');}
 const compactWorkspace=()=>matchMedia('(max-width: 900px)').matches;
 function syncWorkspaceShell(){
@@ -393,8 +460,32 @@ async function navigate(){
   $('#errorBanner').hidden=true;$('#breadcrumb').textContent=pageNames[state.page]||state.page;
   document.querySelectorAll('[data-page]').forEach(a=>{a.classList.toggle('active',a.dataset.page===state.page);if(a.dataset.page===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   document.querySelectorAll('[data-public-page]').forEach(a=>{if(a.dataset.publicPage===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  mediaManager?.destroy();mediaManager=null;discovery?.destroy();discovery=null;if(map){map.remove();map=null;}$('#view').setAttribute('aria-busy','true');$('#view').innerHTML='<div class="loading-surface"><p class="loading-message" role="status">Loading current records…</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>';
-  try{await summary();const html=await renderers[state.page]();if(version!==routeVersion)return;$('#view').innerHTML=html;if(state.page==='overview')renderCarousel();if($('#fuelDiscovery')){discovery=mountDiscovery($('#fuelDiscovery'),state.discoveryStations,{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});if(state.locateOnArrival){state.locateOnArrival=false;discovery.locate();}if(state.mapStationOnArrival){discovery.select(state.mapStationOnArrival);state.mapStationOnArrival=null;}}if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}if(state.page==='complaints'&&state.citizenMode&&$('#complaintForm'))$('#complaintForm [name=vehicleType]').value=state.citizenMode;}
+  mediaManager?.destroy();mediaManager=null;discovery?.destroy();discovery=null;if(map){map.remove();map=null;}$('#view').setAttribute('aria-busy','true');
+  try{
+    syncDemoBanner();
+    if(state.page==='overview'){
+      $('#view').innerHTML=overviewShell();
+      renderCarousel();
+      await hydrateOverview(version);
+    }else{
+      $('#view').innerHTML='<div class="loading-surface"><p class="loading-message" role="status">Loading current records…</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>';
+      if(state.bootError){
+        try{
+          const session=await api('/auth/session');
+          state.user=session.user;setCsrf(session.csrfToken);state.bootError=null;
+          await loadPreferences().catch(()=>{});updateAccount();
+        }catch(error){state.bootError=error;throw error;}
+      }
+      if(summaryPages.has(state.page))await summary();
+      const html=await renderers[state.page]();
+      if(version!==routeVersion)return;
+      $('#view').innerHTML=html;
+      if($('#fuelDiscovery'))mountFuelDiscovery();
+    }
+    if(version!==routeVersion)return;
+    if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}
+    if(state.page==='complaints'&&state.citizenMode&&$('#complaintForm'))$('#complaintForm [name=vehicleType]').value=state.citizenMode;
+  }
   catch(error){if(version!==routeVersion)return;$('#view').innerHTML=empty('Unable to load current records. Check your connection and use Refresh data.');showError(error);$('#connection').textContent='Unavailable';}
   finally{if(version===routeVersion){$('#view').setAttribute('aria-busy','false');mountPasswordToggles($('#view'));if($('#mediaManagement'))mediaManager=mountMediaManagement($('#mediaManagement'),state.mediaContent,{onSaved:announceContentUpdate});}}
 }
@@ -679,9 +770,18 @@ document.addEventListener('error',event=>{
 $('#mediaLightbox').addEventListener('close',()=>{$('#lightboxContent').replaceChildren();});
 async function initialize(){
   $('#copyrightYear').textContent=new Date().getFullYear();
+  const sessionReady=api('/auth/session').then(session=>{state.user=session.user;setCsrf(session.csrfToken);}).catch(error=>{state.bootError=error;showError(error);});
   decorateWorkspaceNav();
-  try{const session=await api('/auth/session');state.user=session.user;setCsrf(session.csrfToken);await loadPreferences().catch(()=>{});updateAccount();}catch(error){showError(error);}
-  await navigate();
+  const deferred=location.hash===''||location.hash==='#overview';
+  if(deferred){
+    const firstPaint=navigate();
+    await sessionReady;await loadPreferences().catch(()=>{});updateAccount();
+    await firstPaint;
+    if(state.page!=='overview')await navigate();
+  }else{
+    await sessionReady;await loadPreferences().catch(()=>{});updateAccount();
+    await navigate();
+  }
   refreshNotifications().catch(()=>{});
   if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
 }

@@ -251,7 +251,7 @@ test('closing a map during library loading does not initialize a hidden map',asy
 test('real data loading exposes a skeleton and honors reduced motion',async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});let release;const gate=new Promise(resolve=>{release=resolve;});
   await page.route('**/api/v1/summary',async route=>{await gate;await route.continue();});
-  try{await page.goto('/');await expect(page.locator('#view')).toHaveAttribute('aria-busy','true');await expect(page.locator('.loading-surface')).toBeVisible();
+  try{await page.goto('/');await expect(page.locator('#view')).toHaveAttribute('aria-busy','true');await expect(page.locator('.loading-surface').first()).toBeVisible();
     expect(await page.locator('.skeleton').first().evaluate(el=>getComputedStyle(el,'::after').animationName)).toBe('none');
   }finally{release();}
   await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();await expect(page.locator('#view')).toHaveAttribute('aria-busy','false');

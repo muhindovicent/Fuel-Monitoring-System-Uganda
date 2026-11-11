@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import pino from 'pino';
@@ -14,6 +15,7 @@ export function createApp(db,config) {
   const logger=pino({level:config.LOG_LEVEL,redact:['password','token','cookie','authorization']});
   app.disable('x-powered-by');app.disable('etag');
   app.set('trust proxy',config.TRUST_PROXY_HOPS);
+  app.use(compression());
   app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','blob:','https:'],mediaSrc:["'self'",'blob:','https:'],frameSrc:['https://www.youtube-nocookie.com','https://player.vimeo.com'],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],baseUri:["'self'"],formAction:["'self'"],upgradeInsecureRequests:config.NODE_ENV==='production'?[]:null}},xFrameOptions:{action:'deny'},strictTransportSecurity:config.NODE_ENV==='production'?{maxAge:31536000,includeSubDomains:true}:false}));
   app.use((req,res,next)=>{
     req.requestId=randomUUID();res.set('X-Request-Id',req.requestId);
@@ -48,6 +50,7 @@ export function createApp(db,config) {
   app.use('/vendor/leaflet',express.static(fileURLToPath(new URL('../node_modules/leaflet/dist/',import.meta.url)),{maxAge:'7d',dotfiles:'deny'}));
   app.use(express.static(appDirectory,{maxAge:0,dotfiles:'deny',setHeaders(res,path){
     if(path.endsWith('service-worker.js'))res.set('Cache-Control','no-cache');
+    else if(/[/\\]assets[/\\]/.test(path))res.set('Cache-Control','public, max-age=86400');
   }}));
   app.use((_req,res)=>res.status(404).send('Page not found.'));
   app.use((error,req,res,_next)=>{

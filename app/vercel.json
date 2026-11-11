@@ -20,6 +20,7 @@
       ]
     },
     { "source": "/api/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/assets/:path*", "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }] },
     { "source": "/service-worker.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
   ]
 }
