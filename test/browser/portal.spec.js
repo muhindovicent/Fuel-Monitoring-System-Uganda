@@ -56,7 +56,9 @@ test('homepage stays usable when gallery and advisory requests fail',async({page
   await page.goto('/');
   await expect(page.locator('#homeSearch')).toBeVisible();
   await expect(page.locator('.carousel-slide')).toHaveCount(2);
-  await expect(page.locator('.advisory-empty')).toBeVisible();
+  await expect(page.locator('.carousel-status')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="advisories"]')).toContainText('unavailable');
+  await expect(page.locator('.advisory-empty')).toHaveCount(0);
   await page.getByRole('button',{name:'Next image',exact:true}).click();
   await expect(page.locator('.carousel-slide').nth(1)).toBeVisible();
   expect(errors).toEqual([]);
@@ -64,6 +66,7 @@ test('homepage stays usable when gallery and advisory requests fail',async({page
 test('public search sends real district and fuel filters, then opens station details',async({page})=>{
   await page.goto('/');const form=page.locator('#homeSearch');await expect(form).toBeVisible();
   await form.getByLabel('Station name or area').fill('Ntinda');
+  await expect(form.getByLabel('District',{exact:true}).locator('option[value="Kampala"]')).toBeAttached();
   await form.getByLabel('District',{exact:true}).selectOption('Kampala');await form.getByLabel('Fuel type').selectOption('diesel');
   const response=page.waitForResponse(r=>r.url().includes('/api/v1/stations?')&&r.url().includes('district=Kampala')&&r.url().includes('fuel=diesel'));
   await form.getByRole('button',{name:'Search prices'}).click();expect((await response).status()).toBe(200);
@@ -255,4 +258,85 @@ test('real data loading exposes a skeleton and honors reduced motion',async({pag
     expect(await page.locator('.skeleton').first().evaluate(el=>getComputedStyle(el,'::after').animationName)).toBe('none');
   }finally{release();}
   await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();await expect(page.locator('#view')).toHaveAttribute('aria-busy','false');
+});
+test('homepage discovery fetches one server page instead of the full directory',async({page})=>{
+  const stationQueries=[];
+  page.on('request',request=>{const url=new URL(request.url());if(url.pathname==='/api/v1/stations')stationQueries.push(url.searchParams);});
+  await page.goto('/');
+  await expect(page.locator('.discovery-card').first()).toBeVisible();
+  await expect(page.locator('#discoveryCount')).not.toHaveText('Loading stations…');
+  expect(stationQueries).toHaveLength(1);
+  expect(stationQueries[0].get('limit')).toBe('50');
+  expect(stationQueries[0].get('offset')).toBe('0');
+  const total=Number((await page.locator('#discoveryCount').textContent()).replace(/\D/g,''));
+  expect(total).toBeGreaterThan(100);
+  expect(await page.locator('.discovery-card').count()).toBeLessThanOrEqual(50);
+});
+test('Show more pages additional server results while preserving filters and map selection',async({page})=>{
+  const offsets=[];
+  page.on('request',request=>{const url=new URL(request.url());if(url.pathname==='/api/v1/stations')offsets.push(url.searchParams.get('offset'));});
+  await page.goto('/#stations');
+  const form=page.locator('#homeMapFilter');await expect(form).toBeVisible();
+  await form.getByLabel('District or city').fill('Generated District');
+  await form.getByRole('button',{name:'Apply filters'}).click();
+  await expect(page.locator('#discoveryCount')).toContainText('55 matching stations');
+  await expect(page.locator('.discovery-card')).toHaveCount(50);
+  await page.getByRole('button',{name:'Show more matching stations',exact:true}).click();
+  await expect(page.locator('.discovery-card')).toHaveCount(55);
+  expect(offsets).toContain('50');
+  const card=page.locator('[data-station-card]').filter({hasText:'ZZ Generated Station 010'});
+  await card.getByRole('button',{name:'Show ZZ Generated Station 010 on map',exact:true}).click();
+  await expect(card).toHaveClass(/selected/);
+  await expect(form.getByLabel('District or city')).toHaveValue('Generated District');
+  await form.getByRole('button',{name:'Apply filters'}).click();
+  await expect(page.locator('.discovery-card.selected')).toContainText('ZZ Generated Station 010');
+  await expect(page.locator('#discoveryCount')).toContainText('55 matching stations');
+  await expect(page.locator('.discovery-card')).toHaveCount(50);
+  await expect(form.getByLabel('District or city')).toHaveValue('Generated District');
+});
+test('failed section requests surface real errors instead of fabricating empty states',async({page})=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const paths=['/api/v1/stations','/api/v1/stations/insights','/api/v1/news','/api/v1/videos','/api/v1/media','/api/v1/advisories'];
+  await page.route(url=>paths.includes(url.pathname),route=>route.fulfill({status:503,json:{error:'Temporarily unavailable.'}}));
+  await page.goto('/');
+  await expect(page.locator('#homeSearch')).toBeVisible();
+  await expect(page.locator('.discovery-error')).toBeVisible();
+  await expect(page.locator('.discovery-empty')).toHaveCount(0);
+  await expect(page.locator('#discoveryCount')).toHaveText('Station results unavailable');
+  await expect(page.locator('#homeMapStatus')).toContainText('unavailable right now');
+  await expect(page.locator('[data-overview="price-comparison"]')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="recent-updates"]')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="distribution"]')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="news"]')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="videos"]')).toContainText('unavailable');
+  await expect(page.locator('[data-overview="advisories"]')).toContainText('unavailable');
+  await expect(page.locator('.carousel-status')).toContainText('unavailable');
+  await expect(page.locator('.home-kpis .metric').first()).toBeVisible();
+  await expect(page.locator('.service-card')).toHaveCount(9);
+  expect(errors).toEqual([]);
+});
+test('homepage sections render independently while station discovery waits on a slow API',async({page})=>{
+  let release;const gate=new Promise(resolve=>{release=resolve;});
+  await page.route(url=>url.pathname==='/api/v1/stations',async route=>{await gate;await route.continue();});
+  try{
+    await page.goto('/');
+    await expect(page.getByRole('heading',{name:'Find Affordable Fuel. Drive Smarter.',exact:true})).toBeVisible();
+    await expect(page.locator('.service-card')).toHaveCount(9);
+    await expect(page.locator('.home-kpis .metric').first()).toBeVisible();
+    await expect(page.locator('[data-overview="news"] .section-heading')).toBeVisible();
+    await expect(page.locator('[data-overview="price-comparison"]')).not.toContainText('Loading');
+    await expect(page.locator('#view')).toHaveAttribute('aria-busy','false');
+    await expect(page.locator('#discoveryCount')).toHaveText('Loading stations…');
+    await expect(page.locator('.discovery-card')).toHaveCount(0);
+  }finally{release();}
+  await expect(page.locator('.discovery-card').first()).toBeVisible();
+  await expect(page.locator('#discoveryCount')).not.toHaveText('Loading stations…');
+});
+test('hero image preload is added only while the homepage is active',async({page})=>{
+  await page.goto('/');
+  await expect(page.locator('link#heroPreload')).toHaveCount(1);
+  await page.evaluate(()=>{location.hash='prices';});
+  await expect(page.locator('link#heroPreload')).toHaveCount(0);
+  await page.evaluate(()=>{location.hash='overview';});
+  await expect(page.locator('link#heroPreload')).toHaveCount(1);
 });

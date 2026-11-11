@@ -14,6 +14,10 @@ const accountDb={query:async(sql,params)=>{
 }};
 await fixtures(accountDb);
 await db.query('INSERT INTO messages(id,user_id,room_id,body) SELECT $1,id,1,$2 FROM users WHERE email=$3',[randomUUID(),'<img src=x onerror="window.XSS=true"> Browser test observation','bob@example.test']);
+for(let n=1;n<=55;n++){
+  const station=await db.query(`INSERT INTO stations(operator_id,name,area,district,region,latitude,longitude,demo) VALUES (1,$1,'Generated Area','Generated District','Central',$2,$3,true) RETURNING id`,[`ZZ Generated Station ${String(n).padStart(3,'0')}`,-0.6+n*0.01,30.65+n*0.01]);
+  await db.query(`INSERT INTO prices(station_id,fuel,price,source) VALUES ($1,'petrol',$2,'demo')`,[station.rows[0].id,5000+n]);
+}
 const port=Number(process.env.BROWSER_TEST_PORT||3100);
 if(![3100,3101,3102,3103,3104,3105,3106].includes(port))throw new Error('Browser fixtures must use their dedicated test ports.');
 const app=createApp(db,{APP_ORIGIN:`http://localhost:${port}`,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});

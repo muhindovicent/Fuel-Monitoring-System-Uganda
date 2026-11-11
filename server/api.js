@@ -39,19 +39,49 @@ export function apiRoutes(db,config) {
     return application;
   }
   router.get('/stations',async(req,res)=>{
-    const input=z.object({q:z.string().trim().max(100).default(''),fuel:fuel.optional(),sort:z.enum(['name','price']).default('name'),district:z.string().max(100).optional(),lat:z.coerce.number().min(-90).max(90).optional(),lng:z.coerce.number().min(-180).max(180).optional(),radius:z.coerce.number().min(0.1).max(100).default(10),...pageSchema.shape}).refine(v=>(v.lat===undefined)===(v.lng===undefined),'Both coordinates required.').parse(req.query);
+    const input=z.object({q:z.string().trim().max(100).default(''),fuel:fuel.optional(),sort:z.enum(['name','price','distance']).default('name'),district:z.string().max(100).optional(),lat:z.coerce.number().min(-90).max(90).optional(),lng:z.coerce.number().min(-180).max(180).optional(),radius:z.coerce.number().min(0.1).max(100).optional(),freshness:z.coerce.number().int().min(1).max(48).optional(),...pageSchema.shape}).refine(v=>(v.lat===undefined)===(v.lng===undefined),'Both coordinates required.').parse(req.query);
     const params=[`%${input.q}%`,input.district??null,input.fuel??null];
-    let where=` WHERE s.active AND (s.name ILIKE $1 OR s.area ILIKE $1 OR s.district ILIKE $1) AND ($2::text IS NULL OR s.district=$2)
+    let where=` WHERE s.active AND (s.name ILIKE $1 OR s.area ILIKE $1 OR s.district ILIKE $1 OR o.name ILIKE $1)
+      AND ($2::text IS NULL OR (CASE WHEN EXISTS(SELECT 1 FROM stations sd WHERE sd.active AND lower(sd.district)=lower(btrim($2))) THEN lower(s.district)=lower(btrim($2))
+        WHEN EXISTS(SELECT 1 FROM stations sa WHERE sa.active AND lower(sa.area)=lower(btrim($2))) THEN lower(s.area)=lower(btrim($2))
+        ELSE s.area ILIKE '%'||btrim($2)||'%' OR s.district ILIKE '%'||btrim($2)||'%' END))
       AND ($3::text IS NULL OR EXISTS(SELECT 1 FROM prices p WHERE p.station_id=s.id AND p.fuel=$3))`;
-    if(input.lat!==undefined) {
-      params.push(input.lat,input.lng,input.radius);
-      where+=` AND s.latitude BETWEEN $4-$6/111.0 AND $4+$6/111.0
-        AND 6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$4)/2),2)+cos(radians($4))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$5)/2),2))))<=$6`;
+    if(input.freshness!==undefined){
+      params.push(input.freshness);
+      where+=` AND NOT s.demo AND EXISTS(SELECT 1 FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.source IN ('operator','moderator','consensus') AND p.updated_at>=now()-make_interval(hours=>$${params.length}))`;
     }
+    let latIndex,lngIndex;
+    if(input.lat!==undefined){
+      params.push(input.lat,input.lng);latIndex=params.length-1;lngIndex=params.length;
+      if(input.radius!==undefined){
+        params.push(input.radius);const radiusIndex=params.length;
+        where+=` AND s.latitude BETWEEN $${latIndex}-$${radiusIndex}/111.0 AND $${latIndex}+$${radiusIndex}/111.0
+          AND 6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$${latIndex})/2),2)+cos(radians($${latIndex}))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$${lngIndex})/2),2))))<=$${radiusIndex}`;
+      }
+    }
+    const total=(await db.query(`SELECT count(*)::int AS count FROM stations s JOIN operators o ON o.id=s.operator_id${where}`,params)).rows[0].count;
     params.push(input.limit,input.offset);
-    const ordering=input.sort==='price'?"(SELECT p.price FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.updated_at>now()-interval '48 hours' AND p.source<>'demo') ASC NULLS LAST,s.name,s.id":'s.name,s.id';
+    const distance=`6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$${latIndex})/2),2)+cos(radians($${latIndex}))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$${lngIndex})/2),2))))`;
+    const ordering=input.sort==='price'
+      ? `(SELECT p.price FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.updated_at>now()-interval '48 hours' AND p.source<>'demo' AND NOT s.demo) ASC NULLS LAST,s.name,s.id`
+      : input.sort==='distance'&&latIndex!==undefined?`${distance} ASC,s.name,s.id`
+      :'s.name,s.id';
     const rows=(await db.query(`${stationProjection}${where} ORDER BY ${ordering} LIMIT $${params.length-1} OFFSET $${params.length}`,params)).rows;
-    res.json({items:rows,limit:input.limit,offset:input.offset});
+    const places=(await db.query(`SELECT DISTINCT v FROM (SELECT district AS v FROM stations WHERE active UNION SELECT area FROM stations WHERE active) t WHERE v IS NOT NULL ORDER BY v`)).rows.map(row=>row.v);
+    res.json({items:rows,limit:input.limit,offset:input.offset,total,places});
+  });
+  router.get('/stations/insights',async(_req,res)=>{
+    const [comparison,updates,distribution,districts]=await Promise.all([
+      db.query(`SELECT s.id,s.name,s.district,p.price,p.source FROM prices p JOIN stations s ON s.id=p.station_id
+        WHERE s.active AND NOT s.demo AND p.fuel='petrol' AND p.source<>'demo' AND p.updated_at>=now()-interval '48 hours'
+        ORDER BY p.price,s.name,s.id LIMIT 5`),
+      db.query(`SELECT s.id,s.name,s.district,p.fuel,p.price,p.source,p.updated_at FROM prices p JOIN stations s ON s.id=p.station_id
+        WHERE s.active AND NOT s.demo AND p.source IN ('operator','moderator','consensus') AND p.updated_at>=now()-interval '48 hours'
+        ORDER BY p.updated_at DESC,s.name,s.id LIMIT 6`),
+      db.query(`SELECT region,count(*)::int AS count FROM stations WHERE active AND NOT demo GROUP BY region ORDER BY region`),
+      db.query(`SELECT DISTINCT district FROM stations WHERE active ORDER BY district`)
+    ]);
+    res.json({comparison:comparison.rows,updates:updates.rows,distribution:distribution.rows,districts:districts.rows.map(row=>row.district)});
   });
   router.get('/stations/:id',async(req,res)=>{
     const station=(await db.query(`${stationProjection} WHERE s.id=$1 AND s.active`,[positiveId.parse(req.params.id)])).rows[0];

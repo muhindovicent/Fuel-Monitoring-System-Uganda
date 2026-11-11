@@ -1,10 +1,10 @@
 import {api,setCsrf,escapeHtml as esc,money,date} from './api.js';
 import {icon,services} from './ui.js';
-import {discoveryMarkup,mountDiscovery,freshPrice} from './discovery.js';
+import {discoveryMarkup,mountDiscovery} from './discovery.js';
 import {workspaceFor} from './access.js';
 import {loadLeaflet} from './leaflet.js';
 import {mediaManagementMarkup,mountMediaManagement} from './media-management.js';
-import {newsCard,imageCard,videoCard,videoPlayer,homepagePublishing,photoCarousel} from './media-content.js';
+import {newsCard,imageCard,videoCard,videoPlayer,homepageNews,homepageVideos,photoCarousel} from './media-content.js';
 import {mountPasswordToggles,resetPasswordVisibility} from './password-toggle.js';
 
 const $=selector=>document.querySelector(selector);
@@ -89,7 +89,6 @@ async function loadDirectory(){
   for(let offset=0;;offset+=100){const batch=await api(`/stations?limit=100&offset=${offset}`);stations.push(...batch.items);if(batch.items.length<100)break;}
   state.stations=stations;return stations;
 }
-async function loadStationBatch(offset=0){return (await api(`/stations?limit=100&offset=${offset}`)).items;}
 function syncDemoBanner(){
   const banner=$('#demoBanner'),demo=Boolean(state.summary?.demo_stations);
   if(state.page==='overview'){banner.hidden=false;banner.style.visibility=demo?'visible':'hidden';}
@@ -119,7 +118,7 @@ function overviewShell(){
   <section class="container record-insights"><div class="grid"><article class="card"><h2>Recent verified updates</h2><p class="small">Fresh operational records, with their actual publication source.</p><div data-overview="recent-updates">${skeletonFill('Loading recent updates…')}</div></article><article class="card"><h2>Station distribution</h2><p class="small">Operational entries in this directory, not a measure of national coverage.</p><div data-overview="distribution">${skeletonFill('Loading station distribution…')}</div></article></div></section>
   <section class="portal-section"><div class="container"><div class="citizen-feature"><div class="citizen-feature-copy"><span class="eyebrow">CITIZEN PARTICIPATION</span><h2>A concern deserves<br>more than a comment.</h2><p>Submit a station concern, attach private evidence, and follow the case through a documented response.</p><ol class="case-steps"><li><span>01</span>Describe the issue</li><li><span>02</span>Receive a tracked case</li><li><span>03</span>Follow the response</li></ol><a class="button amber" href="#complaints">Report a concern ${icon('arrow')}</a><a class="citizen-follow" href="#complaints">Already submitted? Track your case →</a></div><figure class="citizen-photo"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town, Uganda; an illustrative photograph" width="1400" height="1050" loading="lazy" decoding="async" fetchpriority="low"><figcaption>Kabale, Uganda · Documentary photography, not an endorsement. <a href="#credits">Photo credits ↗</a></figcaption></figure></div></div></section>
    <section class="portal-section advisory-section"><div class="container">${sectionHeading('PUBLIC INFORMATION','Advisories you can trace.','Published platform releases with links to their original sources.','#advisories','All advisories & town halls')}<div class="grid three" data-overview="advisories">${skeletonFill('Loading advisories…')}</div></div></section>
-  <div data-overview="publishing">${skeletonFill('Loading newsroom…')}</div><section class="container community-strip"><div>${icon('users')}<div><h2>Better journeys begin with shared information.</h2><p>Join the conversation along Uganda’s transport corridors.</p></div></div><a class="button primary" href="#community">Explore driver community ${icon('arrow')}</a></section>
+  <section class="portal-section container" id="homePublishing"><div data-overview="news">${skeletonFill('Loading news…')}</div><div data-overview="videos">${skeletonFill('Loading videos…')}</div></section><section class="container community-strip"><div>${icon('users')}<div><h2>Better journeys begin with shared information.</h2><p>Join the conversation along Uganda’s transport corridors.</p></div></div><a class="button primary" href="#community">Explore driver community ${icon('arrow')}</a></section>
   </template>`;
 }
 async function hydrateOverview(version){
@@ -129,41 +128,38 @@ async function hydrateOverview(version){
     if(!restReady){pendingRest.push(()=>fill(name,html));return;}
     const el=document.querySelector(`[data-overview="${name}"]`);if(el&&alive())el.innerHTML=html;
   };
-  const replace=(name,html)=>{
-    if(!restReady){pendingRest.push(()=>replace(name,html));return;}
-    const el=document.querySelector(`[data-overview="${name}"]`);if(el&&alive())el.outerHTML=html;
-  };
   const summaryTask=summary().catch(error=>{
     if(!alive())return;
     showError(error);$('#connection').textContent='Unavailable';
     fill('kpis',empty('Platform metrics are unavailable right now. Use Refresh data to try again.'));
     fill('region-chart',empty('Regional averages are unavailable right now.'));
   });
-  const stationsTask=loadStationBatch(0).catch(()=>[]);
-  const mediaTask=api('/media').then(result=>result.items??[]).catch(()=>[]);
-  const newsTask=api('/news').then(result=>result.items??[]).catch(()=>[]);
-  const videosTask=api('/videos').then(result=>result.items??[]).catch(()=>[]);
-  const advisoriesTask=api('/advisories').then(result=>result.items??[]).catch(()=>[]);
-  const fillStations=stations=>{
-    const district=$('#homeSearch [name=district]');
-    if(district?.closest('label'))district.closest('label').outerHTML=districtSelect(stations);
-    fill('price-comparison',priceComparison(stations));
-    fill('recent-updates',recentPriceUpdates(stations));
-    fill('distribution',stationDistribution(stations));
-    fill('discovery',discoveryMarkup(stations,state.discoveryPreferences));
-    mountFuelDiscovery();
-  };
+  const mediaTask=api('/media').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const newsTask=api('/news').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const videosTask=api('/videos').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const advisoriesTask=api('/advisories').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const insightsTask=api('/stations/insights');
   await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
   if(!alive())return;
   const rest=document.getElementById('homeRest');
   if(rest)rest.replaceWith(...rest.content.childNodes);
   restReady=true;
   while(pendingRest.length)pendingRest.shift()();
-  const stations=await stationsTask;
-  if(!alive())return;
-  state.stations=stations;state.discoveryStations=stations;
-  fillStations(stations);
-  if(stations.length===100)loadDirectory().then(full=>{if(alive())fillStations(full);}).catch(()=>{});
+  fill('discovery',discoveryMarkup(state.discoveryPreferences));
+  mountFuelDiscovery();
+  insightsTask.then(data=>{
+    if(!alive())return;
+    fill('price-comparison',priceComparison(data.comparison));
+    fill('recent-updates',recentPriceUpdates(data.updates));
+    fill('distribution',stationDistribution(data.distribution));
+    const district=$('#homeSearch [name=district]');
+    if(district?.closest('label'))district.closest('label').outerHTML=districtSelectFromList(data.districts);
+  }).catch(()=>{
+    if(!alive())return;
+    fill('price-comparison',empty('Station price insights are unavailable right now. Try Refresh data.'));
+    fill('recent-updates',empty('Station update insights are unavailable right now. Try Refresh data.'));
+    fill('distribution',empty('Station distribution is unavailable right now. Try Refresh data.'));
+  });
   summaryTask.then(()=>{
     if(!alive()||!state.summary)return;
     document.querySelectorAll('[data-hero-price]').forEach(el=>{el.innerHTML=fuelIndicator(el.dataset.heroPrice);});
@@ -171,24 +167,37 @@ async function hydrateOverview(version){
     fill('kpis',`<div class="metrics">${publicMetric(s.verified_today,'Verified reports today','shield')}${publicMetric(s.stations-s.demo_stations,'Operational directory stations','pump')}${publicMetric(regions,'Regions with fresh prices','globe')}${publicMetric(s.resolved_tickets,'Resolved consumer cases','check')}</div><p class="data-note">${icon('info')}Metrics are actual platform records. ${s.demo_stations?`${s.demo_stations} demonstration directory entries are excluded from the operational station count.`:'Prices older than 48 hours are excluded from fresh-price insights.'}</p>`);
     fill('region-chart',regionChart(s.regions));
   });
-  mediaTask.then(media=>{if(!alive())return;const carousel=$('.photo-carousel');if(carousel){carousel.outerHTML=photoCarousel(media);renderCarousel();}});
-  Promise.all([newsTask,videosTask]).then(([news,videos])=>{if(alive())replace('publishing',homepagePublishing(news,videos));});
-  advisoriesTask.then(notices=>{if(alive())fill('advisories',advisoryGrid(notices));});
-  await Promise.all([summaryTask,stationsTask,mediaTask,newsTask,videosTask,advisoriesTask]);
+  mediaTask.then(result=>{
+    if(!alive())return;
+    const carousel=$('.photo-carousel');if(!carousel)return;
+    carousel.outerHTML=result.ok?photoCarousel(result.items):photoCarousel([], 'Featured photography is unavailable right now. Try Refresh data.');
+    renderCarousel();
+  });
+  Promise.all([newsTask,videosTask]).then(([news,videos])=>{
+    if(!alive())return;
+    fill('news',news.ok?homepageNews(news.items):empty('News is unavailable right now. Try Refresh data.'));
+    fill('videos',videos.ok?homepageVideos(videos.items):empty('Videos are unavailable right now. Try Refresh data.'));
+  });
+  advisoriesTask.then(result=>{
+    if(!alive())return;
+    fill('advisories',result.ok?advisoryGrid(result.items):empty('Advisories are unavailable right now. Try Refresh data.'));
+  });
+  await Promise.all([summaryTask,mediaTask,newsTask,videosTask,advisoriesTask,insightsTask.catch(()=>null)]);
 }
 function sectionHeading(kicker,title,text,href,label){return `<div class="section-heading"><div><span class="eyebrow">${esc(kicker)}</span><h2>${esc(title)}</h2><p>${esc(text)}</p></div>${href?`<a class="text-link" href="${href}">${esc(label)} ${icon('arrow')}</a>`:''}</div>`;}
 function serviceDirectory(){return `<div class="service-grid">${services.map((s,i)=>`<a class="service-card service-tone-${i%3}" href="${s.href}"><span class="service-icon">${icon(s.icon)}</span><span class="service-tag">${s.tag}</span><h3>${s.title}</h3><p>${s.description}</p><span class="service-arrow">${icon('arrow')}</span></a>`).join('')}</div>`;}
 function districtOptions(stations){return [['','All districts'],...[...new Set(stations.map(s=>s.district))].sort().map(d=>[d,d])];}
 function districtSelect(stations,selected=''){return select('District','district',districtOptions(stations),selected,false);}
+function districtSelectFromList(districts,selected=''){return select('District','district',[['','All districts'],...districts.map(d=>[d,d])],selected,false);}
 function publicMetric(value,label,name){return `<article class="metric public-metric"><span class="metric-icon">${icon(name)}</span><div><strong>${Number(value).toLocaleString('en-UG')}</strong><span class="label">${esc(label)}</span></div></article>`;}
 function fuelIndicator(fuel){const rows=state.summary.regions.filter(r=>r.fuel===fuel);const samples=rows.reduce((n,r)=>n+r.samples,0);return samples?Math.round(rows.reduce((n,r)=>n+r.average*r.samples,0)/samples).toLocaleString('en-UG'):'<span class="unavailable-price">Awaiting data</span>';}
 function regionChart(rows){if(!rows.length)return empty('No fresh operational prices yet. Accepted non-demo observations will appear here.');const max=Math.max(...rows.map(r=>r.average)),fuels=[...new Set(rows.map(r=>r.fuel))];return `<div class="region-chart" role="group" aria-label="Regional average published prices in UGX per litre"><div class="chart-legend">${fuels.map(f=>`<span class="legend-${esc(f)}">${esc(f.charAt(0).toUpperCase()+f.slice(1))}</span>`).join('')}</div>${rows.map(r=>`<div class="region-bar-row"><span>${esc(r.region)}<small>${esc(r.fuel)} · ${r.samples} samples</small></span><span class="region-bar-track" aria-hidden="true"><span class="region-bar ${r.fuel==='diesel'?'diesel':r.fuel==='kerosene'?'kerosene':''}" style="width:${r.average/max*100}%"></span></span><strong>${Number(r.average).toLocaleString('en-UG')}</strong></div>`).join('')}</div>`;}
-function priceComparison(stations){const entries=stations.filter(s=>!s.demo).map(s=>({station:s,price:s.prices.find(p=>p.fuel==='petrol'&&p.source!=='demo'&&!p.stale)})).filter(e=>e.price).sort((a,b)=>a.price.price-b.price.price).slice(0,5);return entries.length?`<div class="comparison-list">${entries.map((e,i)=>`<div><span class="comparison-rank">${i+1}</span><div><strong>${esc(e.station.name)}</strong><small>${esc(e.station.district)} · ${esc(e.price.source)}</small></div><strong>${money(e.price.price)}</strong><button class="quiet small" data-action="station" data-id="${e.station.id}" aria-label="View ${esc(e.station.name)}">${icon('arrow')}</button></div>`).join('')}</div>`:empty('No fresh operational petrol prices are available for comparison. Demo prices are not ranked.');}
-function recentPriceUpdates(stations){const updates=stations.flatMap(s=>s.prices.map(p=>({station:s,price:freshPrice(s,p.fuel)})).filter(x=>x.price)).sort((a,b)=>new Date(b.price.updated_at)-new Date(a.price.updated_at)).slice(0,6);return updates.length?`<div class="verified-update-feed">${updates.map(({station:s,price:p})=>`<article><span class="update-icon">${icon('check')}</span><div><strong>${esc(s.name)}</strong><p>${esc(p.fuel)} · ${money(p.price)} / litre</p><small>${esc(p.source)} · ${date(p.updated_at)}</small></div><button class="quiet small" data-action="station" data-id="${s.id}" aria-label="Inspect ${esc(s.name)} price update">${icon('arrow')}</button></article>`).join('')}</div>`:empty('No fresh verified operational updates yet. Sample and outdated prices are excluded.');}
-function stationDistribution(stations){const counts={};stations.filter(s=>!s.demo).forEach(s=>{counts[s.region]=(counts[s.region]||0)+1;});const entries=Object.entries(counts);if(!entries.length)return empty('No operational station distribution is available. Demonstration entries are not counted.');const max=Math.max(...Object.values(counts));return `<div class="distribution-chart">${entries.map(([name,count])=>`<div><span>${esc(name)}</span><span class="region-bar-track"><span class="region-bar" style="width:${count/max*100}%"></span></span><strong>${count}</strong></div>`).join('')}</div>`;}
-async function fuelDiscoveryView(){const stations=await loadDirectory();state.discoveryStations=stations;return `${heading('Find your next fuel stop.','Discover stations, compare source-labeled prices, and choose a stop that fits your journey.','MOBILITY / FUEL DISCOVERY')}${discoveryMarkup(stations,state.discoveryPreferences)}<div class="discovery-followup"><span>${icon('info')}Distance is a straight-line estimate, not a road route. A recorded price does not confirm fuel stock.</span><div class="actions"><a href="#prices">Compare prices</a><a href="#trip">Plan trip cost</a><a href="#report">Report a price</a></div></div>`;}
+function priceComparison(rows){return rows.length?`<div class="comparison-list">${rows.map((r,i)=>`<div><span class="comparison-rank">${i+1}</span><div><strong>${esc(r.name)}</strong><small>${esc(r.district)} · ${esc(r.source)}</small></div><strong>${money(r.price)}</strong><button class="quiet small" data-action="station" data-id="${r.id}" aria-label="View ${esc(r.name)}">${icon('arrow')}</button></div>`).join('')}</div>`:empty('No fresh operational petrol prices are available for comparison. Demo prices are not ranked.');}
+function recentPriceUpdates(updates){return updates.length?`<div class="verified-update-feed">${updates.map(u=>`<article><span class="update-icon">${icon('check')}</span><div><strong>${esc(u.name)}</strong><p>${esc(u.fuel)} · ${money(u.price)} / litre</p><small>${esc(u.source)} · ${date(u.updated_at)}</small></div><button class="quiet small" data-action="station" data-id="${u.id}" aria-label="Inspect ${esc(u.name)} price update">${icon('arrow')}</button></article>`).join('')}</div>`:empty('No fresh verified operational updates yet. Sample and outdated prices are excluded.');}
+function stationDistribution(rows){if(!rows.length)return empty('No operational station distribution is available. Demonstration entries are not counted.');const max=Math.max(...rows.map(r=>r.count));return `<div class="distribution-chart">${rows.map(r=>`<div><span>${esc(r.region)}</span><span class="region-bar-track"><span class="region-bar" style="width:${r.count/max*100}%"></span></span><strong>${r.count}</strong></div>`).join('')}</div>`;}
+async function fuelDiscoveryView(){return `${heading('Find your next fuel stop.','Discover stations, compare source-labeled prices, and choose a stop that fits your journey.','MOBILITY / FUEL DISCOVERY')}${discoveryMarkup(state.discoveryPreferences)}<div class="discovery-followup"><span>${icon('info')}Distance is a straight-line estimate, not a road route. A recorded price does not confirm fuel stock.</span><div class="actions"><a href="#prices">Compare prices</a><a href="#trip">Plan trip cost</a><a href="#report">Report a price</a></div></div>`;}
 async function servicesView(){return `${heading('Every journey. A practical service.','Choose the service you need. Personal records and submissions require sign-in.','CITIZEN SERVICES')}${serviceDirectory()}<section class="card service-explainer"><h2>One citizen account, different journeys.</h2><p>Boda riders, truck drivers and private motorists use the same citizen permissions. Choose a transport type when submitting a case or your own fuel efficiency when planning a trip.</p><div class="actions"><a class="button primary" href="#complaints">Consumer cases ${icon('arrow')}</a><a class="button secondary" href="#trip">Plan a journey ${icon('route')}</a></div></section>`;}
-async function analyticsView(){const [caps,stations]=await Promise.all([api('/caps'),loadDirectory()]);return `${heading('A clearer view of the fuel market.','Operational price intelligence drawn from published platform records.','REPORTS & ANALYTICS')}<div class="metrics">${publicMetric(state.summary.verified_today,'Reports verified today','shield')}${publicMetric(state.summary.stations-state.summary.demo_stations,'Operational stations','pump')}${publicMetric(state.summary.active_tickets,'Active consumer cases','report')}${publicMetric(state.summary.resolved_tickets,'Resolved cases','check')}</div><div class="grid"><section class="card"><h2>Fresh regional averages</h2><p class="small">UGX / litre · Source-linked records · Demo and stale prices excluded.</p>${regionChart(state.summary.regions)}</section><section class="card"><h2>Lowest fresh petrol prices</h2>${priceComparison(stations)}</section></div><section class="card"><h2>Currently effective district directives</h2><p>Only administrator-published, source-linked directives within their effective period are shown. These records do not imply a nationwide legal price cap.</p>${capTable(caps.items)}</section>`;}
+async function analyticsView(){const [caps,insights]=await Promise.all([api('/caps'),api('/stations/insights')]);return `${heading('A clearer view of the fuel market.','Operational price intelligence drawn from published platform records.','REPORTS & ANALYTICS')}<div class="metrics">${publicMetric(state.summary.verified_today,'Reports verified today','shield')}${publicMetric(state.summary.stations-state.summary.demo_stations,'Operational stations','pump')}${publicMetric(state.summary.active_tickets,'Active consumer cases','report')}${publicMetric(state.summary.resolved_tickets,'Resolved cases','check')}</div><div class="grid"><section class="card"><h2>Fresh regional averages</h2><p class="small">UGX / litre · Source-linked records · Demo and stale prices excluded.</p>${regionChart(state.summary.regions)}</section><section class="card"><h2>Lowest fresh petrol prices</h2>${priceComparison(insights.comparison)}</section></div><section class="card"><h2>Currently effective district directives</h2><p>Only administrator-published, source-linked directives within their effective period are shown. These records do not imply a nationwide legal price cap.</p>${capTable(caps.items)}</section>`;}
 function aboutView(){return `${heading('Information that moves Uganda.','An independent fuel-price transparency and citizen engagement platform.','ABOUT MAFUTAWATCH')}<div class="grid"><section class="card"><span class="feature-icon">${icon('pump')}</span><h2>Know what is behind the price.</h2><p>Every published price identifies its source and update time. Operator updates, independently confirmed observations and moderator decisions have distinct provenance.</p><p>Prices more than 48 hours old are labeled stale. Demonstration entries never contribute to fresh operational price analytics.</p><a class="text-link" href="#prices">Explore price information ${icon('arrow')}</a></section><section class="card"><span class="feature-icon">${icon('shield')}</span><h2>A record of your concern.</h2><p>Consumer cases keep evidence private to the submitter and authorized case officers. Replies, assignment and decisions form a trackable conversation.</p><p>The platform records a 24-hour response target. Actual response depends on the operating case team; submission is not a guarantee of enforcement.</p><a class="text-link" href="#complaints">Open a consumer case ${icon('arrow')}</a></section></div><section class="card"><h2>Independent by design. Clear about authority.</h2><p>MafutaWatch branding does not assert government ownership, ministry endorsement or a partnership with any station shown. Published source links let you inspect the original information. The platform is not a substitute for an authorized regulator or an emergency service.</p><a href="#privacy">Read our data-use notice →</a></section>`;}
 function contactView(){return `${heading('Find the right way to get help.','Use a tracked workflow for station concerns and case follow-up.','HELP & CONTACT')}<div class="grid"><section class="card"><span class="feature-icon">${icon('report')}</span><h2>A concern about a fuel station?</h2><p>Submit a consumer case, attach relevant evidence, and read replies from the operating case team in your account.</p><a class="button primary" href="#complaints">Open or track a case ${icon('arrow')}</a></section><section class="card"><span class="feature-icon">${icon('users')}</span><h2>Account or access assistance</h2><p>Account recovery and staff access are managed by the organization operating this deployment. No public support phone number or email address has been configured.</p><p class="small">We do not publish an invented contact or imply that a government support service is connected.</p><a class="text-link" href="#operator">Station access applications ${icon('arrow')}</a></section></div><section class="card"><h2>Before you submit</h2><p>Keep a receipt where available, note the station and incident date, and avoid including unrelated personal information in uploaded evidence. Reports and replies require a live connection.</p><div class="actions"><a href="#privacy">Privacy & data use</a><a href="#activity">My activity</a></div></section>`;}
 function creditsView(){return `${heading('A real place. A credited photograph.','Documentary images of Ugandan transport and the fuel sector.','PHOTOGRAPHY CREDITS')}<div class="grid"><article class="card credit-card"><img src="/assets/kampala-road.jpg" alt="Evening traffic on Kampala Road" width="1600" height="1067" loading="lazy"><h2>Evening traffic jam setting in on Kampala road 05</h2><p>Kyakwera · 20 February 2020 · Kampala, Uganda.</p><p>Original JPEG retained; responsive cropping and a separate gradient overlay are used in the hero. This photograph remains under CC BY-SA 4.0.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Evening_traffic_jam_setting_in_on_Kampala_road_05.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0 ↗</a></div></article><article class="card credit-card"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town" width="1400" height="1050" loading="lazy"><h2>Agaba petrol station in Kabale town</h2><p>Owobusingye · 24 August 2025 · Kabale, Uganda.</p><p>Original JPEG retained, responsively cropped in the citizen-services feature. Depiction does not imply affiliation, a live price observation or endorsement.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Agaba_petrol_station_in_Kabale_town.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0 ↗</a></div></article></div>`;}
@@ -344,7 +353,7 @@ function commandPriorities(){const actions=state.user.role==='admin'?[['users','
 async function readinessStatus(){try{const response=await fetch('/health/ready',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(5000)});const value=await response.json();return {ready:response.ok&&value.status==='ready',checked:new Date().toISOString()};}catch(_error){return {ready:false,checked:new Date().toISOString()};}}
 function readinessCard(status){return `<section class="card readiness-card"><div class="card-head"><h2>Operational readiness</h2>${badge(status.ready?'Ready':'Unavailable',status.ready?'verified':'flagged')}</div><p>${status.ready?'The application readiness endpoint confirmed database/schema access.':'The readiness endpoint could not confirm availability. Check deployment monitoring for details.'}</p><small>Checked ${date(status.checked)}. This is a readiness check, not an uptime, capacity or predictive health metric.</small><div class="actions"><a href="/health/ready" target="_blank" rel="noopener noreferrer">Inspect readiness response ↗</a><button class="quiet small" data-action="refresh">Refresh</button></div></section>`;}
 function assignedCaseOverview(tickets){const assigned=tickets.filter(t=>t.assigned_to===state.user.id&&!['resolved','closed'].includes(t.status));return `<section class="card"><div class="card-head"><h2>Your assigned investigations</h2><button class="small" data-action="admin-tab" data-tab="tickets" data-assignment="mine">Open assigned queue</button></div><p class="small">${assigned.length} active assigned cases in the latest ${tickets.length} accessible records. Deadlines are server-owned.</p>${ticketCards(assigned.slice(0,5))}</section>`;}
-async function intelligencePanel(){const [d,stations]=await Promise.all([api('/admin/dashboard'),loadDirectory()]);state.discoveryStations=stations;const fuel=state.analyticsFuel||'all',history=d.trend.filter(r=>fuel==='all'||r.fuel===fuel),regions=state.summary.regions.filter(r=>fuel==='all'||r.fuel===fuel);return `<form id="intelligenceFilter" class="intelligence-toolbar">${select('Fuel view','fuelView',[['all','All reported fuels'],...fuelOptions],fuel)}<button type="submit">Apply fuel view</button><button type="button" class="primary" data-action="export-price-history" ${history.length?'':'disabled'}>Export accepted history CSV</button></form><div class="metrics">${metric(d.verified,'Verified reports · all time')}${metric(state.summary.stations-state.summary.demo_stations,'Operational directory stations')}${metric(regions.reduce((n,r)=>n+r.samples,0),'Fresh published fuel records')}${metric(history.length,'Daily history rows in view')}</div><div class="grid"><section class="card"><h2>Regional fuel comparisons</h2><p class="small">Fresh operational prices in UGX per litre. Demo and stale entries excluded.</p>${regionChart(regions)}</section><section class="card"><h2>Accepted historical observations</h2><p class="small">Actual daily averages of accepted updates in the last 30 days. Missing dates are not imputed.</p>${trendChart(history)}${history.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${history.map(r=>`<tr><td>${esc(r.day)}</td><td>${esc(r.fuel)}</td><td>${money(r.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted price history for this fuel view.')}</section></div><div class="grid"><section class="card"><h2>Station activity distribution</h2>${stationDistribution(stations)}</section><section class="card"><h2>Recent verified public updates</h2>${recentPriceUpdates(stations)}</section></div><section class="workspace-map-panel"><div class="card-head"><h2>Station network discovery</h2><a href="#stations">Open public explorer ↗</a></div><p class="small">Public directory locations and source-labeled prices. Map filters are independent from the analytical fuel view above.</p>${discoveryMarkup(stations,state.discoveryPreferences)}</section>`;}
+async function intelligencePanel(){const [d,insights]=await Promise.all([api('/admin/dashboard'),api('/stations/insights')]);const fuel=state.analyticsFuel||'all',history=d.trend.filter(r=>fuel==='all'||r.fuel===fuel),regions=state.summary.regions.filter(r=>fuel==='all'||r.fuel===fuel);return `<form id="intelligenceFilter" class="intelligence-toolbar">${select('Fuel view','fuelView',[['all','All reported fuels'],...fuelOptions],fuel)}<button type="submit">Apply fuel view</button><button type="button" class="primary" data-action="export-price-history" ${history.length?'':'disabled'}>Export accepted history CSV</button></form><div class="metrics">${metric(d.verified,'Verified reports · all time')}${metric(state.summary.stations-state.summary.demo_stations,'Operational directory stations')}${metric(regions.reduce((n,r)=>n+r.samples,0),'Fresh published fuel records')}${metric(history.length,'Daily history rows in view')}</div><div class="grid"><section class="card"><h2>Regional fuel comparisons</h2><p class="small">Fresh operational prices in UGX per litre. Demo and stale entries excluded.</p>${regionChart(regions)}</section><section class="card"><h2>Accepted historical observations</h2><p class="small">Actual daily averages of accepted updates in the last 30 days. Missing dates are not imputed.</p>${trendChart(history)}${history.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${history.map(r=>`<tr><td>${esc(r.day)}</td><td>${esc(r.fuel)}</td><td>${money(r.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted price history for this fuel view.')}</section></div><div class="grid"><section class="card"><h2>Station activity distribution</h2>${stationDistribution(insights.distribution)}</section><section class="card"><h2>Recent verified public updates</h2>${recentPriceUpdates(insights.updates)}</section></div><section class="workspace-map-panel"><div class="card-head"><h2>Station network discovery</h2><a href="#stations">Open public explorer ↗</a></div><p class="small">Public directory locations and source-labeled prices. Map filters are independent from the analytical fuel view above.</p>${discoveryMarkup(state.discoveryPreferences)}</section>`;}
 async function adminView(){
   if(!['admin','inspector','analyst'].includes(state.user?.role))return state.user?`${heading('Workspace access is restricted.','Your current account does not have an administrator, inspector or analyst role.')}<a class="button primary" href="#${workspaceFor(state.user.role).page}">Return to ${esc(workspaceFor(state.user.role).title)}</a>`:loginCard('This workspace is restricted to provisioned operations staff.');
   if(!adminTabs().some(([id])=>id===state.adminTab))state.adminTab='dashboard';
@@ -425,7 +434,7 @@ const publicPages=new Set(['overview','prices','stations','services','analytics'
 const summaryPages=new Set(['overview','analytics','admin','stations']);
 function mountFuelDiscovery(){
   if(!$('#fuelDiscovery'))return;
-  discovery=mountDiscovery($('#fuelDiscovery'),state.discoveryStations,{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary?.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});
+  discovery=mountDiscovery($('#fuelDiscovery'),{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary?.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});
   if(state.locateOnArrival){state.locateOnArrival=false;discovery.locate();}
   if(state.mapStationOnArrival){discovery.select(state.mapStationOnArrival);state.mapStationOnArrival=null;}
 }
@@ -444,6 +453,15 @@ function syncWorkspaceShell(){
   $('#sidebarToggle').setAttribute('aria-label',compact?(state.sidebarOpen?'Close workspace navigation':'Open workspace navigation'):(state.sidebarCollapsed?'Expand workspace navigation':'Collapse workspace navigation'));
 }
 function decorateWorkspaceNav(){const icons={overview:'grid',stations:'pin',report:'report',complaints:'shield',community:'chat',advisories:'bell',trip:'route',activity:'chart',operator:'building',admin:'grid',profile:'user'};document.querySelectorAll('#navigation a').forEach(a=>{const text=a.textContent;a.innerHTML=`${icon(icons[a.dataset.page])}<span class="nav-text">${esc(text)}</span>`;a.title=text;});}
+function syncHeroPreload(enabled){
+  let link=document.getElementById('heroPreload');
+  if(!enabled){link?.remove();return;}
+  if(link)return;
+  link=document.createElement('link');link.id='heroPreload';link.rel='preload';link.as='image';link.href='/assets/kampala-road.jpg';
+  link.setAttribute('imagesrcset','/assets/kampala-road-960.jpg 960w, /assets/kampala-road-1280.jpg 1280w, /assets/kampala-road-1600.jpg 1600w, /assets/kampala-road.jpg 1920w');
+  link.setAttribute('imagesizes','(max-width: 900px) 50vw, 100vw');link.setAttribute('fetchpriority','high');
+  document.head.append(link);
+}
 async function navigate(){
   const version=++routeVersion;
   const raw=location.hash.slice(1)||'overview';
@@ -455,6 +473,7 @@ async function navigate(){
   }else if(raw==='email-verified'){state.page='email-verified';}
   else state.page=raw;
   if(!renderers[state.page])state.page='overview';
+  syncHeroPreload(state.page==='overview');
   closeMenu();state.sidebarOpen=false;document.body.dataset.shell=publicPages.has(state.page)?'public':'workspace';document.body.classList.toggle('is-home',state.page==='overview');syncWorkspaceShell();
   const pageNames={overview:'Home',prices:'Fuel prices',stations:'Fuel stations',services:'Citizen services',analytics:'Reports & analytics',activity:'My activity',operator:'Station workspace',admin:'Operations dashboard',complaints:'Consumer complaints',report:'Price observation',community:'Driver community',trip:'Trip planner',advisories:'Advisories',privacy:'Privacy',about:'About',contact:'Contact',credits:'Photography credits',profile:'My profile',news:'Energy News',gallery:'Media Gallery',videos:'Video Centre','email-verify':'Verify email address','email-verified':'Email address updated'};
   $('#errorBanner').hidden=true;$('#breadcrumb').textContent=pageNames[state.page]||state.page;
@@ -738,7 +757,9 @@ async function refreshPublicContent(){
       const [media,news,videos]=await Promise.all([api('/media'),api('/news'),api('/videos')]);
       if(version!==routeVersion)return;
       const carousel=$('.photo-carousel');if(carousel){carousel.outerHTML=photoCarousel(media.items);renderCarousel();}
-      if($('#homePublishing'))$('#homePublishing').outerHTML=homepagePublishing(news.items,videos.items);
+      const newsSlot=document.querySelector('[data-overview="news"]'),videosSlot=document.querySelector('[data-overview="videos"]');
+      if(newsSlot)newsSlot.innerHTML=homepageNews(news.items??[]);
+      if(videosSlot)videosSlot.innerHTML=homepageVideos(videos.items??[]);
     }else{
       const [endpoint,render,emptyText]={news:['/news',newsCard,'No news articles published yet.'],gallery:['/media',imageCard,'No media gallery entries yet.'],videos:['/videos',videoCard,'No videos published yet.']}[page];
       const result=await api(endpoint);if(version!==routeVersion)return;

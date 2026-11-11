@@ -1,4 +1,4 @@
-import {escapeHtml as esc,money,date} from './api.js';
+import {api,escapeHtml as esc,money,date} from './api.js';
 import {icon} from './ui.js';
 import {loadLeaflet} from './leaflet.js';
 
@@ -46,9 +46,8 @@ export function filterStations(stations,input={},position=null,now=Date.now()){
 const option=(value,label,selected)=>`<option value="${value}"${String(value)===String(selected)?' selected':''}>${label}</option>`;
 const selector=(label,name,values,selected)=>`<label>${label}<select name="${name}" aria-label="${label}">${values.map(([v,l])=>option(v,l,selected)).join('')}</select></label>`;
 
-export function discoveryMarkup(stations,initial={}){
+export function discoveryMarkup(initial={}){
   const f={...defaults,...initial};
-  const places=[...new Set(stations.flatMap(s=>[s.district,s.area]))].sort();
   return `<section class="fuel-discovery" id="fuelDiscovery" data-view="list" aria-label="Fuel discovery">
     <div class="discovery-view-controls" role="group" aria-label="Station view"><button data-discovery="list" aria-pressed="true" aria-controls="discoveryRail">List View</button><button data-discovery="map" aria-pressed="false" aria-controls="discoveryMapStage">Map View</button><button data-discovery="back" class="quiet" hidden>Back to List</button></div>
     <p id="homeMapStatus" class="discovery-map-status" role="status">Search stations and compare prices. Open Map View to explore locations.</p>
@@ -56,7 +55,7 @@ export function discoveryMarkup(stations,initial={}){
       <form id="homeMapFilter" class="discovery-controls">
         <label>Station name or area<input name="q" maxlength="100" value="${esc(f.q)}" placeholder="Station, operator or area"></label>
         <label>District or city<input name="district" maxlength="100" list="discoveryPlaces" value="${esc(f.district)}" placeholder="e.g. Kampala or Entebbe"></label>
-        <datalist id="discoveryPlaces">${places.map(p=>`<option value="${esc(p)}"></option>`).join('')}</datalist>
+        <datalist id="discoveryPlaces"></datalist>
         <div class="discovery-filter-pair">${selector('Fuel type','fuel',[['petrol','Petrol'],['diesel','Diesel'],['kerosene','Kerosene']],f.fuel)}${selector('Sort results','sort',[['price','Lowest fresh price'],['name','Station name'],['distance','Nearest first']],f.sort)}</div>
         <div class="discovery-filter-pair">${selector('Price freshness','freshness',[['all','All directory entries'],['48','Published within 48h'],['24','Published within 24h'],['6','Published within 6h']],f.freshness)}${selector('Distance radius','radius',[['','Any distance'],['3','Within 3 km'],['10','Within 10 km'],['25','Within 25 km'],['100','Within 100 km']],f.radius)}</div>
         <label class="check discovery-verified"><input name="verifiedOnly" type="checkbox" ${f.verifiedOnly?'checked':''}>Only fresh verified records</label>
@@ -90,8 +89,9 @@ function stationCard(station,fuel,now,selected){
   </article>`;
 }
 
-export function mountDiscovery(root,stations,{initial={},position:initialPosition=null,asOf,onDetails,onChange,embeddedMap=false}={}){
-  let map=null,locationMarker=null,position=initialPosition,filters={...defaults,...initial},matches=[],selected=null,limit=50,disposed=false,geoRequest=0;
+export function mountDiscovery(root,{initial={},position:initialPosition=null,asOf,onDetails,onChange,embeddedMap=false}={}){
+  let map=null,locationMarker=null,position=initialPosition,filters={...defaults,...initial},matches=[],selected=null,limit=50,total=0,places=[];
+  let disposed=false,geoRequest=0,loadToken=0,refreshPromise=null,pendingSelect=null,moreLoading=false,loadError=false,lastError=null;
   let sheetExpanded=false,filtersOpen=false,view='list',returnFocus=null,leafletReady=false;
   const markers=new Map(),media=matchMedia('(max-width: 900px)'),now=Number.isFinite(Date.parse(asOf))?Date.parse(asOf):Date.now();
   const find=selector=>root.querySelector(selector),form=find('#homeMapFilter'),results=find('#discoveryResults');
@@ -102,6 +102,73 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
   const reduced=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
   const observer=typeof ResizeObserver==='function'?new ResizeObserver(()=>{if(map&&!disposed)map.invalidateSize({pan:false});}):null;
   observer?.observe(root);
+
+  function discoveryQuery(offset){
+    const query=new URLSearchParams({limit:'50',offset:String(offset)});
+    const q=filters.q.trim();if(q)query.set('q',q);
+    const district=filters.district.trim();if(district)query.set('district',district);
+    if(filters.fuel)query.set('fuel',filters.fuel);
+    query.set('sort',filters.sort==='distance'&&position?'distance':filters.sort==='price'?'price':'name');
+    const freshHours=filters.verifiedOnly?Math.min(48,Number(filters.freshness)||48):filters.freshness!=='all'?Number(filters.freshness):NaN;
+    if(Number.isFinite(freshHours))query.set('freshness',String(freshHours));
+    if(position){query.set('lat',String(position.latitude));query.set('lng',String(position.longitude));if(filters.radius)query.set('radius',String(filters.radius));}
+    return query;
+  }
+  const fetchPage=offset=>api(`/stations?${discoveryQuery(offset)}`);
+  function fillPlaces(){
+    const datalist=find('#discoveryPlaces');if(!datalist)return;
+    datalist.innerHTML=places.map(p=>`<option value="${esc(p)}"></option>`).join('');
+  }
+  async function ensureLoaded(upto){
+    const token=loadToken;
+    while(!disposed&&token===loadToken&&matches.length<upto&&matches.length<total){
+      const page=await fetchPage(matches.length);
+      if(disposed||token!==loadToken)return false;
+      if(!page.items.length)break;
+      matches.push(...page.items.map(s=>position?{...s,distance:distanceKm(position,s)}:s));
+    }
+    return token===loadToken;
+  }
+  function errorResults(){return `<div class="empty discovery-error" role="alert">Station results are unavailable right now. ${esc(lastError?.message||'')} Use Refresh data to try again.</div>`;}
+  async function refresh(){
+    const token=++loadToken;root.setAttribute('aria-busy','true');
+    try{
+      const page=await fetchPage(0);
+      if(disposed||token!==loadToken)return false;
+      matches=page.items.map(s=>position?{...s,distance:distanceKm(position,s)}:s);
+      total=Number.isFinite(page.total)?page.total:matches.length;
+      loadError=false;lastError=null;
+      if(page.places){places=[...new Set(page.places)].sort();fillPlaces();}
+      if(!matches.some(s=>s.id===selected))selected=null;
+      renderCards();panels();
+      root.querySelector('[data-discovery="clear-location"]').disabled=!position;
+      status(`${total.toLocaleString()} matching locations loaded${position?` · ${filters.radius?`within ${filters.radius} km · `:''}straight-line distance estimates`:''}. ${total>250?'Map shows the first 250 matches; narrow filters for more precision.':'Select a card or pin to explore a station.'}`);
+      if(pendingSelect!==null){
+        if(!matches.some(s=>s.id===pendingSelect)&&total>matches.length)await ensureLoaded(Math.min(total,250));
+        const id=pendingSelect;pendingSelect=null;
+        if(!disposed&&token===loadToken&&matches.some(s=>s.id===id))selectStation(id);
+      }
+      if(view==='map'){
+        try{await ensureLoaded(Math.min(total,250));}catch{/* Keep the already-loaded markers if a follow-up page fails. */}
+        if(!disposed&&token===loadToken)renderMap();
+      }else renderMap();
+      return true;
+    }catch(error){
+      if(disposed||token!==loadToken)return false;
+      matches=[];total=0;loadError=true;lastError=error;selected=null;pendingSelect=null;
+      renderCards();renderMap();panels();
+      status('Station results are unavailable right now. Your filters are kept; use Refresh data to try again.');
+      return false;
+    }finally{if(!disposed&&token===loadToken)root.setAttribute('aria-busy','false');}
+  }
+  async function update(){
+    limit=50;
+    onChange?.({...filters},position);
+    root.querySelector('[data-discovery="clear-location"]').disabled=!position;
+    const promise=refresh().finally(()=>{if(refreshPromise===promise)refreshPromise=null;});
+    refreshPromise=promise;
+    return promise;
+  }
 
   function fullscreen(){
     if(view==='map'&&media.matches&&!embeddedMap){
@@ -128,11 +195,20 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
   async function showMap(id){
     if(disposed)return;
     if(view==='list'&&!embeddedMap)returnFocus=document.activeElement;
-    if(id!==undefined){selectStation(id);sheetExpanded=true;}
+    if(id!==undefined){pendingSelect=id;sheetExpanded=true;}
     view='map';filtersOpen=false;panels();if(!embeddedMap)find('[data-discovery="back"]').focus();
     status('Loading map…');
     try{
-      await loadLeaflet();if(disposed||view!=='map')return;
+      if(refreshPromise)await refreshPromise;
+      if(disposed||view!=='map')return;
+      status('Loading map…');
+      if(loadError)throw lastError??new Error('Station results are unavailable right now.');
+      if(pendingSelect!==null&&!matches.some(s=>s.id===pendingSelect))await ensureLoaded(Math.min(total,250));
+      if(pendingSelect!==null){const pid=pendingSelect;pendingSelect=null;if(matches.some(s=>s.id===pid))selectStation(pid);}
+      await ensureLoaded(Math.min(total,250));
+      if(disposed||view!=='map')return;
+      await loadLeaflet();
+      if(disposed||view!=='map')return;
       leafletReady=true;
       renderMap();map.invalidateSize({pan:false});
       if(selected!==null)selectStation(selected);else status(`${matches.length} matching locations loaded. Select a station marker to check its price.`);
@@ -186,14 +262,8 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
     if(points.length)map.fitBounds(points,{paddingTopLeft:[35,media.matches?80:35],paddingBottomRight:[35,media.matches?Math.min(sheetExpanded?330:110,map.getSize().y/2):35],maxZoom:14,animate:false});
   }
   function renderCards(){
-    results.innerHTML=matches.length?matches.slice(0,limit).map(s=>stationCard(s,filters.fuel,now,s.id===selected)).join('')+(matches.length>limit?'<button class="discovery-more" data-discovery="more">Show more matching stations</button>':''):'<div class="empty discovery-empty">No stations match these filters. Try widening the district, freshness or verified-price criteria. Demonstration prices never qualify as verified records.</div>';
-    find('#discoveryCount').textContent=`${matches.length.toLocaleString()} matching stations`;
-  }
-  function update(){
-    matches=filterStations(stations,filters,position,now);if(!matches.some(s=>s.id===selected))selected=null;limit=50;renderCards();renderMap();panels();
-    root.querySelector('[data-discovery="clear-location"]').disabled=!position;
-    status(`${matches.length} matching locations loaded${position?` · ${filters.radius?`within ${filters.radius} km · `:''}straight-line distance estimates`:''}. ${matches.length>250?'Map shows the first 250 matches; narrow filters for more precision.':'Select a card or pin to explore a station.'}`);
-    onChange?.({...filters},position);
+    results.innerHTML=loadError?errorResults():matches.length?matches.slice(0,limit).map(s=>stationCard(s,filters.fuel,now,s.id===selected)).join('')+(matches.length<total?'<button class="discovery-more" data-discovery="more">Show more matching stations</button>':''):'<div class="empty discovery-empty">No stations match these filters. Try widening the district, freshness or verified-price criteria. Demonstration prices never qualify as verified records.</div>';
+    find('#discoveryCount').textContent=loadError?'Station results unavailable':`${total.toLocaleString()} matching stations`;
   }
   function readFilters(){return {...Object.fromEntries(new FormData(form)),verifiedOnly:form.elements.verifiedOnly.checked};}
   async function locate(){
@@ -203,15 +273,17 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
       const found=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,()=>reject(new Error('Location unavailable or permission denied. No distance filter was applied; search by district or try sharing your location again.')),{timeout:10000,maximumAge:60000}));
       if(disposed||request!==geoRequest)return;
       position={latitude:found.coords.latitude,longitude:found.coords.longitude};form.elements.sort.value='distance';if(!form.elements.radius.value)form.elements.radius.value='10';
-      filters=readFilters();filtersOpen=false;sheetExpanded=true;update();
+      filters=readFilters();filtersOpen=false;sheetExpanded=true;await update();
     }catch(error){if(!disposed&&request===geoRequest)status(error.message);}
     finally{if(!disposed&&request===geoRequest)root.setAttribute('aria-busy','false');}
   }
   async function apply(event){
     event.preventDefault();event.stopPropagation();filters=readFilters();
     if((filters.sort==='distance'||filters.radius)&&!position){await locate();return;}
-    filtersOpen=false;sheetExpanded=true;update();
+    filtersOpen=false;sheetExpanded=true;
+    const pending=update();
     if(media.matches&&view==='map')find('[data-discovery="sheet"]').focus();
+    await pending;
   }
   async function click(event){
     const button=event.target.closest('[data-discovery]');if(!button)return;event.preventDefault();event.stopPropagation();
@@ -221,11 +293,20 @@ export function mountDiscovery(root,stations,{initial={},position:initialPositio
     if(action==='list'||action==='back')showList();
     if(action==='details'){selectStation(id);try{await onDetails?.(id);}catch(error){status(error.message);}}
     if(action==='locate')await locate();
-    if(action==='more'){limit+=50;renderCards();}
+    if(action==='more'&&!moreLoading&&!loadError&&matches.length<total){
+      moreLoading=true;status('Loading more matching stations…');
+      try{
+        const token=loadToken,ok=await ensureLoaded(matches.length+50);
+        if(!ok||disposed||token!==loadToken)return;
+        limit+=50;renderCards();
+        status(`${total.toLocaleString()} matching stations loaded. Select a card or pin to explore a station.`);
+      }catch(error){if(!disposed)status(`Unable to load more stations right now. ${error.message}`);}
+      finally{moreLoading=false;}
+    }
     if(action==='sheet'){sheetExpanded=!sheetExpanded;filtersOpen=false;panels();}
     if(action==='filters'){filtersOpen=!filtersOpen;sheetExpanded=true;panels();if(filtersOpen)form.elements.q.focus();}
-    if(action==='reset'){geoRequest++;root.setAttribute('aria-busy','false');position=null;filters={...defaults};form.reset();for(const [key,value]of Object.entries(filters)){if(key==='verifiedOnly')form.elements[key].checked=value;else form.elements[key].value=value;}update();}
-    if(action==='clear-location'){geoRequest++;root.setAttribute('aria-busy','false');position=null;form.elements.radius.value='';if(form.elements.sort.value==='distance')form.elements.sort.value='name';filters=readFilters();update();}
+    if(action==='reset'){geoRequest++;root.setAttribute('aria-busy','false');position=null;filters={...defaults};form.reset();for(const [key,value]of Object.entries(filters)){if(key==='verifiedOnly')form.elements[key].checked=value;else form.elements[key].value=value;}await update();}
+    if(action==='clear-location'){geoRequest++;root.setAttribute('aria-busy','false');position=null;form.elements.radius.value='';if(form.elements.sort.value==='distance')form.elements.sort.value='name';filters=readFilters();await update();}
   }
   function resize(){filtersOpen=false;panels();if(view==='map'&&!embeddedMap)find('[data-discovery="back"]').focus();}
   function keydown(event){if(event.key!=='Escape'||view!=='map')return;event.preventDefault();event.stopPropagation();if(filtersOpen){filtersOpen=false;panels();find('[data-discovery="filters"]').focus();}else if(!embeddedMap)showList();}

@@ -190,6 +190,32 @@ test('API security, persistence and stakeholder workflows',async t=>{
     const trip=await request('/trip',{method:'POST',body:{distanceKm:100,kmPerLitre:10,fuel:'diesel'}});assert.equal(trip.data.cost,52000);assert.equal(trip.data.method,'manual distance estimate');
     const dashboard=await request('/admin/dashboard',{as:'analyst'});assert.ok(dashboard.data.reports>0);assert.ok(dashboard.data.average_response_hours!==undefined);
   });
+  await t.test('station directory supports server pagination, exact district matching and fresh insights',async()=>{
+    const first=await request('/stations?limit=1&offset=0');
+    const second=await request('/stations?limit=1&offset=1');
+    assert.equal(first.status,200);assert.ok(first.data.total>=2);
+    assert.notEqual(first.data.items[0].id,second.data.items[0].id);
+    assert.ok(first.data.places.includes('Kampala'));assert.ok(first.data.places.includes('Jinja'));
+    const jinja=await request('/stations?district=Jinja');
+    assert.equal(jinja.status,200);assert.ok(jinja.data.items.length>=1);
+    assert.ok(jinja.data.items.every(s=>s.district==='Jinja'));
+    assert.ok(!jinja.data.items.some(s=>s.name==='Kampala Test Station'));
+    const created=await request('/admin/stations',{as:'admin',method:'POST',body:{operatorId:1,name:'Mbale Fresh Price Station',area:'Mbale Town',district:'Mbale',region:'Eastern',latitude:1.075,longitude:34.175}});
+    assert.equal(created.status,201,JSON.stringify(created.data));
+    const stationId=created.data.id;
+    assert.equal((await request(`/stations/${stationId}/prices`,{as:'admin',method:'PUT',body:{fuel:'petrol',price:5150}})).status,200);
+    const insights=await request('/stations/insights');
+    assert.equal(insights.status,200);
+    assert.ok(insights.data.comparison.some(r=>r.id===stationId&&r.price===5150));
+    assert.ok(insights.data.updates.some(u=>u.id===stationId&&u.fuel==='petrol'));
+    assert.ok(insights.data.distribution.some(r=>r.region==='Eastern'&&r.count>=1));
+    assert.ok(insights.data.districts.includes('Mbale'));
+    assert.equal((await request('/stations/1')).status,200,'the insights route must not shadow station details');
+    const fresh=await request('/stations?freshness=48&limit=100');
+    assert.equal(fresh.status,200);assert.ok(fresh.data.items.length>=1);
+    const cutoff=Date.now()-48*3600000;
+    for(const s of fresh.data.items)assert.ok(s.prices.some(p=>p.fuel==='petrol'&&p.source!=='demo'&&Date.parse(p.updated_at)>=cutoff),`station ${s.id} lacks a fresh non-demo petrol price`);
+  });
   await t.test('directory administration, assignment revocation, evidence quotas and server SLA state',async()=>{
     const room=await request('/admin/rooms',{as:'admin',method:'POST',body:{name:'Western test corridor'}});assert.equal(room.status,201);
     assert.equal((await request('/admin/rooms',{as:'operator',method:'POST',body:{name:'Unauthorized room'}})).status,403);
