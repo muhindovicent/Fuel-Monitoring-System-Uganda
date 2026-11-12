@@ -176,6 +176,17 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/operator/stations',{as:'rejectee'})).status,403);
     assert.equal((await request('/stations/2/prices',{as:'rejectee',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
   });
+  await t.test('duplicate application, missing evidence, and upload-to-existing workflows',async()=>{
+    const first=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(first.status,201);
+    const second=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-2'}});assert.equal(second.status,201);assert.equal(second.data.id,first.data.id);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM applications WHERE user_id=$1 AND station_id=1 AND status=\'pending\'',[first.data.user_id])).rows[0].n,1);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM attachments WHERE application_id=$1',[first.data.id])).rows[0].n,0);
+    assert.equal((await request(`/applications/${first.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'Should fail without documents.'}})).status,400);
+    const upload=await request(`/applications/${first.data.id}/attachments`,{as:'bob',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nBob License\n%%EOF')});assert.equal(upload.status,201);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM attachments WHERE application_id=$1',[first.data.id])).rows[0].n,1);
+    const stillOne=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-3'}});assert.equal(stillOne.status,201);assert.equal(stillOne.data.id,first.data.id);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM applications WHERE user_id=$1 AND station_id=1 AND status=\'pending\'',[first.data.user_id])).rows[0].n,1);
+  });
   await t.test('community attribution, unique votes and moderation are enforced',async()=>{
     const body='<img src=x onerror=alert(1)> information';
     assert.equal((await request('/rooms/1/messages',{as:'alice',method:'POST',body:{body,userId:users.admin.id}})).status,400);
