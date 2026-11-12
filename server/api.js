@@ -494,6 +494,7 @@ export function apiRoutes(db,config) {
         ensure(!applicant.disabled && ['citizen','operator'].includes(applicant.role),409,'Applicant must be an active citizen or operator.');
         await client.query("UPDATE users SET role='operator' WHERE id=$1",[application.user_id]);
         await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[application.user_id,application.station_id]);
+        await client.query('DELETE FROM sessions WHERE user_id=$1',[application.user_id]);
       }
       await client.query('UPDATE applications SET status=$1,decision_reason=$2,reviewed_by=$3 WHERE id=$4',[input.status,input.reason,req.user.id,application.id]);
       await notify(client,application.user_id,`Station access application ${input.status}: ${input.reason}`);

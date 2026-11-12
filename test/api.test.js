@@ -143,7 +143,38 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await decide()).status,400);
     await request(`/applications/${created.data.id}/attachments`,{as:'bob',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});
     assert.equal((await decide()).status,200);
+    const freshBob=await request('/auth/login',{method:'POST',body:{email:users.bob.email,password:testPassword}});assert.equal(freshBob.status,200);sessions['bob']={...freshBob.data,cookie:freshBob.response.headers.get('set-cookie').split(';')[0]};
     assert.equal((await request('/operator/stations',{as:'bob'})).data.items[0].id,2);
+  });
+  await t.test('approval assigns station, invalidates old sessions, and requires fresh operator login',async()=>{
+    await request('/auth/register',{method:'POST',body:{email:'applicant@example.test',password:testPassword,displayName:'Applicant',consent:true}});
+    const login=await request('/auth/login',{method:'POST',body:{email:'applicant@example.test',password:testPassword}});assert.equal(login.status,200);
+    sessions['applicant']={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    const created=await request('/applications',{as:'applicant',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:2,licenseReference:'APP-LICENSE-1'}});assert.equal(created.status,201);
+    const evidence=await request(`/applications/${created.data.id}/attachments`,{as:'applicant',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});assert.equal(evidence.status,201);
+    assert.equal((await request('/operator/stations',{as:'applicant'})).status,403);
+    assert.equal((await request(`/applications/${created.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'License verified.'}})).status,200);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['applicant@example.test'])).rows[0];assert.equal(userRow.role,'operator');
+    assert.ok((await db.query('SELECT 1 FROM station_staff WHERE user_id=$1 AND station_id=2',[login.data.user.id])).rows[0]);
+    assert.equal((await request('/stations/2/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,401);
+    const fresh=await request('/auth/login',{method:'POST',body:{email:'applicant@example.test',password:testPassword}});assert.equal(fresh.status,200);
+    sessions['applicant']={...fresh.data,cookie:fresh.response.headers.get('set-cookie').split(';')[0]};
+    const stations=await request('/operator/stations',{as:'applicant'});assert.equal(stations.status,200);assert.ok(stations.data.items.some(s=>s.id===2));assert.ok(!stations.data.items.some(s=>s.id===1));
+    assert.equal((await request('/stations/2/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,200);
+    assert.equal((await request('/stations/1/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
+  });
+  await t.test('rejection does not alter role, sessions or station assignments',async()=>{
+    await request('/auth/register',{method:'POST',body:{email:'rejectee@example.test',password:testPassword,displayName:'Rejectee',consent:true}});
+    const login=await request('/auth/login',{method:'POST',body:{email:'rejectee@example.test',password:testPassword}});assert.equal(login.status,200);
+    sessions['rejectee']={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    const created=await request('/applications',{as:'rejectee',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:2,licenseReference:'REJ-LICENSE-1'}});assert.equal(created.status,201);
+    await request(`/applications/${created.data.id}/attachments`,{as:'rejectee',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});
+    assert.equal((await request(`/applications/${created.data.id}`,{as:'admin',method:'PATCH',body:{status:'rejected',reason:'Documents insufficient.'}})).status,200);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['rejectee@example.test'])).rows[0];assert.equal(userRow.role,'citizen');
+    assert.equal((await db.query('SELECT 1 FROM station_staff WHERE user_id=$1',[login.data.user.id])).rowCount,0);
+    assert.equal((await request('/me/reports',{as:'rejectee'})).status,200);
+    assert.equal((await request('/operator/stations',{as:'rejectee'})).status,403);
+    assert.equal((await request('/stations/2/prices',{as:'rejectee',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
   });
   await t.test('community attribution, unique votes and moderation are enforced',async()=>{
     const body='<img src=x onerror=alert(1)> information';
