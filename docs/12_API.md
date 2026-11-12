@@ -39,6 +39,12 @@ Browser writes require `Origin: <APP_ORIGIN>`, `X-Requested-With: MafutaWatch`, 
 | POST | `/applications` | Authenticated `{stationId,licenseReference}`; UUID `Idempotency-Key` required |
 | GET | `/applications` | Own applications or administrator review queue |
 | PATCH | `/applications/:id` | Admin `{status:approved|rejected,reason}`; evidence required to approve |
+| POST | `/station-requests` | Citizen-only private new-station proposal; UUID `Idempotency-Key`; details and lifecycle in [New station onboarding](17_NEW_STATION_ONBOARDING.md) |
+| GET | `/station-requests` | Own proposals, private documents, status and live duplicate warnings; `limit,offset` |
+| POST | `/station-requests/duplicates` | Citizen `{stationName,latitude,longitude}`; potential existing public directory matches |
+| POST | `/station-requests/:id/attachments` | Owner of pending proposal; private JPEG/PNG/PDF, max 5 MiB each, 3 documents; identical name+bytes retries reuse the stored file |
+| GET | `/admin/station-requests` | Administrator verification queue with contacts, evidence and current duplicate warnings; `limit,offset` |
+| PATCH | `/admin/station-requests/:id` | Admin `{status:approved|rejected,reason,stationId?}`; optional verified existing station association; atomic approval and session revocation |
 | POST | `/tickets/:id/attachments`, `/applications/:id/attachments` | Owner; raw JPEG/PNG/PDF body, `X-File-Name`; max 5MiB and 3 files per parent |
 | GET | `/attachments/:id` | Parent access authorization, forced download, no cache |
 | GET, POST | `/tokens` | Own metadata / generate `{stationId,name}`; operator/admin explicitly assigned |

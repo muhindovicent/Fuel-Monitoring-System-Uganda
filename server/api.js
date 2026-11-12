@@ -38,6 +38,18 @@ export function apiRoutes(db,config) {
     ensure(application && (application.user_id===user.id||user.role==='admin'),404,'Application not found.');
     return application;
   }
+  async function stationRequestAccess(client,id,user,lock=false) {
+    const request=(await client.query(`SELECT * FROM station_requests WHERE id=$1 ${lock?'FOR UPDATE':''}`,[uuid.parse(id)])).rows[0];
+    ensure(request && (request.user_id===user.id||user.role==='admin'),404,'Station request not found.');
+    return request;
+  }
+  async function stationRequestDuplicates(client,request,admin=false) {
+    // Nearby coordinates also catch spelling differences and district-boundary errors.
+    return (await client.query(`SELECT id,name,district,area,active,demo FROM stations
+      WHERE ($4::boolean OR active) AND (lower(btrim(name))=lower(btrim($1))
+        OR (abs(latitude-$2)<0.005 AND abs(longitude-$3)<0.005)) ORDER BY id`,
+    [request.station_name,request.latitude,request.longitude,admin])).rows;
+  }
   router.get('/stations',async(req,res)=>{
     const input=z.object({q:z.string().trim().max(100).default(''),fuel:fuel.optional(),sort:z.enum(['name','price','distance']).default('name'),district:z.string().max(100).optional(),lat:z.coerce.number().min(-90).max(90).optional(),lng:z.coerce.number().min(-180).max(180).optional(),radius:z.coerce.number().min(0.1).max(100).optional(),freshness:z.coerce.number().int().min(1).max(48).optional(),...pageSchema.shape}).refine(v=>(v.lat===undefined)===(v.lng===undefined),'Both coordinates required.').parse(req.query);
     const params=[`%${input.q}%`,input.district??null,input.fuel??null];
@@ -234,7 +246,7 @@ export function apiRoutes(db,config) {
   }).strict();
   const roleSettingShapes={
     citizen:z.object({}).strict(),
-    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','directory','publishing','media','users','deletions','audit']).optional()}).strict(),
+    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','station-requests','directory','publishing','media','users','deletions','audit']).optional()}).strict(),
     inspector:z.object({assignedCaseNotifications:z.boolean().optional(),inspectionAlerts:z.boolean().optional(),workspacePreferences:z.boolean().optional(),lastCaseStatus:z.enum(['','open','investigating','dispatched','resolved','closed']).optional(),lastCaseAssignment:z.enum(['mine','all','unassigned']).optional()}).strict(),
     analyst:z.object({savedChartFilters:z.boolean().optional(),lastFuelView:z.enum(['all','petrol','diesel','kerosene']).optional()}).strict(),
     operator:z.object({priceUpdateNotifications:z.boolean().optional(),assignedStationDashboard:z.boolean().optional(),lastStationId:positiveId.optional()}).strict()
@@ -481,6 +493,47 @@ export function apiRoutes(db,config) {
       await audit(client,req.user.id,'application.submit',result.id); return result;
     });res.status(201).json(application);
   });
+  router.post('/station-requests',roles('citizen'),async(req,res)=>{
+    const input=z.object({
+      stationName:z.string().trim().min(2).max(200),
+      operatorName:z.string().trim().min(2).max(150),
+      district:z.string().trim().min(2).max(100),
+      area:z.string().trim().min(2).max(100),
+      region:z.enum(['Central','Eastern','Northern','Western']),
+      latitude:z.number().min(-1.6).max(4.3),
+      longitude:z.number().min(29.5).max(35.1),
+      contactName:z.string().trim().min(2).max(80),
+      contactPhone:z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/,'Use an international phone number, e.g. +256700000000.'),
+      contactEmail:emailSchema,
+      licenseReference:z.string().trim().min(3).max(200)
+    }).strict().parse(req.body);
+    const requestKey=key(req);
+    await limit(db,`station-request:${req.user.id}`,5,3600);
+    const proposed={station_name:input.stationName,operator_name:input.operatorName,district:input.district,area:input.area,region:input.region,
+      latitude:input.latitude,longitude:input.longitude,contact_name:input.contactName,contact_phone:input.contactPhone,contact_email:input.contactEmail,license_reference:input.licenseReference};
+    const request=await transaction(db,async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(734183)');
+      const existing=(await client.query('SELECT * FROM station_requests WHERE user_id=$1 AND idempotency_key=$2',[req.user.id,requestKey])).rows[0];
+      if(existing){ensure(Object.entries(proposed).every(([name,value])=>existing[name]===value),409,'Submission key already used for different station details.');return existing;}
+      const existingPending=(await client.query("SELECT * FROM station_requests WHERE user_id=$1 AND lower(station_name)=lower($2) AND lower(district)=lower($3) AND status='pending'",[req.user.id,input.stationName,input.district])).rows[0];
+      if(existingPending){ensure(Object.entries(proposed).every(([name,value])=>existingPending[name]===value),409,'A pending request already exists with different details. Open your saved request to upload documents.');return existingPending;}
+      const result=(await client.query(`INSERT INTO station_requests(id,user_id,station_name,operator_name,district,area,region,latitude,longitude,contact_name,contact_phone,contact_email,license_reference,idempotency_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[randomUUID(),req.user.id,...Object.values(proposed),requestKey])).rows[0];
+      await audit(client,req.user.id,'station-request.submit',result.id); return result;
+    });res.status(201).json({...request,duplicates:await stationRequestDuplicates(db,request)});
+  });
+  router.post('/station-requests/duplicates',roles('citizen'),async(req,res)=>{
+    const input=z.object({stationName:z.string().trim().min(2).max(200),latitude:z.number().min(-1.6).max(4.3),longitude:z.number().min(29.5).max(35.1)}).strict().parse(req.body);
+    res.json({items:await stationRequestDuplicates(db,{station_name:input.stationName,latitude:input.latitude,longitude:input.longitude})});
+  });
+  router.get('/station-requests',requireUser,async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const items=(await db.query(`SELECT r.*,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.name)) FROM attachments f WHERE f.station_request_id=r.id),'[]') AS attachments
+      FROM station_requests r WHERE r.user_id=$1 ORDER BY r.created_at DESC,r.id LIMIT $2 OFFSET $3`,[req.user.id,limit,offset])).rows;
+    for(const item of items)item.duplicates=await stationRequestDuplicates(db,item);
+    res.json({items});
+  });
   router.get('/applications',requireUser,async(req,res)=>{
     const {limit,offset}=pageSchema.parse(req.query);
     res.json({items:(await db.query(`SELECT a.*,s.name AS station_name,u.display_name,
@@ -507,17 +560,21 @@ export function apiRoutes(db,config) {
     });res.json({saved:true});
   });
   // Raw uploads are size-bounded before buffering; signatures are checked independently of MIME headers.
-  for(const kind of ['tickets','applications']) router.post(`/${kind}/:id/attachments`,requireUser,express.raw({type:()=>true,limit:'5mb'}),async(req,res)=>{
+  for(const kind of ['tickets','applications','station-requests']) router.post(`/${kind}/:id/attachments`,requireUser,express.raw({type:()=>true,limit:'5mb'}),async(req,res)=>{
     ensure(Buffer.isBuffer(req.body)&&req.body.length,400,'Choose a file.');
     const detected=await fileTypeFromBuffer(req.body).catch(()=>null);
     ensure(detected&&['image/png','image/jpeg','application/pdf'].includes(detected.mime),400,'Only PNG, JPEG or PDF evidence is accepted.');
     const name=z.string().min(1).max(180).refine(value=>!value.includes('/')&&!value.includes('\\')&&[...value].every(c=>c.charCodeAt(0)>=32&&c.charCodeAt(0)!==127),'Invalid file name.').parse(req.get('x-file-name'));
     await limit(db,`upload:${req.user.id}`,20,3600);
     const id=await transaction(db,async client=>{
-      const parent=kind==='tickets'?await ticketAccess(client,req.params.id,req.user,true):await applicationAccess(client,req.params.id,req.user,true);
+      const parent=kind==='tickets'?await ticketAccess(client,req.params.id,req.user,true):kind==='applications'?await applicationAccess(client,req.params.id,req.user,true):await stationRequestAccess(client,req.params.id,req.user,true);
       ensure(parent.user_id===req.user.id,403,'Only the submitter can add evidence.');
       ensure(kind==='tickets'?!['resolved','closed'].includes(parent.status):parent.status==='pending',409,'Evidence collection is closed.');
-      const column=kind==='tickets'?'ticket_id':'application_id';
+      const column=kind==='tickets'?'ticket_id':kind==='applications'?'application_id':'station_request_id';
+      if(kind==='station-requests'){
+        const existing=(await client.query('SELECT id FROM attachments WHERE station_request_id=$1 AND name=$2 AND content=$3',[parent.id,name,req.body])).rows[0];
+        if(existing)return existing.id;
+      }
       const count=(await client.query(`SELECT count(*)::int AS n FROM attachments WHERE ${column}=$1`,[parent.id])).rows[0].n;
       ensure(count<3,400,'Maximum three attachments per submission.');
       const id=randomUUID();
@@ -526,9 +583,11 @@ export function apiRoutes(db,config) {
     });res.status(201).json({id});
   });
   router.get('/attachments/:id',requireUser,async(req,res)=>{
-    const metadata=(await db.query('SELECT id,ticket_id,application_id,name,media_type FROM attachments WHERE id=$1',[uuid.parse(req.params.id)])).rows[0];
+    const metadata=(await db.query('SELECT id,ticket_id,application_id,station_request_id,name,media_type FROM attachments WHERE id=$1',[uuid.parse(req.params.id)])).rows[0];
     ensure(metadata,404,'Attachment not found.');
-    if(metadata.ticket_id) await ticketAccess(db,metadata.ticket_id,req.user); else await applicationAccess(db,metadata.application_id,req.user);
+    if(metadata.ticket_id) await ticketAccess(db,metadata.ticket_id,req.user);
+    else if(metadata.application_id) await applicationAccess(db,metadata.application_id,req.user);
+    else await stationRequestAccess(db,metadata.station_request_id,req.user);
     const file=(await db.query('SELECT content FROM attachments WHERE id=$1',[metadata.id])).rows[0];
     res.set('Content-Security-Policy',"default-src 'none'; sandbox").type(metadata.media_type).attachment(metadata.name).send(file.content);
   });
@@ -774,6 +833,58 @@ export function apiRoutes(db,config) {
     const average=(await db.query(`SELECT round(avg(p.price))::int AS price FROM prices p JOIN stations s ON s.id=p.station_id
       WHERE p.fuel=$1 AND p.updated_at>now()-interval '48 hours' AND s.active AND NOT s.demo AND p.source<>'demo'`,[input.fuel])).rows[0]?.price;
     res.json({distanceKm:distance,litres:distance/input.kmPerLitre,averagePrice:average??null,cost:average?Math.round(distance/input.kmPerLitre*average):null,method});
+  });
+  router.get('/admin/station-requests',roles('admin'),async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const items=(await db.query(`SELECT r.*,u.display_name,u.email,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.name)) FROM attachments f WHERE f.station_request_id=r.id),'[]') AS attachments
+      FROM station_requests r JOIN users u ON u.id=r.user_id ORDER BY r.created_at DESC,r.id LIMIT $1 OFFSET $2`,[limit,offset])).rows;
+    for(const item of items)item.duplicates=await stationRequestDuplicates(db,item,true);
+    res.json({items});
+  });
+  router.patch('/admin/station-requests/:id',roles('admin'),async(req,res)=>{
+    const input=z.object({status:z.enum(['approved','rejected']),reason:z.string().trim().min(10).max(1000),stationId:positiveId.optional()}).strict()
+      .refine(v=>v.status==='approved'||v.stationId===undefined,'Only approval may associate a station.').parse(req.body);
+    await transaction(db,async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(734183)');
+      const request=await stationRequestAccess(client,req.params.id,req.user,true);
+      ensure(request.status==='pending',409,'Station request already reviewed.');
+      ensure(request.user_id!==req.user.id,403,'You cannot review your own request.');
+      if(input.status==='approved') {
+        // Prevent simultaneous approvals/direct directory inserts creating duplicates.
+        await client.query('LOCK TABLE stations,operators IN SHARE ROW EXCLUSIVE MODE');
+        ensure((await client.query('SELECT 1 FROM attachments WHERE station_request_id=$1',[request.id])).rowCount,400,'Review supporting documents before approval.');
+        const applicant=(await client.query('SELECT role,disabled FROM users WHERE id=$1 FOR UPDATE',[request.user_id])).rows[0];
+        ensure(applicant&&!applicant.disabled && ['citizen','operator'].includes(applicant.role),409,'Applicant must be an active citizen or operator.');
+        const duplicates=await stationRequestDuplicates(client,request,true);
+        let station,created=false;
+        if(input.stationId){
+          station=(await client.query('SELECT * FROM stations WHERE id=$1 FOR UPDATE',[input.stationId])).rows[0];
+          ensure(station&&station.active&&!station.demo,409,'Associate an active, verified non-demo station.');
+        }else{
+          ensure(!duplicates.length,409,'Possible duplicate stations exist. Review them and associate an existing verified station instead of creating a duplicate.');
+          const operator=(await client.query('SELECT id FROM operators WHERE lower(btrim(name))=lower(btrim($1)) ORDER BY id LIMIT 1',[request.operator_name])).rows[0];
+          const operatorId=operator?.id??(await client.query('INSERT INTO operators(name,short_name) VALUES ($1,$2) RETURNING id',[request.operator_name,request.operator_name.slice(0,30)])).rows[0].id;
+          if(!operator)await audit(client,req.user.id,'operator.create',operatorId,{requestId:request.id,name:request.operator_name});
+          station=(await client.query(`INSERT INTO stations(operator_id,name,area,district,region,latitude,longitude,active,demo)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,true,false) RETURNING *`,[operatorId,request.station_name,request.area,request.district,request.region,request.latitude,request.longitude])).rows[0];
+          created=true;
+          await audit(client,req.user.id,'station.create',station.id,{requestId:request.id,operatorId});
+        }
+        await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[request.user_id,station.id]);
+        if(applicant.role!=='operator')await client.query("UPDATE users SET role='operator' WHERE id=$1",[request.user_id]);
+        const revoked=await client.query('DELETE FROM sessions WHERE user_id=$1',[request.user_id]);
+        await client.query('UPDATE station_requests SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now(),station_id=$4 WHERE id=$5',
+          ['approved',input.reason,req.user.id,station.id,request.id]);
+        await notify(client,request.user_id,`New station request approved: ${station.name}. Sign in again to open your Assigned Station Workspace. ${input.reason}`);
+        await audit(client,req.user.id,'station-request.approve',request.id,{stationId:station.id,operatorId:station.operator_id,created,previousRole:applicant.role,sessionsRevoked:revoked.rowCount,reason:input.reason});
+      } else {
+        await client.query('UPDATE station_requests SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',
+          ['rejected',input.reason,req.user.id,request.id]);
+        await notify(client,request.user_id,`New station request rejected: ${input.reason}`);
+        await audit(client,req.user.id,'station-request.reject',request.id,input);
+      }
+    });res.json({saved:true});
   });
   return router;
 }

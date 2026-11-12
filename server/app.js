@@ -38,7 +38,7 @@ export function createApp(db,config) {
   });
   app.use(writeProtection(config));
   app.use((req,res,next)=>{
-    if(/^\/api\/v1\/(tickets|applications)\/[^/]+\/attachments$/.test(req.path)) return next();
+    if(/^\/api\/v1\/(tickets|applications|station-requests)\/[^/]+\/attachments$/.test(req.path)) return next();
     return express.json({limit:'64kb',strict:true})(req,res,next);
   });
   app.use('/api/v1/auth',authRoutes(db,config));

@@ -19,7 +19,7 @@ for(let n=1;n<=55;n++){
   await db.query(`INSERT INTO prices(station_id,fuel,price,source) VALUES ($1,'petrol',$2,'demo')`,[station.rows[0].id,5000+n]);
 }
 const port=Number(process.env.BROWSER_TEST_PORT||3100);
-if(![3100,3101,3102,3103,3104,3105,3106].includes(port))throw new Error('Browser fixtures must use their dedicated test ports.');
+if(![3100,3101,3102,3103,3104,3105,3106,3107].includes(port))throw new Error('Browser fixtures must use their dedicated test ports.');
 const app=createApp(db,{APP_ORIGIN:`http://localhost:${port}`,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
 const server=app.listen(port,()=>console.log(`Browser fixture ready on ${port}`));
 async function stop(){server.close(async()=>{await db.end();process.exit(0);});}
