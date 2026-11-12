@@ -159,7 +159,7 @@ test('operator request continues the citizen application flow without self-promo
   await page.locator('#view').getByRole('link',{name:'Station Operator Access Request →'}).click();
   await expect(page.locator('#applicationForm')).toBeVisible();
   await page.locator('#applicationForm [name=stationId]').selectOption('1');await page.locator('#applicationForm [name=licenseReference]').fill('Browser license review fixture');
-  await page.getByRole('button',{name:'Submit access application',exact:true}).click();await expect(page.locator('.list-item').filter({hasText:'Browser license review fixture'})).toContainText('pending');
+  await page.getByRole('button',{name:'Submit access application',exact:true}).click();await expect(page.locator('.list-item').filter({hasText:'Browser license review fixture'})).toContainText('Awaiting documents');
   expect((await(await page.request.get('/api/v1/auth/session')).json()).user.role).toBe('citizen');
   expect((await page.request.get('/api/v1/operator/stations')).status()).toBe(403);
 });

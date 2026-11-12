@@ -177,15 +177,24 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/stations/2/prices',{as:'rejectee',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
   });
   await t.test('duplicate application, missing evidence, and upload-to-existing workflows',async()=>{
-    const first=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(first.status,201);
-    const second=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-2'}});assert.equal(second.status,201);assert.equal(second.data.id,first.data.id);
+    // Idempotent retry: same user+station+reference returns existing record
+    const first=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(first.status,201);
+    const retry=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(retry.status,201);assert.equal(retry.data.id,first.data.id);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM applications WHERE user_id=$1 AND station_id=1 AND status=\'pending\'',[first.data.user_id])).rows[0].n,1);
-    assert.equal((await db.query('SELECT count(*)::int AS n FROM attachments WHERE application_id=$1',[first.data.id])).rows[0].n,0);
+    // Conflicting licence reference is rejected
+    const conflict=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-2'}});assert.equal(conflict.status,409);
+    // Approval without evidence is rejected
     assert.equal((await request(`/applications/${first.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'Should fail without documents.'}})).status,400);
-    const upload=await request(`/applications/${first.data.id}/attachments`,{as:'bob',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nBob License\n%%EOF')});assert.equal(upload.status,201);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['alice@example.test'])).rows[0];assert.equal(userRow.role,'citizen');
+    // Upload evidence to existing application without creating duplicate
+    const upload=await request(`/applications/${first.data.id}/attachments`,{as:'alice',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nAlice License\n%%EOF')});assert.equal(upload.status,201);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM attachments WHERE application_id=$1',[first.data.id])).rows[0].n,1);
-    const stillOne=await request('/applications',{as:'bob',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-3'}});assert.equal(stillOne.status,201);assert.equal(stillOne.data.id,first.data.id);
-    assert.equal((await db.query('SELECT count(*)::int AS n FROM applications WHERE user_id=$1 AND station_id=1 AND status=\'pending\'',[first.data.user_id])).rows[0].n,1);
+    // Approval now succeeds with evidence
+    assert.equal((await request(`/applications/${first.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'License verified.'}})).status,200);
+    assert.equal((await db.query('SELECT role FROM users WHERE email=$1',['alice@example.test'])).rows[0].role,'operator');
+    const fresh=await request('/auth/login',{method:'POST',body:{email:'alice@example.test',password:testPassword}});assert.equal(fresh.status,200);sessions['alice']={...fresh.data,cookie:fresh.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/operator/stations',{as:'alice'})).data.items.some(s=>s.id===1),true);
+    assert.equal((await request('/operator/stations',{as:'alice'})).data.items.some(s=>s.id===2),false);
   });
   await t.test('community attribution, unique votes and moderation are enforced',async()=>{
     const body='<img src=x onerror=alert(1)> information';
@@ -325,7 +334,7 @@ test('API security, persistence and stakeholder workflows',async t=>{
     const reason='Operator authorization confirmed for this station by the operating organization.';
     const assignment=()=>request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.operator.id,reason}});
     assert.equal((await request('/admin/stations/2/staff',{as:'inspector',method:'POST',body:{userId:users.operator.id,reason}})).status,403);
-    assert.equal((await request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.alice.id,reason}})).status,409);
+    assert.equal((await request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.verified3.id,reason}})).status,409);
     assert.equal((await assignment()).status,201);
     assert.equal((await assignment()).status,409);
     assert.ok((await request('/operator/stations',{as:'operator'})).data.items.some(s=>s.id===2));

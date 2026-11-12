@@ -473,7 +473,10 @@ export function apiRoutes(db,config) {
       const existing=(await client.query('SELECT * FROM applications WHERE user_id=$1 AND idempotency_key=$2',[req.user.id,requestKey])).rows[0];
       if(existing){ensure(existing.station_id===input.stationId&&existing.license_reference===input.licenseReference,409,'Submission key already used.');return existing;}
       const existingPending=(await client.query('SELECT * FROM applications WHERE user_id=$1 AND station_id=$2 AND status=\'pending\'',[req.user.id,input.stationId])).rows[0];
-      if(existingPending){return existingPending;}
+      if(existingPending){
+        if(existingPending.license_reference!==input.licenseReference){ensure(false,409,'A pending application already exists for this station with a different licence reference. Submit supporting documents to the existing application instead.');}
+        return existingPending;
+      }
       const result=(await client.query('INSERT INTO applications(id,user_id,station_id,license_reference,idempotency_key) VALUES ($1,$2,$3,$4,$5) RETURNING *',[randomUUID(),req.user.id,input.stationId,input.licenseReference,requestKey])).rows[0];
       await audit(client,req.user.id,'application.submit',result.id); return result;
     });res.status(201).json(application);
