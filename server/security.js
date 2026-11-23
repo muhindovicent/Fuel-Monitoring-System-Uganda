@@ -68,7 +68,10 @@ export function writeProtection(config) {
       ensure(req.method==='PUT' && /^\/api\/v1\/stations\/\d+\/prices$/.test(req.path),403,'API credentials are restricted to station price updates.');
       return next();
     }
-    ensure(req.get('origin')===config.APP_ORIGIN,403,'Request origin is not allowed.');
+    const originAllowed=typeof config.isOriginAllowed==='function'
+      ?config.isOriginAllowed(req.get('origin'))
+      :req.get('origin')===config.APP_ORIGIN;
+    ensure(originAllowed,403,'Request origin is not allowed.');
     ensure(req.get('x-requested-with')==='MafutaWatch',403,'Missing request protection header.');
     if (req.user) ensure(req.get('x-csrf-token')===req.session.csrf_token,403,'Session protection failed. Refresh and retry.');
     next();

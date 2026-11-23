@@ -731,7 +731,45 @@ test('Media gallery, news articles, and videos API',async t=>{
     if(article.videos){
       assert.ok(article.videos.some(v=>v.media.id===videoId));
     }
+  });
+
 });
 
+test('configuration accepts multiple allowed origins and rejects invalid entries',async()=>{
+  const base={DATABASE_URL:'postgresql://test',NODE_ENV:'test',ROUTING_URL:''};
+  const single=configuration({...base,APP_ORIGIN:'http://localhost:3000'});
+  assert.equal(single.APP_ORIGIN,'http://localhost:3000');
+  assert.deepEqual(single.allowedOrigins,['http://localhost:3000']);
+  assert.equal(single.isOriginAllowed('http://localhost:3000'),true);
+  assert.equal(single.isOriginAllowed('https://evil.example'),false);
+  assert.equal(single.isOriginAllowed(undefined),false);
+  const multi=configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app, https://mafuta-watch-staging.vercel.app'});
+  assert.deepEqual(multi.allowedOrigins,['https://mafuta-watch-staging.vercel.app','https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app','https://mafuta-watch-staging.vercel.app']);
+  assert.equal(multi.isOriginAllowed('https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app'),true);
+  assert.equal(multi.isOriginAllowed('https://mafuta-watch-staging.vercel.app'),true);
+  assert.equal(multi.isOriginAllowed('https://evil.example'),false);
+  assert.throws(()=>configuration({...base,NODE_ENV:'production',APP_ORIGIN:'http://localhost:3000'}));
+  assert.throws(()=>configuration({...base,NODE_ENV:'production',APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'http://evil.example'}));
+  assert.throws(()=>configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'https://example.com/path'}));
+  assert.throws(()=>configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'not-a-url'}));
+});
 
+test('origin allowlist allows multiple origins and rejects disallowed origins',async t=>{
+  const db=await testDatabase();await fixtures(db);
+  const allowed=['https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app','https://mafuta-watch-staging.vercel.app'];
+  const config=configuration({DATABASE_URL:'postgresql://test',APP_ORIGIN:allowed[0],APP_ALLOWED_ORIGINS:allowed.slice(1).join(','),NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const app=createApp(db,config);
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  async function request(origin,headers={}){
+    const h={'x-requested-with':'MafutaWatch','content-type':'application/json',...headers};
+    if(origin!==undefined)h.origin=origin;
+    const response=await fetch(`${base}/api/v1/auth/login`,{method:'POST',headers:h,body:JSON.stringify({email:'admin@example.test',password:testPassword})});
+    return response.status;
+  }
+  await t.test('primary APP_ORIGIN is allowed',async()=>{assert.equal(await request(allowed[0]),200);});
+  await t.test('additional APP_ALLOWED_ORIGINS entry is allowed',async()=>{assert.equal(await request(allowed[1]),200);});
+  await t.test('disallowed origin is refused',async()=>{assert.equal(await request('https://evil.example'),403);});
+  await t.test('missing origin is refused',async()=>{assert.equal(await request(undefined),403);});
 });

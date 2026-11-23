@@ -5,6 +5,7 @@ export function configuration(env = process.env) {
     NODE_ENV: z.enum(['development','production','test']).default('development'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     APP_ORIGIN: z.url().default('http://localhost:3000'),
+    APP_ALLOWED_ORIGINS: z.string().default(''),
     DATABASE_URL: z.string().min(1),
     PGSSLMODE: z.enum(['disable','verify-full']).default('disable'),
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(3).default(0),
@@ -32,5 +33,14 @@ export function configuration(env = process.env) {
       if (data.NODE_ENV === 'production' && new URL(data.EMAIL_HTTP_URL).protocol !== 'https:') throw new Error('Production EMAIL_HTTP_URL must use HTTPS');
     }
   }
+  const additional=String(data.APP_ALLOWED_ORIGINS).split(',').map(value=>value.trim()).filter(Boolean);
+  for(const raw of additional){
+    let parsed;
+    try{parsed=new URL(raw);}catch{throw new Error(`Invalid APP_ALLOWED_ORIGINS entry: ${raw}`);}
+    if(parsed.origin!==raw||parsed.username||parsed.password)throw new Error('APP_ALLOWED_ORIGINS entries must be origins without a path or credentials');
+    if(data.NODE_ENV==='production'&&parsed.protocol!=='https:')throw new Error('Production requires HTTPS APP_ALLOWED_ORIGINS entries');
+  }
+  data.allowedOrigins=[data.APP_ORIGIN,...additional];
+  data.isOriginAllowed=origin=>data.allowedOrigins.includes(origin);
   return data;
 }
