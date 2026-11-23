@@ -4,12 +4,56 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0F2D52">
-  <meta name="description" content="Compare reported fuel prices in Uganda, contribute observations, and track consumer complaints.">
-  <title>MafutaWatch Uganda | Mobility & fuel intelligence</title>
+  <meta name="description" content="MafutaWatch Uganda is the Uganda Fuel Price Monitoring System. Compare fuel prices, find fuel stations in Uganda, and support Uganda fuel price transparency through citizen-reported pump prices.">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+  <meta name="language" content="English">
+  <meta name="country" content="Uganda">
+  <link rel="canonical" href="https://mafuta-watch-staging.vercel.app/">
+  <title>MafutaWatch Uganda — Uganda Fuel Price Monitoring System &amp; Fuel Price Comparison</title>
+  <meta property="og:title" content="MafutaWatch Uganda — Uganda Fuel Price Monitoring System &amp; Fuel Price Comparison">
+  <meta property="og:description" content="Compare reported fuel prices in Uganda, find fuel stations in Uganda, and support Uganda fuel price transparency through citizen-reported pump prices.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://mafuta-watch-staging.vercel.app/">
+  <meta property="og:site_name" content="MafutaWatch Uganda">
+  <meta property="og:locale" content="en_UG">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="MafutaWatch Uganda — Uganda Fuel Price Monitoring System &amp; Fuel Price Comparison">
+  <meta name="twitter:description" content="Compare reported fuel prices in Uganda, find fuel stations in Uganda, and support Uganda fuel price transparency through citizen-reported pump prices.">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/style.css">
   <script type="module" src="/js/app.js"></script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://mafuta-watch-staging.vercel.app/#organization",
+        "name": "MafutaWatch Uganda",
+        "url": "https://mafuta-watch-staging.vercel.app/",
+        "logo": "https://mafuta-watch-staging.vercel.app/icon.svg",
+        "description": "Independent fuel transparency platform for Uganda. Citizen-reported fuel price observations, station directory, price comparison and consumer complaints.",
+        "address": { "@type": "PostalAddress", "addressCountry": "UG" },
+        "contactPoint": { "@type": "ContactPoint", "contactType": "customer service", "url": "https://mafuta-watch-staging.vercel.app/#contact" },
+        "sameAs": []
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://mafuta-watch-staging.vercel.app/#website",
+        "url": "https://mafuta-watch-staging.vercel.app/",
+        "name": "MafutaWatch Uganda",
+        "description": "Uganda Fuel Price Monitoring System — fuel price comparison, fuel stations in Uganda, and Uganda fuel price transparency.",
+        "publisher": { "@id": "https://mafuta-watch-staging.vercel.app/#organization" },
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "https://mafuta-watch-staging.vercel.app/#stations?q={search_term_string}",
+          "query-input": "required name=search_term_string"
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body data-shell="public" class="is-home">
   <a class="skip-link" href="#main" data-action="skip">Skip to content</a>
@@ -53,7 +97,7 @@
   </div>
   <button id="sidebarBackdrop" class="sidebar-backdrop" data-action="sidebar-close" aria-label="Close workspace navigation" hidden></button>
   <footer class="site-footer">
-    <div class="container footer-grid"><div class="footer-brand"><a class="brand" href="#overview"><span class="brand-icon" aria-hidden="true">M</span><span>MafutaWatch<small>UGANDA</small></span></a><p>Clearer fuel information.<br>Stronger citizen participation.<br>Better journeys across Uganda.</p><span class="footer-note">An independent transparency platform.</span></div><div><h2>Explore</h2><a href="#prices">Fuel price comparison</a><a href="#stations">Station directory & map</a><a href="#analytics">Market insights</a><a href="#trip">Trip cost planner</a></div><div><h2>Participate</h2><a href="#report">Report a pump price</a><a href="#complaints">Consumer complaints</a><a href="#community">Driver community</a><a href="#operator">Station operators</a></div><div><h2>Information</h2><a data-action="open-info" data-info="about" href="#">About MafutaWatch</a><a data-action="open-info" data-info="advisories" href="#">Advisories & town halls</a><a data-action="open-info" data-info="contact" href="#">Help & contact</a><a data-action="open-info" data-info="privacy" href="#">Privacy & data use</a><a data-action="open-info" data-info="credits" href="#">Photography credits</a></div></div>
+    <div class="container footer-grid"><div class="footer-brand"><a class="brand" href="#overview"><span class="brand-icon" aria-hidden="true">M</span><span>MafutaWatch<small>UGANDA</small></span></a><p>Clearer fuel information.<br>Stronger citizen participation.<br>Better journeys across Uganda.</p><p class="footer-note">MafutaWatch Uganda runs the Uganda Fuel Price Monitoring System: a fuel price comparison resource for fuel stations in Uganda, built on Uganda fuel price transparency through citizen-reported pump prices.</p><span class="footer-note">An independent transparency platform.</span></div><div><h2>Explore</h2><a href="#prices">Fuel price comparison</a><a href="#stations">Station directory & map</a><a href="#analytics">Market insights</a><a href="#trip">Trip cost planner</a></div><div><h2>Participate</h2><a href="#report">Report a pump price</a><a href="#complaints">Consumer complaints</a><a href="#community">Driver community</a><a href="#operator">Station operators</a></div><div><h2>Information</h2><a data-action="open-info" data-info="about" href="#">About MafutaWatch</a><a data-action="open-info" data-info="advisories" href="#">Advisories & town halls</a><a data-action="open-info" data-info="contact" href="#">Help & contact</a><a data-action="open-info" data-info="privacy" href="#">Privacy & data use</a><a data-action="open-info" data-info="credits" href="#">Photography credits</a></div></div>
     <div class="container footer-bottom"><span>© <span id="copyrightYear">2026</span> MafutaWatch Uganda. Every litre counts.</span><span>UGX per litre · Times in East Africa Time</span><a href="#about">How information is verified ↗</a></div>
   </footer>
   <dialog id="authDialog" aria-labelledby="authTitle">

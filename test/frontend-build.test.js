@@ -10,11 +10,11 @@ test('frontend build publishes only public assets and licensed Leaflet files',as
   const base=await mkdtemp(join(parent,'mafuta-static-'));
   try{
     for(const entry of ['css','js','assets','node_modules/leaflet/dist','server'])await mkdir(join(base,entry),{recursive:true});
-    for(const entry of ['index.html','manifest.json','icon.svg','service-worker.js','.env','build.mjs','vercel.json','server/private.js'])await writeFile(join(base,entry),'test fixture');
+    for(const entry of ['index.html','manifest.json','icon.svg','service-worker.js','robots.txt','sitemap.xml','.env','build.mjs','vercel.json','server/private.js'])await writeFile(join(base,entry),'test fixture');
     await writeFile(join(base,'node_modules/leaflet/dist/leaflet.js'),'leaflet fixture');
     await writeFile(join(base,'node_modules/leaflet/LICENSE'),'Leaflet license fixture');
     const output=await buildFrontend(base),files=await readdir(output);
-    assert.deepEqual(files.sort(),['assets','css','icon.svg','index.html','js','manifest.json','service-worker.js','vendor'].sort());
+    assert.deepEqual(files.sort(),['assets','css','icon.svg','index.html','js','manifest.json','robots.txt','service-worker.js','sitemap.xml','vendor'].sort());
     assert.equal(await readFile(join(output,'vendor/leaflet/leaflet.js'),'utf8'),'leaflet fixture');
     assert.equal(await readFile(join(output,'vendor/leaflet/LICENSE'),'utf8'),'Leaflet license fixture');
   }finally{await rm(base,{recursive:true,force:true});}
