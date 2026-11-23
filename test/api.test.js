@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { createApp } from '../server/app.js';
 import { migrate,transaction } from '../server/db.js';
 import { configuration } from '../server/config.js';
+import { resetAdminPassword,createAdminIfMissing } from '../server/provisioning.js';
 import { fixtures,testDatabase,testPassword } from './database.js';
 
 test('API security, persistence and stakeholder workflows',async t=>{
@@ -773,3 +774,50 @@ test('origin allowlist allows multiple origins and rejects disallowed origins',a
   await t.test('disallowed origin is refused',async()=>{assert.equal(await request('https://evil.example'),403);});
   await t.test('missing origin is refused',async()=>{assert.equal(await request(undefined),403);});
 });
+
+test('administrator password reset and safe admin creation',async t=>{
+  const db=await testDatabase();const users=await fixtures(db);
+  t.after(async()=>{await db.end();});
+  const adminEmail=users.admin.email;
+  const resetPassword='Reset-Admin-Password-2026!';
+  await t.test('resetAdminPassword rejects unknown account',async()=>{
+      await assert.rejects(resetAdminPassword(db,{email:'nope@example.test',newPassword:resetPassword}),{status:404});
+    });
+    await t.test('resetAdminPassword rejects non-admin account',async()=>{
+      await assert.rejects(resetAdminPassword(db,{email:users.alice.email,newPassword:resetPassword}),{status:403});
+    });
+    await t.test('resetAdminPassword resets administrator password and revokes sessions',async()=>{
+      const result=await resetAdminPassword(db,{email:adminEmail,newPassword:resetPassword});
+      assert.equal(result.role,'admin');
+      const row=(await db.query('SELECT password_hash,disabled FROM users WHERE id=$1',[result.id])).rows[0];
+      assert.ok(row.password_hash.startsWith('scrypt:'));
+      assert.equal(row.disabled,false);
+      const sessions=(await db.query('SELECT 1 FROM sessions WHERE user_id=$1',[result.id])).rows;
+      assert.equal(sessions.length,0);
+      const tokens=(await db.query('SELECT 1 FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL',[result.id])).rows;
+      assert.equal(tokens.length,0);
+      const auditRow=(await db.query("SELECT action FROM audit_log WHERE action='admin.password_reset' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1",[result.id])).rows[0];
+      assert.equal(auditRow.action,'admin.password_reset');
+    });
+    await t.test('resetAdminPassword does not reveal the hash in its return value',async()=>{
+      const result=await resetAdminPassword(db,{email:adminEmail,newPassword:resetPassword});
+      assert.equal(Object.keys(result).length,2);
+      assert.equal(result.id,users.admin.id);
+      assert.equal(result.role,'admin');
+    });
+    await t.test('createAdminIfMissing creates an administrator when missing',async()=>{
+      const newEmail='newadmin@example.test';
+      const result=await createAdminIfMissing(db,{email:newEmail,password:resetPassword,displayName:'New Admin'});
+      assert.equal(result.created,true);
+      assert.equal(result.role,'admin');
+      const row=(await db.query('SELECT role,disabled,identity_verified FROM users WHERE email=$1',[newEmail])).rows[0];
+      assert.equal(row.role,'admin');
+      assert.equal(row.disabled,false);
+      assert.equal(row.identity_verified,false);
+    });
+    await t.test('createAdminIfMissing never overwrites an existing account',async()=>{
+      await assert.rejects(createAdminIfMissing(db,{email:adminEmail,password:resetPassword,displayName:'Overwriter'}),{status:409});
+      const row=(await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id])).rows[0];
+      assert.notEqual(row.displayName,'Overwriter');
+    });
+  });

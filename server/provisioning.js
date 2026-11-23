@@ -50,3 +50,21 @@ export async function provisionStaffAccount(db,{request,account,administrator,gi
     return writeAccount(client,input,{createOnly:true,actorId:admin.id,action:'staff.account_provision',details:{requestId:approved.requestId,reason:approved.reason,displayName:input.displayName,githubActor:provenance.actor,githubRunId:provenance.runId,commit:provenance.commit}});
   });
 }
+export async function resetAdminPassword(db,{email,newPassword,actorId=null}={}){
+  const normalized=emailSchema.parse(email);
+  const password=passwordSchema.parse(newPassword);
+  return transaction(db,async client=>{
+    const existing=(await client.query('SELECT id,role,disabled FROM users WHERE email=$1 FOR UPDATE',[normalized])).rows[0];
+    ensure(existing,404,'Account not found.');
+    ensure(existing.role==='admin',403,'Password reset is restricted to administrator accounts.');
+    await client.query('UPDATE users SET password_hash=$1 WHERE id=$2',[await passwordHash(password),existing.id]);
+    await client.query('DELETE FROM sessions WHERE user_id=$1',[existing.id]);
+    await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1',[existing.id]);
+    await audit(client,actorId,'admin.password_reset',existing.id,{email:normalized});
+    return {id:existing.id,role:'admin'};
+  });
+}
+export async function createAdminIfMissing(db,{email,password,displayName,actorId=null}={}){
+  const input=accountSchema.parse({email,password,role:'admin',displayName});
+  return transaction(db,client=>writeAccount(client,input,{createOnly:true,actorId,action:'admin.create_if_missing',details:{displayName:input.displayName}}));
+}
