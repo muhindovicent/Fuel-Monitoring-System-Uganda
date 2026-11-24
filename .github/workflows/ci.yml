@@ -24,6 +24,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm audit --audit-level=moderate
+      - name: Build locked Vercel frontend
+        working-directory: app
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
       - name: Embedded PostgreSQL regression suite
         run: npm test
       - name: PostgreSQL 17 regression suite

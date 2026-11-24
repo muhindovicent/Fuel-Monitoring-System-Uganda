@@ -14,15 +14,17 @@
     "db:maintain": "node --env-file-if-exists=.env server/cli.js maintain",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "test:e2e": "playwright test",
-    "lint": "eslint server app/js test playwright.config.js",
+    "lint": "eslint server app/js app/build.mjs test deploy playwright.config.js",
     "check": "npm run lint && npm test"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "express": "^5.1.0",
     "file-type": "^21.0.0",
     "helmet": "^8.1.0",
     "leaflet": "^1.9.4",
+    "nodemailer": "^10.4.0",
     "pg": "^8.16.3",
     "pino": "^10.0.0",
     "zod": "^4.1.0"

@@ -9,3 +9,5 @@ backups
 .local-data
 docs
 *.log
+app/dist
+app/node_modules

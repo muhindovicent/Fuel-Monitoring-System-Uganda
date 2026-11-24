@@ -20,6 +20,7 @@ export function authRoutes(db, config) {
     ensure(!req.user,409,'Sign out before creating another account.');
     const input = z.object({email:emailSchema,password:passwordSchema,displayName:z.string().trim().min(2).max(80),consent:z.literal(true)}).strict().parse(req.body);
     const result = await transaction(db,async client=>{
+      ensure(!(await client.query('SELECT 1 FROM users WHERE email=$1',[input.email])).rows[0],409,'That email address is already registered.');
       const id=randomUUID();
       const user=(await client.query(`INSERT INTO users(id,email,password_hash,display_name) VALUES ($1,$2,$3,$4) RETURNING ${userFields}`,[id,input.email,await passwordHash(input.password),input.displayName])).rows[0];
       await audit(client,id,'account.register',id,{privacyConsent:true});

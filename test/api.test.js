@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createApp } from '../server/app.js';
 import { migrate,transaction } from '../server/db.js';
 import { configuration } from '../server/config.js';
+import { resetAdminPassword,createAdminIfMissing } from '../server/provisioning.js';
 import { fixtures,testDatabase,testPassword } from './database.js';
 
 test('API security, persistence and stakeholder workflows',async t=>{
@@ -44,7 +46,20 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{origin:'https://evil.example'}})).status,403);
     assert.equal((await request('/reports',{as:'alice',method:'POST',body:{},headers:{'x-csrf-token':'bad'}})).status,403);
     const headers=(await request('/auth/session',{as:'alice'})).response.headers;
-    assert.equal(headers.get('cache-control'),'no-store');assert.match(headers.get('content-security-policy'),/script-src 'self'/);
+    assert.equal(headers.get('cache-control'),'no-store');assert.equal(headers.get('x-frame-options'),'DENY');
+    const csp=headers.get('content-security-policy');
+    const directive=name=>csp.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name} `));
+    assert.equal(directive('script-src'),'script-src \'self\'');
+    assert.ok(!csp.includes('unsafe-eval'));
+    assert.equal(directive('img-src'),'img-src \'self\' data: blob: https:');
+    assert.equal(directive('media-src'),'media-src \'self\' blob: https:');
+    assert.equal(directive('frame-src'),'frame-src https://www.youtube-nocookie.com https://player.vimeo.com');
+    const vercel=JSON.parse(await readFile(new URL('../app/vercel.json',import.meta.url),'utf8'));
+    const vercelCsp=vercel.headers.flatMap(entry=>entry.headers??[]).find(header=>header.key==='Content-Security-Policy').value;
+    const vercelDirective=name=>vercelCsp.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name} `));
+    for(const name of ['default-src','script-src','style-src','img-src','media-src','frame-src','connect-src','object-src','frame-ancestors','base-uri','form-action'])
+      assert.equal(vercelDirective(name),directive(name),`${name} must match the deployed Vercel header in app/vercel.json`);
+    assert.ok(!vercelCsp.includes('unsafe-eval'));
   });
   await t.test('unverified repeat reports cannot manufacture consensus; retries are idempotent',async()=>{
     const requestKey=randomUUID();const first=await submit('alice',1,5400,requestKey);assert.equal(first.status,201);
@@ -129,13 +144,64 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await decide()).status,400);
     await request(`/applications/${created.data.id}/attachments`,{as:'bob',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});
     assert.equal((await decide()).status,200);
+    const freshBob=await request('/auth/login',{method:'POST',body:{email:users.bob.email,password:testPassword}});assert.equal(freshBob.status,200);sessions['bob']={...freshBob.data,cookie:freshBob.response.headers.get('set-cookie').split(';')[0]};
     assert.equal((await request('/operator/stations',{as:'bob'})).data.items[0].id,2);
+  });
+  await t.test('approval assigns station, invalidates old sessions, and requires fresh operator login',async()=>{
+    await request('/auth/register',{method:'POST',body:{email:'applicant@example.test',password:testPassword,displayName:'Applicant',consent:true}});
+    const login=await request('/auth/login',{method:'POST',body:{email:'applicant@example.test',password:testPassword}});assert.equal(login.status,200);
+    sessions['applicant']={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    const created=await request('/applications',{as:'applicant',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:2,licenseReference:'APP-LICENSE-1'}});assert.equal(created.status,201);
+    const evidence=await request(`/applications/${created.data.id}/attachments`,{as:'applicant',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});assert.equal(evidence.status,201);
+    assert.equal((await request('/operator/stations',{as:'applicant'})).status,403);
+    assert.equal((await request(`/applications/${created.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'License verified.'}})).status,200);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['applicant@example.test'])).rows[0];assert.equal(userRow.role,'operator');
+    assert.ok((await db.query('SELECT 1 FROM station_staff WHERE user_id=$1 AND station_id=2',[login.data.user.id])).rows[0]);
+    assert.equal((await request('/stations/2/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,401);
+    const fresh=await request('/auth/login',{method:'POST',body:{email:'applicant@example.test',password:testPassword}});assert.equal(fresh.status,200);
+    sessions['applicant']={...fresh.data,cookie:fresh.response.headers.get('set-cookie').split(';')[0]};
+    const stations=await request('/operator/stations',{as:'applicant'});assert.equal(stations.status,200);assert.ok(stations.data.items.some(s=>s.id===2));assert.ok(!stations.data.items.some(s=>s.id===1));
+    assert.equal((await request('/stations/2/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,200);
+    assert.equal((await request('/stations/1/prices',{as:'applicant',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
+  });
+  await t.test('rejection does not alter role, sessions or station assignments',async()=>{
+    await request('/auth/register',{method:'POST',body:{email:'rejectee@example.test',password:testPassword,displayName:'Rejectee',consent:true}});
+    const login=await request('/auth/login',{method:'POST',body:{email:'rejectee@example.test',password:testPassword}});assert.equal(login.status,200);
+    sessions['rejectee']={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    const created=await request('/applications',{as:'rejectee',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:2,licenseReference:'REJ-LICENSE-1'}});assert.equal(created.status,201);
+    await request(`/applications/${created.data.id}/attachments`,{as:'rejectee',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nLicense\n%%EOF')});
+    assert.equal((await request(`/applications/${created.data.id}`,{as:'admin',method:'PATCH',body:{status:'rejected',reason:'Documents insufficient.'}})).status,200);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['rejectee@example.test'])).rows[0];assert.equal(userRow.role,'citizen');
+    assert.equal((await db.query('SELECT 1 FROM station_staff WHERE user_id=$1',[login.data.user.id])).rowCount,0);
+    assert.equal((await request('/me/reports',{as:'rejectee'})).status,200);
+    assert.equal((await request('/operator/stations',{as:'rejectee'})).status,403);
+    assert.equal((await request('/stations/2/prices',{as:'rejectee',method:'PUT',body:{fuel:'petrol',price:5500}})).status,403);
+  });
+  await t.test('duplicate application, missing evidence, and upload-to-existing workflows',async()=>{
+    // Idempotent retry: same user+station+reference returns existing record
+    const first=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(first.status,201);
+    const retry=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-1'}});assert.equal(retry.status,201);assert.equal(retry.data.id,first.data.id);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM applications WHERE user_id=$1 AND station_id=1 AND status=\'pending\'',[first.data.user_id])).rows[0].n,1);
+    // Conflicting licence reference is rejected
+    const conflict=await request('/applications',{as:'alice',method:'POST',headers:{'idempotency-key':randomUUID()},body:{stationId:1,licenseReference:'BOB-LICENSE-2'}});assert.equal(conflict.status,409);
+    // Approval without evidence is rejected
+    assert.equal((await request(`/applications/${first.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'Should fail without documents.'}})).status,400);
+    const userRow=(await db.query('SELECT role FROM users WHERE email=$1',['alice@example.test'])).rows[0];assert.equal(userRow.role,'citizen');
+    // Upload evidence to existing application without creating duplicate
+    const upload=await request(`/applications/${first.data.id}/attachments`,{as:'alice',method:'POST',headers:{'content-type':'application/pdf','x-file-name':'license.pdf'},raw:Buffer.from('%PDF-1.7\nAlice License\n%%EOF')});assert.equal(upload.status,201);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM attachments WHERE application_id=$1',[first.data.id])).rows[0].n,1);
+    // Approval now succeeds with evidence
+    assert.equal((await request(`/applications/${first.data.id}`,{as:'admin',method:'PATCH',body:{status:'approved',reason:'License verified.'}})).status,200);
+    assert.equal((await db.query('SELECT role FROM users WHERE email=$1',['alice@example.test'])).rows[0].role,'operator');
+    const fresh=await request('/auth/login',{method:'POST',body:{email:'alice@example.test',password:testPassword}});assert.equal(fresh.status,200);sessions['alice']={...fresh.data,cookie:fresh.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/operator/stations',{as:'alice'})).data.items.some(s=>s.id===1),true);
+    assert.equal((await request('/operator/stations',{as:'alice'})).data.items.some(s=>s.id===2),false);
   });
   await t.test('community attribution, unique votes and moderation are enforced',async()=>{
     const body='<img src=x onerror=alert(1)> information';
     assert.equal((await request('/rooms/1/messages',{as:'alice',method:'POST',body:{body,userId:users.admin.id}})).status,400);
     await request('/rooms/1/messages',{as:'alice',method:'POST',body:{body}});
-    const message=(await request('/rooms/1/messages')).data.items[0];assert.equal(message.user_id,users.alice.id);
+    const message=(await request('/rooms/1/messages')).data.items[0];assert.equal(message.display_name,'Anonymous Member');assert.equal('user_id' in message,false);
     for(let i=0;i<2;i++)assert.equal((await request(`/messages/${message.id}/vote`,{as:'operator',method:'PUT',body:{}})).status,200);
     assert.equal((await request('/rooms/1/messages')).data.items[0].votes,1);
     assert.equal((await request(`/messages/${message.id}/vote`,{as:'alice',method:'PUT',body:{}})).status,400);
@@ -176,6 +242,32 @@ test('API security, persistence and stakeholder workflows',async t=>{
     const trip=await request('/trip',{method:'POST',body:{distanceKm:100,kmPerLitre:10,fuel:'diesel'}});assert.equal(trip.data.cost,52000);assert.equal(trip.data.method,'manual distance estimate');
     const dashboard=await request('/admin/dashboard',{as:'analyst'});assert.ok(dashboard.data.reports>0);assert.ok(dashboard.data.average_response_hours!==undefined);
   });
+  await t.test('station directory supports server pagination, exact district matching and fresh insights',async()=>{
+    const first=await request('/stations?limit=1&offset=0');
+    const second=await request('/stations?limit=1&offset=1');
+    assert.equal(first.status,200);assert.ok(first.data.total>=2);
+    assert.notEqual(first.data.items[0].id,second.data.items[0].id);
+    assert.ok(first.data.places.includes('Kampala'));assert.ok(first.data.places.includes('Jinja'));
+    const jinja=await request('/stations?district=Jinja');
+    assert.equal(jinja.status,200);assert.ok(jinja.data.items.length>=1);
+    assert.ok(jinja.data.items.every(s=>s.district==='Jinja'));
+    assert.ok(!jinja.data.items.some(s=>s.name==='Kampala Test Station'));
+    const created=await request('/admin/stations',{as:'admin',method:'POST',body:{operatorId:1,name:'Mbale Fresh Price Station',area:'Mbale Town',district:'Mbale',region:'Eastern',latitude:1.075,longitude:34.175}});
+    assert.equal(created.status,201,JSON.stringify(created.data));
+    const stationId=created.data.id;
+    assert.equal((await request(`/stations/${stationId}/prices`,{as:'admin',method:'PUT',body:{fuel:'petrol',price:5150}})).status,200);
+    const insights=await request('/stations/insights');
+    assert.equal(insights.status,200);
+    assert.ok(insights.data.comparison.some(r=>r.id===stationId&&r.price===5150));
+    assert.ok(insights.data.updates.some(u=>u.id===stationId&&u.fuel==='petrol'));
+    assert.ok(insights.data.distribution.some(r=>r.region==='Eastern'&&r.count>=1));
+    assert.ok(insights.data.districts.includes('Mbale'));
+    assert.equal((await request('/stations/1')).status,200,'the insights route must not shadow station details');
+    const fresh=await request('/stations?freshness=48&limit=100');
+    assert.equal(fresh.status,200);assert.ok(fresh.data.items.length>=1);
+    const cutoff=Date.now()-48*3600000;
+    for(const s of fresh.data.items)assert.ok(s.prices.some(p=>p.fuel==='petrol'&&p.source!=='demo'&&Date.parse(p.updated_at)>=cutoff),`station ${s.id} lacks a fresh non-demo petrol price`);
+  });
   await t.test('directory administration, assignment revocation, evidence quotas and server SLA state',async()=>{
     const room=await request('/admin/rooms',{as:'admin',method:'POST',body:{name:'Western test corridor'}});assert.equal(room.status,201);
     assert.equal((await request('/admin/rooms',{as:'operator',method:'POST',body:{name:'Unauthorized room'}})).status,403);
@@ -190,6 +282,69 @@ test('API security, persistence and stakeholder workflows',async t=>{
     await db.query("UPDATE tickets SET due_at=now()-interval '1 hour' WHERE id=$1",[ticket.id]);
     assert.equal((await request('/tickets',{as:'inspector'})).data.items.find(t=>t.id===ticket.id).overdue,true);
   });
+  await t.test('administrators can assign non-administrator roles with revoked access and an audit record',async()=>{
+    const registered=await request('/auth/register',{method:'POST',body:{email:'rolechange@example.test',password:testPassword,displayName:'Role change test',consent:true}});assert.equal(registered.status,201);
+    sessions.rolechange={...registered.data,cookie:registered.response.headers.get('set-cookie').split(';')[0]};
+    const id=registered.data.user.id,reason='Role confirmed by the operating organization and recorded for audit.';
+    assert.equal((await request(`/admin/users/${id}`,{as:'analyst',method:'PATCH',body:{role:'inspector',reason}})).status,403);
+    assert.equal((await request(`/admin/users/${users.admin.id}`,{as:'admin',method:'PATCH',body:{role:'operator',reason}})).status,403);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{role:'admin',reason}})).status,400);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{role:'inspector',reason}})).status,200);
+    assert.equal((await db.query('SELECT role FROM users WHERE id=$1',[id])).rows[0].role,'inspector');
+    assert.equal((await request('/me/reports',{as:'rolechange'})).status,401);
+    const login=await request('/auth/login',{method:'POST',body:{email:'rolechange@example.test',password:testPassword}});assert.equal(login.status,200);assert.equal(login.data.user.role,'inspector');
+    sessions.rolechange={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'rolechange'})).status,200);
+    const event=(await db.query("SELECT action,details FROM audit_log WHERE action='account.role' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.role,'inspector');assert.equal(event.details.reason,reason);
+  });
+  await t.test('administrators provision inspector and analyst accounts with re-authentication and no credential disclosure',async()=>{
+    const email='manual.inspector@example.test',password='Manual-staff-password-2026!',reason='Identity and appointment verified through the approved staff procedure.';
+    const body={email,displayName:'Manual Inspector',password,role:'inspector',administratorPassword:testPassword,identityVerified:true,reason};
+    assert.equal((await request('/admin/staff',{as:'analyst',method:'POST',body})).status,403);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,administratorPassword:'wrong-password'}})).status,403);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,role:'admin'}})).status,400);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,identityVerified:false}})).status,400);
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body:{...body,email:'operator@example.test'}})).status,409);
+    const created=await request('/admin/staff',{as:'admin',method:'POST',body});assert.equal(created.status,201,JSON.stringify(created.data));
+    assert.equal(created.data.role,'inspector');
+    const row=(await db.query('SELECT role,identity_verified,disabled FROM users WHERE email=$1',[email])).rows[0];
+    assert.deepEqual({...row},{role:'inspector',identity_verified:true,disabled:false});
+    assert.equal((await request('/admin/staff',{as:'admin',method:'POST',body})).status,409);
+    const event=(await db.query("SELECT details FROM audit_log WHERE action='staff.account_provision_manual' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.email,email);assert.equal(event.details.role,'inspector');assert.equal(event.details.reason,reason);
+    assert.doesNotMatch(JSON.stringify(event.details),/Manual-staff-password/);
+    const login=await request('/auth/login',{method:'POST',body:{email,password}});assert.equal(login.status,200);assert.equal(login.data.user.role,'inspector');
+    sessions.manualStaff={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'manualStaff'})).status,200);
+    assert.equal((await request('/admin/users',{as:'manualStaff'})).status,403);
+    assert.equal((await request('/admin/staff',{as:'manualStaff',method:'POST',body})).status,403);
+  });
+  await t.test('suspending a staff account revokes access until an administrator restores it',async()=>{
+    const id=sessions.manualStaff.user.id,email='manual.inspector@example.test',password='Manual-staff-password-2026!';
+    assert.equal((await request(`/admin/users/${users.admin.id}`,{as:'admin',method:'PATCH',body:{disabled:true,reason:'An administrator cannot suspend their own account.'}})).status,403);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{disabled:true,reason:'Suspension confirmed pending a security review.'}})).status,200);
+    assert.equal((await request('/me/reports',{as:'manualStaff'})).status,401);
+    assert.equal((await request('/auth/login',{method:'POST',body:{email,password}})).status,401);
+    assert.equal((await request(`/admin/users/${id}`,{as:'admin',method:'PATCH',body:{disabled:false,reason:'Security review complete; staff access restored.'}})).status,200);
+    const login=await request('/auth/login',{method:'POST',body:{email,password}});assert.equal(login.status,200);assert.equal(login.data.user.identity_verified,true);
+    sessions.manualStaff={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+    assert.equal((await request('/admin/reports',{as:'manualStaff'})).status,200);
+  });
+  await t.test('station access is granted explicitly to an active operator and can be revoked',async()=>{
+    const reason='Operator authorization confirmed for this station by the operating organization.';
+    const assignment=()=>request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.operator.id,reason}});
+    assert.equal((await request('/admin/stations/2/staff',{as:'inspector',method:'POST',body:{userId:users.operator.id,reason}})).status,403);
+    assert.equal((await request('/admin/stations/2/staff',{as:'admin',method:'POST',body:{userId:users.verified3.id,reason}})).status,409);
+    assert.equal((await assignment()).status,201);
+    assert.equal((await assignment()).status,409);
+    assert.ok((await request('/operator/stations',{as:'operator'})).data.items.some(s=>s.id===2));
+    assert.equal((await request('/stations/2/prices',{as:'operator',method:'PUT',body:{fuel:'petrol',price:5750}})).status,200);
+    const event=(await db.query("SELECT details FROM audit_log WHERE action='station.access_grant' ORDER BY id DESC LIMIT 1")).rows[0];
+    assert.equal(event.details.userId,users.operator.id);assert.equal(event.details.reason,reason);
+    assert.equal((await request(`/admin/stations/2/staff/${users.operator.id}`,{as:'admin',method:'DELETE'})).status,204);
+    assert.equal((await request('/stations/2/prices',{as:'operator',method:'PUT',body:{fuel:'petrol',price:5760}})).status,403);
+  });
   await t.test('password changes revoke sessions and logout invalidates cookies',async()=>{
     const result=await request('/auth/password',{as:'alice',method:'POST',body:{currentPassword:testPassword,newPassword:'New-test-password-2026!'}});assert.equal(result.status,204);
     assert.equal((await request('/me/reports',{as:'alice'})).status,401);
@@ -197,3 +352,472 @@ test('API security, persistence and stakeholder workflows',async t=>{
     assert.equal((await request('/admin/reports',{as:'inspector'})).status,401);
   });
 });
+
+test('Citizen profile, preferences, avatars and account security',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['alice','bob']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=','base64');
+  const oversize=Buffer.alloc(2097153);
+
+  await t.test('profile retrieval exposes read-only identity fields and editable details',async()=>{
+    const me=await request('/me/profile',{as:'alice'});assert.equal(me.status,200);
+    assert.equal(me.data.profile.role,'citizen');assert.equal(me.data.profile.identityVerified,false);
+    assert.equal(me.data.profile.email,users.alice.email);assert.equal(me.data.profile.id,users.alice.id);
+    assert.equal(me.data.profile.displayName,'alice');assert.equal(me.data.profile.avatarUrl,null);
+  });
+
+  await t.test('profile updates only submitted editable fields and ignores privileged fields',async()=>{
+    const updated=await request('/me/profile',{as:'alice',method:'PATCH',body:{displayName:'Vinnie',preferredName:'Vincent',phone:'+256700000000',district:'Kampala'}});
+    assert.equal(updated.status,200);assert.equal(updated.data.profile.displayName,'Vinnie');
+    assert.equal(updated.data.profile.preferredName,'Vincent');assert.equal(updated.data.profile.phone,'+256700000000');
+    assert.equal(updated.data.profile.district,'Kampala');assert.equal(updated.data.profile.role,'citizen');
+    assert.equal(updated.data.profile.identityVerified,false);
+    const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users.alice.id]);
+    assert.equal(row.rows[0].role,'citizen');assert.equal(row.rows[0].identity_verified,false);
+  });
+
+  await t.test('phone and district validation rejects malformed input',async()=>{
+    assert.equal((await request('/me/profile',{as:'alice',method:'PATCH',body:{phone:'not-a-phone'}})).status,400);
+    assert.equal((await request('/me/profile',{as:'alice',method:'PATCH',body:{district:'X'}})).status,400);
+  });
+
+  await t.test('avatar upload accepts valid images, rejects bad type and oversize files',async()=>{
+    const put=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'image/png','x-file-name':'photo.png'},raw:png});
+    assert.equal(put.status,200);assert.equal(put.data.saved,true);
+    const served=await fetch(`${base}/api/v1/me/avatar`,{headers:{cookie:sessions.alice.cookie}});assert.equal(served.status,200);assert.equal(served.headers.get('content-type'),'image/png');
+    const me=await request('/me/profile',{as:'alice'});assert.ok(me.data.profile.avatarUrl);
+    const bad=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'text/plain','x-file-name':'photo.txt'},raw:Buffer.from('not an image')});assert.equal(bad.status,400);
+    const big=await request('/me/avatar',{as:'alice',method:'PUT',headers:{'content-type':'image/png','x-file-name':'big.png'},raw:oversize});assert.equal(big.status,413);
+    const removed=await request('/me/avatar',{as:'alice',method:'DELETE'});assert.equal(removed.status,204);
+    const gone=await fetch(`${base}/api/v1/me/avatar`,{headers:{cookie:sessions.alice.cookie}});assert.equal(gone.status,404);
+  });
+
+  await t.test('preferences are persisted and partially updated',async()=>{
+    const get=await request('/me/preferences',{as:'alice'});assert.equal(get.status,200);
+    assert.deepEqual(get.data.preferences,{fuelType:null,vehicleType:null,preferredDistrict:null,notifications:{},privacy:{},roleSettings:{}});
+    const set=await request('/me/preferences',{as:'alice',method:'PATCH',body:{fuelType:'diesel',vehicleType:'boda',preferredDistrict:'Jinja',notifications:{priceChanges:true},privacy:{publicDisplayName:false}}});
+    assert.equal(set.status,200);assert.equal(set.data.saved,true);
+    const again=await request('/me/preferences',{as:'alice'});assert.equal(again.data.preferences.fuelType,'diesel');assert.equal(again.data.preferences.vehicleType,'boda');
+    assert.equal(again.data.preferences.notifications.priceChanges,true);assert.equal(again.data.preferences.privacy.publicDisplayName,false);
+    const partial=await request('/me/preferences',{as:'alice',method:'PATCH',body:{vehicleType:'truck'}});assert.equal(partial.status,200);
+    const still=await request('/me/preferences',{as:'alice'});assert.equal(still.data.preferences.fuelType,'diesel');assert.equal(still.data.preferences.vehicleType,'truck');
+  });
+
+  await t.test('deletion request requires correct password and is recorded',async()=>{
+    const wrong=await request('/me/deletion-request',{as:'alice',method:'POST',body:{reason:'Leaving the platform.',password:'wrong-password'}});assert.equal(wrong.status,401);
+    const created=await request('/me/deletion-request',{as:'alice',method:'POST',body:{reason:'Leaving the platform.',password:testPassword}});assert.equal(created.status,202);assert.equal(created.data.accepted,true);
+    const status=await request('/me/deletion-request',{as:'alice'});assert.equal(status.data.request.status,'pending');assert.equal(status.data.request.reason,'Leaving the platform.');
+  });
+
+  await t.test('users cannot access or modify another account',async()=>{
+    assert.equal((await request('/me/profile',{as:'bob'})).data.profile.id,users.bob.id);
+    const cross=await request(`/me/profile`,{as:'bob',method:'PATCH',body:{displayName:'Hacked'}});assert.equal(cross.status,200);assert.equal(cross.data.profile.id,users.bob.id);
+    assert.equal((await db.query('SELECT display_name FROM users WHERE id=$1',[users.alice.id])).rows[0].display_name,'Vinnie');
+    assert.equal((await request('/me/avatar',{as:'bob',method:'DELETE'})).status,204);
+  });
+});
+
+test('Stakeholder profile management for admin, inspector, analyst and operator',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['admin','inspector','analyst','operator']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
+
+  for(const [role,email] of [['admin','admin@example.test'],['inspector','inspector@example.test'],['analyst','analyst@example.test'],['operator','operator@example.test']]) {
+    await t.test(`stakeholder ${role} can retrieve and update their own profile`,async()=>{
+      const me=await request('/me/profile',{as:role});assert.equal(me.status,200);
+      assert.equal(me.data.profile.role,role);
+      assert.equal(me.data.profile.email,email);
+      assert.equal(me.data.profile.id,users[role].id);
+
+      const updated=await request('/me/profile',{as:role,method:'PATCH',body:{displayName:`Updated ${role}`,phone:'+256700111111',district:'Kampala'}});
+      assert.equal(updated.status,200);
+      assert.equal(updated.data.profile.displayName,`Updated ${role}`);
+      assert.equal(updated.data.profile.phone,'+256700111111');
+      assert.equal(updated.data.profile.district,'Kampala');
+
+      const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users[role].id]);
+      assert.equal(row.rows[0].role,role);
+    });
+  }
+
+  await t.test('stakeholders cannot modify privileged fields',async()=>{
+    const result=await request('/me/profile',{as:'admin',method:'PATCH',body:{role:'citizen',identity_verified:true}});
+    assert.equal(result.status,400,'Strict schema rejects unknown privileged fields.');
+    const row=await db.query('SELECT role,identity_verified FROM users WHERE id=$1',[users.admin.id]);
+    assert.equal(row.rows[0].role,'admin');
+    assert.equal(row.rows[0].identity_verified,true);
+  });
+
+  await t.test('stakeholders cannot modify another user profile through /me',async()=>{
+    const adminBefore=await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id]).then(r=>r.rows[0].display_name);
+    await request('/me/profile',{as:'inspector',method:'PATCH',body:{displayName:'Hacked'}});
+    const adminAfter=await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id]).then(r=>r.rows[0].display_name);
+    assert.equal(adminAfter,adminBefore,'Inspector modifying their own profile did not change admin profile.');
+  });
+
+  await t.test('stakeholders can change password and invalidate sessions',async()=>{
+    const result=await request('/auth/password',{as:'operator',method:'POST',body:{currentPassword:testPassword,newPassword:'New-test-password-2026!'}});
+    assert.equal(result.status,204);
+    assert.equal((await request('/me/profile',{as:'operator'})).status,401);
+    const login=await request('/auth/login',{method:'POST',body:{email:users.operator.email,password:'New-test-password-2026!'}});
+    assert.equal(login.status,200);
+    sessions.operator={...login.data,cookie:login.response.headers.get('set-cookie').split(';')[0]};
+  });
+
+  await t.test('stakeholders cannot request email changes without a delivery provider',async()=>{
+    const status=await request('/me/email/status',{as:'analyst'});
+    assert.equal(status.status,200);
+    assert.deepEqual({enabled:status.data.enabled,provider:status.data.provider},{enabled:false,provider:''});
+    const created=await request('/me/email/change-request',{as:'analyst',method:'POST',body:{newEmail:'new-analyst@example.test',currentPassword:testPassword}});
+    assert.equal(created.status,503,'Without a configured provider the API refuses instead of pretending to send.');
+    assert.match(created.data.error,/not configured/i);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM email_change_tokens')).rows[0].count,0);
+    assert.equal((await db.query('SELECT email FROM users WHERE id=$1',[users.analyst.id])).rows[0].email,users.analyst.email);
+    const confirm=await request('/me/email/confirm',{as:'analyst',method:'POST',body:{token:'a'.repeat(64)}});
+    assert.equal(confirm.status,400);
+  });
+
+  await t.test('stakeholders cannot access another account profile',async()=>{
+    const inspectorBefore=await db.query('SELECT display_name FROM users WHERE id=$1',[users.inspector.id]).then(r=>r.rows[0].display_name);
+    await request('/me/profile',{as:'admin',method:'PATCH',body:{displayName:'Hacked'}});
+    const inspectorAfter=await db.query('SELECT display_name FROM users WHERE id=$1',[users.inspector.id]).then(r=>r.rows[0].display_name);
+    assert.equal(inspectorAfter,inspectorBefore,'Admin modifying their own profile did not change inspector profile.');
+  });
+});
+
+test('Media gallery, news articles, and videos API',async t=>{
+  const db=await testDatabase(),users=await fixtures(db);
+  const origin='http://localhost:3000';
+  const app=createApp(db,{APP_ORIGIN:origin,NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  const sessions={};
+  async function request(path,{as,method='GET',body,headers={},raw}={}) {
+    const session=sessions[as];
+    const response=await fetch(`${base}/api/v1${path}`,{method,headers:{origin,'x-requested-with':'MafutaWatch',...(session?{cookie:session.cookie,'x-csrf-token':session.csrfToken}:{}),...(body?{'content-type':'application/json'}:{}),...headers},body:raw??(body?JSON.stringify(body):undefined)});
+    const data=response.status===204?null:await response.json();return {status:response.status,data,response};
+  }
+  const base=`http://127.0.0.1:${server.address().port}`;
+  for(const name of ['admin','alice']) {
+    const result=await request('/auth/login',{method:'POST',body:{email:users[name].email,password:testPassword}});
+    assert.equal(result.status,200,JSON.stringify(result.data));
+    sessions[name]={...result.data,cookie:result.response.headers.get('set-cookie').split(';')[0]};
+  }
+
+  await t.test('media gallery CRUD - admin can create, public can read',async()=>{
+    // Public read works without auth
+    const publicList=await request('/media');
+    assert.equal(publicList.status,200);
+    assert.equal(publicList.data.items.length,0);
+
+    // Admin can create media
+    const created=await request('/media',{as:'admin',method:'POST',body:{
+      title:'Test Photo',description:'A test photo',category:'fuel-stations',
+      imageUrl:'https://example.test/photo.jpg',photographer:'Photo User',source:'Test Source',
+      license:'CC BY 4.0',altText:'A test photo',fileSize:50000,dimensions:'1200x800',featured:true,priority:5
+    }});
+    console.log('CREATE MEDIA RESPONSE:', created.status, JSON.stringify(created.data));
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const mediaId=created.data.id;
+
+    // Public read now includes the media
+    const listed=await request('/media');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,1);
+    assert.equal(listed.data.items[0].title,'Test Photo');
+    assert.equal(listed.data.items[0].photographer,'Photo User');
+    assert.equal(listed.data.items[0].license,'CC BY 4.0');
+
+    // Non-admin cannot create media
+    const nonAdmin=await request('/media',{as:'alice',method:'POST',body:{
+      title:'Unauthorized',description:'Should fail',category:'fuel-stations',
+      imageUrl:'https://example.test/x.jpg',photographer:'User',source:'Source',license:'CC BY 4.0'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can update media
+    const updated=await request(`/media/${mediaId}`,{as:'admin',method:'PATCH',body:{
+      title:'Updated Photo',description:'Updated description'
+    }});
+    assert.equal(updated.status,200);
+    assert.equal(updated.data.saved,true);
+
+    // Admin can delete media
+    const deleted=await request(`/media/${mediaId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+
+    // Deleted media no longer appears
+    const gone=await request('/media');
+    assert.equal(gone.data.items.length,0);
+  });
+
+  await t.test('news articles CRUD - admin can publish, public reads published only',async()=>{
+    // Clean up any existing news articles from previous tests
+    await db.query('DELETE FROM news_article_photos');
+    await db.query('DELETE FROM news_article_videos');
+    await db.query('DELETE FROM news_articles');
+
+    const publicList=await request('/news');
+    assert.equal(publicList.status,200);
+    const initialCount=publicList.data.items.length;
+
+    // Admin can publish news
+    const created=await request('/news',{as:'admin',method:'POST',body:{
+      title:'Breaking News',summary:'Breaking news summary.',body:'Breaking news body content.',
+      sourceUrl:'https://example.test/news/breaking',sourceName:'News Source',
+      category:'fuel-prices',excerpt:'Breaking excerpt.',readingTime:5,
+      featured:true,priority:10,status:'published'
+    }});
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const newsId=created.data.id;
+
+    // Public read now includes the news
+    const listed=await request('/news');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,initialCount+1);
+    assert.equal(listed.data.items.find(a=>a.id===newsId).title,'Breaking News');
+
+    // New drafts and archived articles must never enter the public feed.
+    const hiddenIds=[];
+    for(const status of ['draft','archived']){
+      const hidden=await request('/news',{as:'admin',method:'POST',body:{
+        title:`Hidden ${status} article`,summary:'Unpublished news summary.',body:'Unpublished news body content.',
+        sourceUrl:'https://example.test/news/hidden',sourceName:'News Source',category:'fuel-prices',status
+      }});
+      assert.equal(hidden.status,201);
+      hiddenIds.push(hidden.data.id);
+    }
+    const withHidden=await request('/news');
+    assert.equal(withHidden.status,200);
+    assert.deepEqual(withHidden.data.items,listed.data.items);
+
+    // Non-admin cannot create news
+    const nonAdmin=await request('/news',{as:'alice',method:'POST',body:{
+      title:'Unauthorized News',summary:'Should fail',body:'Should fail body.',
+      sourceUrl:'https://example.test/unauth',sourceName:'Source',category:'transport'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can update news
+    const updated=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{title:'Updated News',status:'draft'}});
+    assert.equal(updated.status,200);
+    assert.equal(updated.data.saved,true);
+
+    // After setting to draft, public read excludes it
+    const afterDraft=await request('/news');
+    assert.equal(afterDraft.status,200);
+    assert.equal(afterDraft.data.items.length,initialCount);
+    assert.ok(!afterDraft.data.items.some(a=>a.id===newsId));
+
+    // Republishing restores visibility, and archiving removes it again.
+    const republished=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{status:'published'}});
+    assert.equal(republished.status,200);
+    const afterPublish=await request('/news');
+    assert.equal(afterPublish.status,200);
+    assert.equal(afterPublish.data.items.length,initialCount+1);
+    assert.equal(afterPublish.data.items.find(a=>a.id===newsId).title,'Updated News');
+    const archived=await request(`/news/${newsId}`,{as:'admin',method:'PATCH',body:{status:'archived'}});
+    assert.equal(archived.status,200);
+    const afterArchive=await request('/news');
+    assert.equal(afterArchive.status,200);
+    assert.equal(afterArchive.data.items.length,initialCount);
+    assert.ok(!afterArchive.data.items.some(a=>a.id===newsId));
+
+    // Admin can delete news
+    const deleted=await request(`/news/${newsId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+    for(const id of hiddenIds){
+      assert.equal((await request(`/news/${id}`,{as:'admin',method:'DELETE'})).status,204);
+    }
+  });
+
+  await t.test('videos CRUD - admin can publish, public can read',async()=>{
+    const created=await request('/videos',{as:'admin',method:'POST',body:{
+      title:'Tutorial Video',description:'How to use MafutaWatch',category:'platform-howto',
+      videoUrl:'https://example.test/video.mp4',thumbnailUrl:'https://example.test/thumb.jpg',
+      duration:'5:30',source:'Test video producer',license:'All Rights Reserved'
+    }});
+    console.log('CREATE VIDEO RESPONSE:', created.status, JSON.stringify(created.data));
+    assert.equal(created.status,201);
+    assert.ok(created.data.id);
+    const videoId=created.data.id;
+
+    const listed=await request('/videos');
+    assert.equal(listed.status,200);
+    assert.equal(listed.data.items.length,1);
+    assert.equal(listed.data.items[0].title,'Tutorial Video');
+
+    // Non-admin cannot create video
+    const nonAdmin=await request('/videos',{as:'alice',method:'POST',body:{
+      title:'Unauthorized Video',description:'Should fail',category:'platform-howto',
+      videoUrl:'https://example.test/unauth.mp4',duration:'1:00'
+    }});
+    assert.equal(nonAdmin.status,403);
+
+    // Admin can delete video
+    const deleted=await request(`/videos/${videoId}`,{as:'admin',method:'DELETE'});
+    assert.equal(deleted.status,204);
+  });
+
+  await t.test('news article with photos and videos junction',async()=>{
+    // Create media and video first
+    const media=await request('/media',{as:'admin',method:'POST',body:{
+      title:'News Photo',description:'News photo',category:'fuel-stations',
+      imageUrl:'https://example.test/news-photo.jpg',photographer:'User',source:'Wikimedia',
+      license:'CC BY 4.0'
+    }});
+    assert.equal(media.status,201);
+    const mediaId=media.data.id;
+
+    const video=await request('/videos',{as:'admin',method:'POST',body:{
+      title:'News Video',description:'News video',category:'platform-howto',
+      videoUrl:'https://example.test/news-video.mp4',duration:'3:00',source:'Test video producer',license:'All Rights Reserved'
+    }});
+    assert.equal(video.status,201);
+    const videoId=video.data.id;
+
+    // Create news article
+    const news=await request('/news',{as:'admin',method:'POST',body:{
+      title:'News with media',summary:'This is a test news summary.',body:'Body content.',
+      sourceUrl:'https://example.test/news-media',sourceName:'Source',category:'transport'
+    }});
+    console.log('CREATE NEWS RESPONSE:', news.status, JSON.stringify(news.data));
+    assert.equal(news.status,201);
+    const newsId=news.data.id;
+
+    // Link photo and video to news
+    await request(`/news/${newsId}/photos`,{as:'admin',method:'POST',body:{mediaId,caption:'News photo caption'}});
+    await request(`/news/${newsId}/videos`,{as:'admin',method:'POST',body:{mediaId:videoId,caption:'News video caption'}});
+
+    // Public news query includes photos and videos
+    const listed=await request('/news');
+    assert.equal(listed.status,200);
+    const article=listed.data.items.find(a=>a.id===newsId);
+    assert.ok(article);
+    if(article.photos){
+      assert.ok(article.photos.some(p=>p.media.id===mediaId));
+      assert.equal(article.photos[0].caption,'News photo caption');
+    }
+    if(article.videos){
+      assert.ok(article.videos.some(v=>v.media.id===videoId));
+    }
+  });
+
+});
+
+test('configuration accepts multiple allowed origins and rejects invalid entries',async()=>{
+  const base={DATABASE_URL:'postgresql://test',NODE_ENV:'test',ROUTING_URL:''};
+  const single=configuration({...base,APP_ORIGIN:'http://localhost:3000'});
+  assert.equal(single.APP_ORIGIN,'http://localhost:3000');
+  assert.deepEqual(single.allowedOrigins,['http://localhost:3000']);
+  assert.equal(single.isOriginAllowed('http://localhost:3000'),true);
+  assert.equal(single.isOriginAllowed('https://evil.example'),false);
+  assert.equal(single.isOriginAllowed(undefined),false);
+  const multi=configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app, https://mafuta-watch-staging.vercel.app'});
+  assert.deepEqual(multi.allowedOrigins,['https://mafuta-watch-staging.vercel.app','https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app','https://mafuta-watch-staging.vercel.app']);
+  assert.equal(multi.isOriginAllowed('https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app'),true);
+  assert.equal(multi.isOriginAllowed('https://mafuta-watch-staging.vercel.app'),true);
+  assert.equal(multi.isOriginAllowed('https://evil.example'),false);
+  assert.throws(()=>configuration({...base,NODE_ENV:'production',APP_ORIGIN:'http://localhost:3000'}));
+  assert.throws(()=>configuration({...base,NODE_ENV:'production',APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'http://evil.example'}));
+  assert.throws(()=>configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'https://example.com/path'}));
+  assert.throws(()=>configuration({...base,APP_ORIGIN:'https://mafuta-watch-staging.vercel.app',APP_ALLOWED_ORIGINS:'not-a-url'}));
+});
+
+test('origin allowlist allows multiple origins and rejects disallowed origins',async t=>{
+  const db=await testDatabase();await fixtures(db);
+  const allowed=['https://mafuta-watch-staging-8kwe7qh4v-vicent-s-projects1.vercel.app','https://mafuta-watch-staging.vercel.app'];
+  const config=configuration({DATABASE_URL:'postgresql://test',APP_ORIGIN:allowed[0],APP_ALLOWED_ORIGINS:allowed.slice(1).join(','),NODE_ENV:'test',TRUST_PROXY_HOPS:0,LOG_LEVEL:'silent',ROUTING_URL:''});
+  const app=createApp(db,config);
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await db.end();});
+  async function request(origin,headers={}){
+    const h={'x-requested-with':'MafutaWatch','content-type':'application/json',...headers};
+    if(origin!==undefined)h.origin=origin;
+    const response=await fetch(`${base}/api/v1/auth/login`,{method:'POST',headers:h,body:JSON.stringify({email:'admin@example.test',password:testPassword})});
+    return response.status;
+  }
+  await t.test('primary APP_ORIGIN is allowed',async()=>{assert.equal(await request(allowed[0]),200);});
+  await t.test('additional APP_ALLOWED_ORIGINS entry is allowed',async()=>{assert.equal(await request(allowed[1]),200);});
+  await t.test('disallowed origin is refused',async()=>{assert.equal(await request('https://evil.example'),403);});
+  await t.test('missing origin is refused',async()=>{assert.equal(await request(undefined),403);});
+});
+
+test('administrator password reset and safe admin creation',async t=>{
+  const db=await testDatabase();const users=await fixtures(db);
+  t.after(async()=>{await db.end();});
+  const adminEmail=users.admin.email;
+  const resetPassword='Reset-Admin-Password-2026!';
+  await t.test('resetAdminPassword rejects unknown account',async()=>{
+      await assert.rejects(resetAdminPassword(db,{email:'nope@example.test',newPassword:resetPassword}),{status:404});
+    });
+    await t.test('resetAdminPassword rejects non-admin account',async()=>{
+      await assert.rejects(resetAdminPassword(db,{email:users.alice.email,newPassword:resetPassword}),{status:403});
+    });
+    await t.test('resetAdminPassword resets administrator password and revokes sessions',async()=>{
+      const result=await resetAdminPassword(db,{email:adminEmail,newPassword:resetPassword});
+      assert.equal(result.role,'admin');
+      const row=(await db.query('SELECT password_hash,disabled FROM users WHERE id=$1',[result.id])).rows[0];
+      assert.ok(row.password_hash.startsWith('scrypt:'));
+      assert.equal(row.disabled,false);
+      const sessions=(await db.query('SELECT 1 FROM sessions WHERE user_id=$1',[result.id])).rows;
+      assert.equal(sessions.length,0);
+      const tokens=(await db.query('SELECT 1 FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL',[result.id])).rows;
+      assert.equal(tokens.length,0);
+      const auditRow=(await db.query("SELECT action FROM audit_log WHERE action='admin.password_reset' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1",[result.id])).rows[0];
+      assert.equal(auditRow.action,'admin.password_reset');
+    });
+    await t.test('resetAdminPassword does not reveal the hash in its return value',async()=>{
+      const result=await resetAdminPassword(db,{email:adminEmail,newPassword:resetPassword});
+      assert.equal(Object.keys(result).length,2);
+      assert.equal(result.id,users.admin.id);
+      assert.equal(result.role,'admin');
+    });
+    await t.test('createAdminIfMissing creates an administrator when missing',async()=>{
+      const newEmail='newadmin@example.test';
+      const result=await createAdminIfMissing(db,{email:newEmail,password:resetPassword,displayName:'New Admin'});
+      assert.equal(result.created,true);
+      assert.equal(result.role,'admin');
+      const row=(await db.query('SELECT role,disabled,identity_verified FROM users WHERE email=$1',[newEmail])).rows[0];
+      assert.equal(row.role,'admin');
+      assert.equal(row.disabled,false);
+      assert.equal(row.identity_verified,false);
+    });
+    await t.test('createAdminIfMissing never overwrites an existing account',async()=>{
+      await assert.rejects(createAdminIfMissing(db,{email:adminEmail,password:resetPassword,displayName:'Overwriter'}),{status:409});
+      const row=(await db.query('SELECT display_name FROM users WHERE id=$1',[users.admin.id])).rows[0];
+      assert.notEqual(row.displayName,'Overwriter');
+    });
+  });

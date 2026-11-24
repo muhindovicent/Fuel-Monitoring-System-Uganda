@@ -36,7 +36,7 @@ No default passwords, invented government releases, fabricated analytics, browse
 
 7. Run `npm run dev` and open **http://localhost:3000**. The server serves `app/` at `/`; opening HTML directly bypasses the API and is unsupported.
 
-Public registration creates only citizen accounts. Operators request access through the station workspace; an administrator verifies license evidence and approves their named station. Official staff accounts are provisioned using the CLI.
+Public registration creates only citizen accounts. Operators request access through the station workspace; an administrator verifies license evidence and approves or explicitly assigns their station access. Inspector and analyst accounts are provisioned by a re-authenticated administrator in **User management → Staff accounts & access** or through the protected provisioning workflow; administrator roles remain CLI-managed.
 
 ## Verification
 
@@ -62,6 +62,8 @@ Follow [`docs/10_OPERATIONS.md`](docs/10_OPERATIONS.md) for HTTPS Compose deploy
 | [`docs/08_REVIEW.md`](docs/08_REVIEW.md) | Baseline bugs/security review with evidence and remediation |
 | [`docs/09_ARCHITECTURE.md`](docs/09_ARCHITECTURE.md) | Implemented architecture, entities, access matrix and workflows |
 | [`docs/12_API.md`](docs/12_API.md) | API endpoint inventory and integration examples |
+| [`docs/14_MAP_FIRST_COMMAND_CENTER.md`](docs/14_MAP_FIRST_COMMAND_CENTER.md) | Map-first portal, role-specific command center, responsive verification and service boundaries |
+| [`docs/16_MEDIA_MANAGEMENT.md`](docs/16_MEDIA_MANAGEMENT.md) | Administrator device uploads, previews, publication workflows and durable Neon media storage |
 | `server/migrations/` | Executable, checksummed PostgreSQL migrations |
 | `server/` | API, authorization, transactional pricing and administrative CLI |
 | `app/` | API-backed PWA frontend |

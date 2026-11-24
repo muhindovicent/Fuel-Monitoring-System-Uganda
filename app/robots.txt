@@ -1,0 +1,15 @@
+# MafutaWatch Uganda — robots.txt
+# Public fuel transparency portal. Googlebot and other well-behaved crawlers may
+# crawl public pages. API, health and private workspace surfaces are not public pages.
+
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /health/
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /health/
+
+Sitemap: https://mafuta-watch-staging.vercel.app/sitemap.xml

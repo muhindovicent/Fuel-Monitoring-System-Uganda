@@ -8,8 +8,10 @@ export const hash = value => createHash('sha256').update(value).digest('hex');
 export const emailSchema = z.email().max(254).transform(s => s.toLowerCase());
 export const passwordSchema = z.string().min(12).max(128);
 export const userFields = 'id,email,display_name,role,identity_verified';
+export const officialAuthor = 'MafutaWatch Uganda';
+export const publicAuthorName = "CASE WHEN p.privacy->>'publicDisplayName'='true' THEN u.display_name ELSE 'Anonymous Member' END";
 export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, options = {}) { super(message); this.status = status; this.expose = options.expose === true; }
 }
 export function ensure(condition, status, message) { if (!condition) throw new HttpError(status,message); }
 export async function passwordHash(password) {
@@ -66,7 +68,10 @@ export function writeProtection(config) {
       ensure(req.method==='PUT' && /^\/api\/v1\/stations\/\d+\/prices$/.test(req.path),403,'API credentials are restricted to station price updates.');
       return next();
     }
-    ensure(req.get('origin')===config.APP_ORIGIN,403,'Request origin is not allowed.');
+    const originAllowed=typeof config.isOriginAllowed==='function'
+      ?config.isOriginAllowed(req.get('origin'))
+      :req.get('origin')===config.APP_ORIGIN;
+    ensure(originAllowed,403,'Request origin is not allowed.');
     ensure(req.get('x-requested-with')==='MafutaWatch',403,'Missing request protection header.');
     if (req.user) ensure(req.get('x-csrf-token')===req.session.csrf_token,403,'Session protection failed. Refresh and retry.');
     next();

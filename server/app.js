@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import pino from 'pino';
@@ -14,7 +15,8 @@ export function createApp(db,config) {
   const logger=pino({level:config.LOG_LEVEL,redact:['password','token','cookie','authorization']});
   app.disable('x-powered-by');app.disable('etag');
   app.set('trust proxy',config.TRUST_PROXY_HOPS);
-  app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','https://*.tile.openstreetmap.org'],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],baseUri:["'self'"],formAction:["'self'"],upgradeInsecureRequests:config.NODE_ENV==='production'?[]:null}},strictTransportSecurity:config.NODE_ENV==='production'?{maxAge:31536000,includeSubDomains:true}:false}));
+  app.use(compression());
+  app.use(helmet({contentSecurityPolicy:{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'","'unsafe-inline'"],imgSrc:["'self'",'data:','blob:','https:'],mediaSrc:["'self'",'blob:','https:'],frameSrc:['https://www.youtube-nocookie.com','https://player.vimeo.com'],connectSrc:["'self'"],objectSrc:["'none'"],frameAncestors:["'none'"],baseUri:["'self'"],formAction:["'self'"],upgradeInsecureRequests:config.NODE_ENV==='production'?[]:null}},xFrameOptions:{action:'deny'},strictTransportSecurity:config.NODE_ENV==='production'?{maxAge:31536000,includeSubDomains:true}:false}));
   app.use((req,res,next)=>{
     req.requestId=randomUUID();res.set('X-Request-Id',req.requestId);
     const start=performance.now();
@@ -29,14 +31,14 @@ export function createApp(db,config) {
   app.use('/api',(_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   app.use(cookieParser());
   app.use('/api',async(req,res,next)=>{
-    await limit(db,`http:${req.ip}`,300,60);
+    await limit(db,`http:${req.ip}`,config.NODE_ENV==='test'?1000:300,60);
     await authenticate(db,req);
     if(req.apiToken) ensure(req.method==='PUT'&&/^\/v1\/stations\/\d+\/prices$/.test(req.path),403,'Credential is limited to station price updates.');
     next();
   });
   app.use(writeProtection(config));
   app.use((req,res,next)=>{
-    if(/^\/api\/v1\/(tickets|applications)\/[^/]+\/attachments$/.test(req.path)) return next();
+    if(/^\/api\/v1\/(tickets|applications|station-requests)\/[^/]+\/attachments$/.test(req.path)) return next();
     return express.json({limit:'64kb',strict:true})(req,res,next);
   });
   app.use('/api/v1/auth',authRoutes(db,config));
@@ -48,6 +50,7 @@ export function createApp(db,config) {
   app.use('/vendor/leaflet',express.static(fileURLToPath(new URL('../node_modules/leaflet/dist/',import.meta.url)),{maxAge:'7d',dotfiles:'deny'}));
   app.use(express.static(appDirectory,{maxAge:0,dotfiles:'deny',setHeaders(res,path){
     if(path.endsWith('service-worker.js'))res.set('Cache-Control','no-cache');
+    else if(/[/\\]assets[/\\]/.test(path))res.set('Cache-Control','public, max-age=86400');
   }}));
   app.use((_req,res)=>res.status(404).send('Page not found.'));
   app.use((error,req,res,_next)=>{
@@ -58,7 +61,7 @@ export function createApp(db,config) {
     if(error.type==='entity.parse.failed'){status=400;message='Invalid JSON body.';}
     if(error.type==='entity.too.large'){status=413;message='Request exceeds the allowed size.';}
     if(status===429)res.set('Retry-After','60');
-    if(status>=500){logger.error({requestId:req.requestId,code:error.code,err:error},'request failed');message='The service is temporarily unavailable. Please retry.';}
+    if(status>=500&&error.expose!==true){logger.error({requestId:req.requestId,code:error.code,err:error},'request failed');message='The service is temporarily unavailable. Please retry.';}
     res.status(status).json({error:message,requestId:req.requestId});
   });
   return app;

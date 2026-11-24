@@ -3,8 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import { transaction } from './db.js';
-import { audit, ensure, requireUser, roles, limit, hash, secret } from './security.js';
+import { audit, ensure, requireUser, roles, limit, hash, secret, passwordHash, passwordMatches, emailSchema, HttpError, officialAuthor, publicAuthorName } from './security.js';
 import { stationProjection, stationLock, submitPriceReport, publishPrice, notify } from './pricing.js';
+import { provisionStaffByAdministrator } from './provisioning.js';
+import { mediaRoutes } from './media.js';
+import { createMailer, emailDisabledMessage } from './mailer.js';
 
 const uuid=z.uuid();
 const positiveId=z.coerce.number().int().positive().max(2147483647);
@@ -18,7 +21,13 @@ const reportInput=z.object({stationId:positiveId,fuel,price:amount,note:z.string
 
 export function apiRoutes(db,config) {
   const router=Router();
+  const mail=createMailer(config);
+  const verifyLink=token=>`${config.APP_ORIGIN}/#email-verify?token=${token}`;
   const key=req=>uuid.parse(req.get('idempotency-key'));
+  async function alertAdministrators(client,actorId,message){
+    const admins=(await client.query("SELECT id FROM users WHERE role='admin' AND NOT disabled AND id<>$1",[actorId])).rows;
+    for(const admin of admins)await notify(client,admin.id,message,'securityAlerts');
+  }
   async function ticketAccess(client,id,user,lock=false) {
     const ticket=(await client.query(`SELECT * FROM tickets WHERE id=$1 ${lock?'FOR UPDATE':''}`,[uuid.parse(id)])).rows[0];
     ensure(ticket && (ticket.user_id===user.id||['admin','inspector'].includes(user.role)),404,'Ticket not found.');
@@ -29,25 +38,68 @@ export function apiRoutes(db,config) {
     ensure(application && (application.user_id===user.id||user.role==='admin'),404,'Application not found.');
     return application;
   }
+  async function stationRequestAccess(client,id,user,lock=false) {
+    const request=(await client.query(`SELECT * FROM station_requests WHERE id=$1 ${lock?'FOR UPDATE':''}`,[uuid.parse(id)])).rows[0];
+    ensure(request && (request.user_id===user.id||user.role==='admin'),404,'Station request not found.');
+    return request;
+  }
+  async function stationRequestDuplicates(client,request,admin=false) {
+    // Nearby coordinates also catch spelling differences and district-boundary errors.
+    return (await client.query(`SELECT id,name,district,area,active,demo FROM stations
+      WHERE ($4::boolean OR active) AND (lower(btrim(name))=lower(btrim($1))
+        OR (abs(latitude-$2)<0.005 AND abs(longitude-$3)<0.005)) ORDER BY id`,
+    [request.station_name,request.latitude,request.longitude,admin])).rows;
+  }
   router.get('/stations',async(req,res)=>{
-    const input=z.object({q:z.string().trim().max(100).default(''),fuel:fuel.optional(),sort:z.enum(['name','price']).default('name'),district:z.string().max(100).optional(),lat:z.coerce.number().min(-90).max(90).optional(),lng:z.coerce.number().min(-180).max(180).optional(),radius:z.coerce.number().min(0.1).max(100).default(10),...pageSchema.shape}).refine(v=>(v.lat===undefined)===(v.lng===undefined),'Both coordinates required.').parse(req.query);
+    const input=z.object({q:z.string().trim().max(100).default(''),fuel:fuel.optional(),sort:z.enum(['name','price','distance']).default('name'),district:z.string().max(100).optional(),lat:z.coerce.number().min(-90).max(90).optional(),lng:z.coerce.number().min(-180).max(180).optional(),radius:z.coerce.number().min(0.1).max(100).optional(),freshness:z.coerce.number().int().min(1).max(48).optional(),...pageSchema.shape}).refine(v=>(v.lat===undefined)===(v.lng===undefined),'Both coordinates required.').parse(req.query);
     const params=[`%${input.q}%`,input.district??null,input.fuel??null];
-    let where=` WHERE s.active AND (s.name ILIKE $1 OR s.area ILIKE $1 OR s.district ILIKE $1) AND ($2::text IS NULL OR s.district=$2)
+    let where=` WHERE s.active AND (s.name ILIKE $1 OR s.area ILIKE $1 OR s.district ILIKE $1 OR o.name ILIKE $1)
+      AND ($2::text IS NULL OR (CASE WHEN EXISTS(SELECT 1 FROM stations sd WHERE sd.active AND lower(sd.district)=lower(btrim($2))) THEN lower(s.district)=lower(btrim($2))
+        WHEN EXISTS(SELECT 1 FROM stations sa WHERE sa.active AND lower(sa.area)=lower(btrim($2))) THEN lower(s.area)=lower(btrim($2))
+        ELSE s.area ILIKE '%'||btrim($2)||'%' OR s.district ILIKE '%'||btrim($2)||'%' END))
       AND ($3::text IS NULL OR EXISTS(SELECT 1 FROM prices p WHERE p.station_id=s.id AND p.fuel=$3))`;
-    if(input.lat!==undefined) {
-      params.push(input.lat,input.lng,input.radius);
-      where+=` AND s.latitude BETWEEN $4-$6/111.0 AND $4+$6/111.0
-        AND 6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$4)/2),2)+cos(radians($4))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$5)/2),2))))<=$6`;
+    if(input.freshness!==undefined){
+      params.push(input.freshness);
+      where+=` AND NOT s.demo AND EXISTS(SELECT 1 FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.source IN ('operator','moderator','consensus') AND p.updated_at>=now()-make_interval(hours=>$${params.length}))`;
     }
+    let latIndex,lngIndex;
+    if(input.lat!==undefined){
+      params.push(input.lat,input.lng);latIndex=params.length-1;lngIndex=params.length;
+      if(input.radius!==undefined){
+        params.push(input.radius);const radiusIndex=params.length;
+        where+=` AND s.latitude BETWEEN $${latIndex}-$${radiusIndex}/111.0 AND $${latIndex}+$${radiusIndex}/111.0
+          AND 6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$${latIndex})/2),2)+cos(radians($${latIndex}))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$${lngIndex})/2),2))))<=$${radiusIndex}`;
+      }
+    }
+    const total=(await db.query(`SELECT count(*)::int AS count FROM stations s JOIN operators o ON o.id=s.operator_id${where}`,params)).rows[0].count;
     params.push(input.limit,input.offset);
-    const ordering=input.sort==='price'?"(SELECT p.price FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.updated_at>now()-interval '48 hours' AND p.source<>'demo') ASC NULLS LAST,s.name,s.id":'s.name,s.id';
+    const distance=`6371*2*asin(sqrt(least(1.0,power(sin(radians(s.latitude-$${latIndex})/2),2)+cos(radians($${latIndex}))*cos(radians(s.latitude))*power(sin(radians(s.longitude-$${lngIndex})/2),2))))`;
+    const ordering=input.sort==='price'
+      ? `(SELECT p.price FROM prices p WHERE p.station_id=s.id AND p.fuel=coalesce($3,'petrol') AND p.updated_at>now()-interval '48 hours' AND p.source<>'demo' AND NOT s.demo) ASC NULLS LAST,s.name,s.id`
+      : input.sort==='distance'&&latIndex!==undefined?`${distance} ASC,s.name,s.id`
+      :'s.name,s.id';
     const rows=(await db.query(`${stationProjection}${where} ORDER BY ${ordering} LIMIT $${params.length-1} OFFSET $${params.length}`,params)).rows;
-    res.json({items:rows,limit:input.limit,offset:input.offset});
+    const places=(await db.query(`SELECT DISTINCT v FROM (SELECT district AS v FROM stations WHERE active UNION SELECT area FROM stations WHERE active) t WHERE v IS NOT NULL ORDER BY v`)).rows.map(row=>row.v);
+    res.json({items:rows,limit:input.limit,offset:input.offset,total,places});
+  });
+  router.get('/stations/insights',async(_req,res)=>{
+    const [comparison,updates,distribution,districts]=await Promise.all([
+      db.query(`SELECT s.id,s.name,s.district,p.price,p.source FROM prices p JOIN stations s ON s.id=p.station_id
+        WHERE s.active AND NOT s.demo AND p.fuel='petrol' AND p.source<>'demo' AND p.updated_at>=now()-interval '48 hours'
+        ORDER BY p.price,s.name,s.id LIMIT 5`),
+      db.query(`SELECT s.id,s.name,s.district,p.fuel,p.price,p.source,p.updated_at FROM prices p JOIN stations s ON s.id=p.station_id
+        WHERE s.active AND NOT s.demo AND p.source IN ('operator','moderator','consensus') AND p.updated_at>=now()-interval '48 hours'
+        ORDER BY p.updated_at DESC,s.name,s.id LIMIT 6`),
+      db.query(`SELECT region,count(*)::int AS count FROM stations WHERE active AND NOT demo GROUP BY region ORDER BY region`),
+      db.query(`SELECT DISTINCT district FROM stations WHERE active ORDER BY district`)
+    ]);
+    res.json({comparison:comparison.rows,updates:updates.rows,distribution:distribution.rows,districts:districts.rows.map(row=>row.district)});
   });
   router.get('/stations/:id',async(req,res)=>{
     const station=(await db.query(`${stationProjection} WHERE s.id=$1 AND s.active`,[positiveId.parse(req.params.id)])).rows[0];
     ensure(station,404,'Station not found.');
-    const reviews=(await db.query(`SELECT r.id,r.rating,r.body,r.created_at,u.display_name FROM reviews r JOIN users u ON u.id=r.user_id WHERE station_id=$1 ORDER BY r.created_at DESC LIMIT 30`,[station.id])).rows;
+    const reviews=(await db.query(`SELECT r.id,r.rating,r.body,r.created_at,${publicAuthorName} AS display_name FROM reviews r
+      JOIN users u ON u.id=r.user_id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE station_id=$1 ORDER BY r.created_at DESC LIMIT 30`,[station.id])).rows;
     const history=(await db.query('SELECT fuel,price,source,created_at FROM price_history WHERE station_id=$1 ORDER BY created_at DESC LIMIT 90',[station.id])).rows;
     res.json({...station,reviews,history});
   });
@@ -120,10 +172,247 @@ export function apiRoutes(db,config) {
     });
     res.json({saved:true});
   });
+  router.post('/stations/:id/photos',roles('admin'),express.json({limit:'64kb'}),async(req,res)=>{
+    const stationId=positiveId.parse(req.params.id);const input=z.object({mediaId:z.uuid(),caption:z.string().trim().min(2).max(300).optional().nullable(),position:z.number().int().min(0).optional()}).strict().parse(req.body);await transaction(db,async client=>{
+      await client.query('SELECT 1 FROM stations WHERE id=$1',[stationId]);ensure((await client.query('SELECT 1 FROM media_gallery WHERE id=$1',[input.mediaId])).rowCount,404,'Media item not found.');
+      await client.query(`INSERT INTO station_photos(id,station_id,media_gallery_id,caption,position) VALUES ($1,$2,$3,$4,$5)`,[randomUUID(),stationId,input.mediaId,input.caption??null,input.position??0]);await audit(client,req.user.id,'station.photo.add',stationId,{mediaId:input.mediaId});
+    });res.status(201).json({saved:true});
+  });
   router.get('/me/notifications',requireUser,async(req,res)=>res.json({items:(await db.query('SELECT id,message,read_at,created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100',[req.user.id])).rows}));
   router.post('/me/notifications/read',requireUser,async(req,res)=>{
     const ids=z.object({ids:z.array(uuid).max(100)}).strict().parse(req.body).ids;
     await db.query('UPDATE notifications SET read_at=now() WHERE user_id=$1 AND id=ANY($2::uuid[])',[req.user.id,ids]);res.json({saved:true});
+  });
+
+  const profileUpdate=z.object({
+    displayName:z.string().trim().min(2).max(80).optional(),
+    preferredName:z.string().trim().min(2).max(80).optional(),
+    phone:z.string().trim().regex(/^\+?[0-9]{7,15}$/).optional().nullable(),
+    district:z.string().trim().min(2).max(100).optional()
+  }).strict();
+
+  async function readProfile(userId){
+    const row=(await db.query('SELECT id,email,display_name,preferred_name,phone,district,role,identity_verified FROM users WHERE id=$1',[userId])).rows[0];
+    ensure(row,404,'Account not found.');
+    const avatar=(await db.query('SELECT media_type FROM user_avatars WHERE user_id=$1',[userId])).rows[0];
+    return {id:row.id,email:row.email,displayName:row.display_name,preferredName:row.preferred_name??null,phone:row.phone??null,district:row.district??null,avatarUrl:avatar?`/api/v1/me/avatar`:null,role:row.role,identityVerified:row.identity_verified};
+  }
+
+  router.get('/me/profile',requireUser,async(req,res)=>res.json({profile:await readProfile(req.user.id)}));
+
+  router.patch('/me/profile',requireUser,async(req,res)=>{
+    const input=profileUpdate.parse(req.body);const sets=[];const params=[req.user.id];let i=2;
+    const map={displayName:'display_name',preferredName:'preferred_name',phone:'phone',district:'district'};
+    for(const [key,column] of Object.entries(map)){
+      if(input[key]!==undefined){sets.push(`${column}=$${i++}`);params.push(input[key]===null?null:input[key]);}
+    }
+    if(!sets.length)return res.json({profile:await readProfile(req.user.id)});
+    await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id=$1`,params);
+    await audit(db,req.user.id,'profile.update',req.user.id,input);
+    res.json({profile:await readProfile(req.user.id)});
+  });
+
+  router.put('/me/avatar',requireUser,express.raw({type:()=>true,limit:'2mb'}),async(req,res)=>{
+    ensure(Buffer.isBuffer(req.body)&&req.body.length,400,'Choose an image.');
+    const detected=await fileTypeFromBuffer(req.body).catch(()=>null);
+    ensure(detected&&['image/jpeg','image/png','image/webp'].includes(detected.mime),400,'Only JPEG, PNG or WebP images are accepted.');
+    await limit(db,`avatar:${req.user.id}`,5,3600);
+    await db.query(`INSERT INTO user_avatars(user_id,media_type,content) VALUES ($1,$2,$3)
+      ON CONFLICT(user_id) DO UPDATE SET media_type=EXCLUDED.media_type,content=EXCLUDED.content,updated_at=now()`,
+      [req.user.id,detected.mime,req.body]);
+    await audit(db,req.user.id,'avatar.update',req.user.id);
+    res.json({saved:true});
+  });
+
+  router.get('/me/avatar',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT media_type,content FROM user_avatars WHERE user_id=$1',[req.user.id])).rows[0];
+    ensure(row,404,'No profile picture.');
+    res.type(row.media_type).set('Cache-Control','no-store').send(row.content);
+  });
+
+  router.delete('/me/avatar',requireUser,async(req,res)=>{
+    await db.query('DELETE FROM user_avatars WHERE user_id=$1',[req.user.id]);
+    await audit(db,req.user.id,'avatar.remove',req.user.id);
+    res.status(204).end();
+  });
+
+  const preferencesSchema=z.object({
+    fuelType:fuel.optional(),
+    vehicleType:z.enum(['private','boda','taxi','truck','other']).optional(),
+    preferredDistrict:z.string().trim().min(2).max(100).optional(),
+    notifications:z.object({priceChanges:z.boolean().optional(),reportUpdates:z.boolean().optional(),complaintUpdates:z.boolean().optional(),advisories:z.boolean().optional()}).strict().optional(),
+    privacy:z.object({publicDisplayName:z.boolean().optional()}).strict().optional(),
+    roleSettings:z.record(z.string().max(40),z.unknown()).optional()
+  }).strict();
+  const roleSettingShapes={
+    citizen:z.object({}).strict(),
+    admin:z.object({securityAlerts:z.boolean().optional(),dashboardPreferences:z.boolean().optional(),lastAdminTab:z.enum(['dashboard','intelligence','reports','tickets','applications','station-requests','directory','publishing','media','users','deletions','audit']).optional()}).strict(),
+    inspector:z.object({assignedCaseNotifications:z.boolean().optional(),inspectionAlerts:z.boolean().optional(),workspacePreferences:z.boolean().optional(),lastCaseStatus:z.enum(['','open','investigating','dispatched','resolved','closed']).optional(),lastCaseAssignment:z.enum(['mine','all','unassigned']).optional()}).strict(),
+    analyst:z.object({savedChartFilters:z.boolean().optional(),lastFuelView:z.enum(['all','petrol','diesel','kerosene']).optional()}).strict(),
+    operator:z.object({priceUpdateNotifications:z.boolean().optional(),assignedStationDashboard:z.boolean().optional(),lastStationId:positiveId.optional()}).strict()
+  };
+
+  router.get('/me/preferences',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT fuel_type,vehicle_type,preferred_district,notifications,privacy,role_settings FROM user_preferences WHERE user_id=$1',[req.user.id])).rows[0];
+    res.json({preferences:{fuelType:row?.fuel_type??null,vehicleType:row?.vehicle_type??null,preferredDistrict:row?.preferred_district??null,notifications:row?.notifications??{},privacy:row?.privacy??{},roleSettings:row?.role_settings??{}}});
+  });
+
+  router.patch('/me/preferences',requireUser,async(req,res)=>{
+    const input=preferencesSchema.parse(req.body);
+    const roleSettings=input.roleSettings===undefined?undefined:roleSettingShapes[req.user.role].parse(input.roleSettings);
+    const cols=['user_id'];const vals=[req.user.id];
+    const scalar={fuelType:'fuel_type',vehicleType:'vehicle_type',preferredDistrict:'preferred_district'};
+    for(const [key,column] of Object.entries(scalar)){
+      if(input[key]!==undefined){cols.push(column);vals.push(input[key]);}
+    }
+    if(input.notifications!==undefined){cols.push('notifications');vals.push(JSON.stringify(input.notifications));}
+    if(input.privacy!==undefined){cols.push('privacy');vals.push(JSON.stringify(input.privacy));}
+    if(roleSettings!==undefined){cols.push('role_settings');vals.push(JSON.stringify(roleSettings));}
+    if(cols.length>1){
+      const updateSets=cols.slice(1).map(c=>`${c}=${['notifications','privacy','role_settings'].includes(c)?`user_preferences.${c} || `:''}EXCLUDED.${c}`).join(', ');
+      await db.query(`INSERT INTO user_preferences(${cols.join(',')}) VALUES (${vals.map((_,k)=>`$${k+1}`).join(',')})
+        ON CONFLICT(user_id) DO UPDATE SET ${updateSets},updated_at=now()`,vals);
+      await audit(db,req.user.id,'preferences.update',req.user.id,{fuelType:input.fuelType,vehicleType:input.vehicleType,preferredDistrict:input.preferredDistrict,notifications:input.notifications,privacy:input.privacy,roleSettings});
+    }
+    res.json({saved:true});
+  });
+
+  router.post('/me/deletion-request',requireUser,async(req,res)=>{
+    await limit(db,`deletion:${req.user.id}`,3,3600);
+    const input=z.object({reason:z.string().trim().min(5).max(1000),password:z.string().max(128)}).strict().parse(req.body);
+    const user=(await db.query('SELECT password_hash FROM users WHERE id=$1',[req.user.id])).rows[0];
+    ensure(await passwordMatches(input.password,user.password_hash),401,'Current password is required to request account deletion.');
+    const duplicate='You already have an active deletion request. An administrator is reviewing it or has asked for more information.';
+    ensure(!(await db.query("SELECT 1 FROM deletion_requests WHERE user_id=$1 AND status IN ('pending','info_requested')",[req.user.id])).rowCount,409,duplicate);
+    try{
+      await db.query('INSERT INTO deletion_requests(id,user_id,reason) VALUES ($1,$2,$3)',[randomUUID(),req.user.id,input.reason]);
+    }catch(error){if(error?.code==='23505')ensure(false,409,duplicate);throw error;}
+    await audit(db,req.user.id,'deletion.request',req.user.id,{reason:input.reason});
+    res.status(202).json({accepted:true});
+  });
+
+  router.get('/me/deletion-request',requireUser,async(req,res)=>{
+    const row=(await db.query('SELECT status,reason,review_note,user_response,created_at,reviewed_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1',[req.user.id])).rows[0];
+    res.json({request:row??null});
+  });
+
+  router.patch('/me/deletion-request',requireUser,async(req,res)=>{
+    const input=z.object({response:z.string().trim().min(10).max(2000)}).strict().parse(req.body);
+    const updated=(await db.query("UPDATE deletion_requests SET user_response=$1,status='pending' WHERE user_id=$2 AND status='info_requested' RETURNING id",[input.response,req.user.id]));
+    ensure(updated.rowCount,409,'Your deletion request is not waiting for additional information.');
+    await audit(db,req.user.id,'deletion.response',updated.rows[0].id,{response:input.response});
+    res.json({saved:true});
+  });
+
+  router.get('/admin/deletion-requests',roles('admin'),async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const status=z.enum(['pending','info_requested','approved','rejected']).optional().parse(req.query.status);
+    res.json({items:(await db.query(`SELECT d.id,d.status,d.reason,d.user_response,d.review_note,d.created_at,d.reviewed_at,
+      u.id AS user_id,u.email,u.display_name,u.role FROM deletion_requests d JOIN users u ON u.id=d.user_id
+      WHERE ($1::text IS NULL OR d.status=$1) ORDER BY CASE d.status WHEN 'info_requested' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,d.created_at DESC
+      LIMIT $2 OFFSET $3`,[status??null,limit,offset])).rows});
+  });
+
+  router.get('/admin/deletion-requests/:id',roles('admin'),async(req,res)=>{
+    const id=uuid.parse(req.params.id);
+    const rows=(await db.query(`SELECT d.id,d.status,d.reason,d.user_response,d.review_note,d.created_at,d.reviewed_at,
+      u.id AS user_id,u.email,u.display_name,u.role FROM deletion_requests d JOIN users u ON u.id=d.user_id WHERE d.id=$1`,[id])).rows;
+    ensure(rows.length,404,'Deletion request not found.');
+    res.json({request:rows[0]});
+  });
+
+  router.patch('/admin/deletion-requests/:id',roles('admin'),async(req,res)=>{
+    const input=z.object({action:z.enum(['approve','reject','request_info']),note:z.string().trim().min(10).max(1000)}).strict().parse(req.body);
+    const id=uuid.parse(req.params.id);
+    const result=await transaction(db,async client=>{
+      const request=(await client.query('SELECT d.*,u.display_name FROM deletion_requests d JOIN users u ON u.id=d.user_id WHERE d.id=$1 FOR UPDATE OF d',[id])).rows[0];
+      ensure(request,404,'Deletion request not found.');
+      ensure(request.user_id!==req.user.id,403,'You cannot review your own deletion request.');
+      const from=request.status;
+      ensure(from==='pending'||from==='info_requested',409,'This request has already been decided.');
+      ensure(input.action!=='request_info'||from==='pending',409,'Additional information has already been requested for this account.');
+      const to={approve:'approved',reject:'rejected',request_info:'info_requested'}[input.action];
+      await client.query('UPDATE deletion_requests SET status=$1,review_note=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',[to,input.note,req.user.id,id]);
+      await audit(client,req.user.id,'deletion.review',id,{action:input.action,from,to,subject:request.user_id,note:input.note});
+      const messages={
+        approve:`Your account deletion request was approved: ${input.note} The authorized deletion procedure runs separately and never erases accounts or evidence automatically. Investigation records, financial evidence and legally required data are retained under the approved retention policy.`,
+        reject:`Your account deletion request was rejected: ${input.note} Your account remains active.`,
+        request_info:`An administrator requested more information about your deletion request: ${input.note} Open My profile to respond.`
+      };
+      await notify(client,request.user_id,messages[input.action]);
+      return {saved:true};
+    });
+    res.json(result);
+  });
+
+  router.get('/me/email/status',requireUser,async(_req,res)=>{
+    res.json({enabled:mail.enabled,provider:mail.enabled?mail.provider:''});
+  });
+
+  router.post('/me/email/change-request',requireUser,async(req,res)=>{
+    await limit(db,`email-change:${req.user.id}`,3,3600);
+    if(!mail.enabled)throw new HttpError(503,emailDisabledMessage,{expose:true});
+    const input=z.object({newEmail:emailSchema,currentPassword:z.string().max(128)}).strict().parse(req.body);
+    const user=(await db.query('SELECT password_hash,email,display_name FROM users WHERE id=$1',[req.user.id])).rows[0];
+    ensure(user.email!==input.newEmail,409,'The new email is the same as your current email.');
+    // Password-only accounts re-confirm with their current password before any address change.
+    if(user.password_hash)ensure(await passwordMatches(input.currentPassword,user.password_hash),401,'Current password is required to change your email.');
+    ensure(!(await db.query('SELECT 1 FROM users WHERE email=$1',[input.newEmail])).rows[0],409,'That email address is already registered to another account.');
+    // OWASP dual control: password-only accounts approve from both mailboxes.
+    const dual=Boolean(user.password_hash);
+    const newToken=secret(),oldToken=secret();
+    await transaction(db,async client=>{
+      // A newer request supersedes every outstanding link so a wrong address can be corrected.
+      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
+      await client.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash,kind) VALUES ($1,$2,$3,$4,$5)',[randomUUID(),req.user.id,input.newEmail,hash(newToken),'new']);
+      if(dual)await client.query('INSERT INTO email_change_tokens(id,user_id,new_email,token_hash,kind) VALUES ($1,$2,$3,$4,$5)',[randomUUID(),req.user.id,input.newEmail,hash(oldToken),'old']);
+    });
+    const approval=`A change of email address was requested for your MafutaWatch account.\n\nCurrent address: ${user.email}\nRequested new address: ${input.newEmail}\nRequested at: ${new Date().toISOString()}\n\nApprove this change from your current address (single use, expires in 24 hours):\n${verifyLink(oldToken)}\n\nYour address does not change until this approval and the confirmation sent to ${input.newEmail} are both used. If you did not request this change, ignore this message and change your password immediately.\n\nMafutaWatch Uganda`;
+    const confirmation=`Confirm this address as the new sign-in email for your MafutaWatch account.\n\nConfirmation link for the new address (single use, expires in 24 hours):\n${verifyLink(newToken)}\n\n${dual?`Because you sign in with a password, this change also needs approval from your current address; the address does not change until both links are used.`:`Your current email address stays active until you confirm.`} After both approvals every existing session is signed out and you sign in with the new address from then on.\n\nIf you did not request this change, ignore this message; nothing has changed.\n\nMafutaWatch Uganda`;
+    try{
+      if(dual)await mail.send({to:user.email,subject:'Approve the email change for your MafutaWatch account',text:approval});
+      await mail.send({to:input.newEmail,subject:'Confirm your new MafutaWatch email address',text:confirmation});
+    }catch(_error){
+      await db.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
+      throw new HttpError(502,'The verification email could not be sent. Your email address has not been changed. Please retry in a few minutes.',{expose:true});
+    }
+    await audit(db,req.user.id,'email.change.request',req.user.id,{newEmail:input.newEmail,dual});
+    res.status(202).json({accepted:true,message:dual
+      ?'Two single-use links were sent: approve from your current address and confirm from the new one. Your address does not change until both are used, and each link expires in 24 hours.'
+      :'A verification link was sent to the new address. Your current email address stays active until you confirm that link, and the link expires in 24 hours.'});
+  });
+
+  router.post('/me/email/confirm',requireUser,async(req,res)=>{
+    await limit(db,`email-confirm:${req.user.id}`,10,3600);
+    const input=z.object({token:z.string().min(1).max(128)}).strict().parse(req.body);
+    ensure(/^[a-f0-9]{64}$/.test(input.token),400,'This verification link is invalid or has expired.');
+    // Claim, address update, session revocation and audit commit or roll back together.
+    const outcome=await transaction(db,async client=>{
+      const account=(await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[req.user.id])).rows[0];
+      ensure(account,400,'This verification link is invalid or has expired.');
+      const row=(await client.query('SELECT * FROM email_change_tokens WHERE token_hash=$1',[hash(input.token)])).rows[0];
+      ensure(row&&row.user_id===req.user.id,400,'This verification link is invalid or has expired.');
+      if(!row.used_at){
+        ensure(row.expires_at>new Date(),400,'This verification link has expired. Request a new email change.');
+        ensure(!(await client.query('SELECT 1 FROM users WHERE email=$1 AND id<>$2',[row.new_email,req.user.id])).rows[0],409,'That email address is already registered to another account.');
+        const claimed=await client.query('UPDATE email_change_tokens SET used_at=now() WHERE id=$1 AND used_at IS NULL',[row.id]);
+        ensure(claimed.rowCount===1,400,'This verification link has already been used. Request a new email change.');
+      }
+      const approvals=(await client.query('SELECT kind,used_at FROM email_change_tokens WHERE user_id=$1',[req.user.id])).rows;
+      if(!approvals.length||!approvals.every(token=>token.used_at))return {complete:false,approved:row.kind};
+      await client.query('UPDATE users SET email=$1 WHERE id=$2',[row.new_email,req.user.id]);
+      await client.query('DELETE FROM email_change_tokens WHERE user_id=$1',[req.user.id]);
+      await client.query('DELETE FROM sessions WHERE user_id=$1',[req.user.id]);
+      await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[req.user.id]);
+      await audit(client,req.user.id,'email.change.confirm',req.user.id,{newEmail:row.new_email,approvals:approvals.map(token=>token.kind).sort()});
+      return {complete:true};
+    });
+    if(!outcome.complete){
+      const approvedFrom=outcome.approved==='new'?'the new address':'your current address';
+      const remaining=outcome.approved==='new'?'your current address':'the new address';
+      return res.status(200).json({complete:false,approved:outcome.approved,message:`Approved from ${approvedFrom}. Open the link sent to ${remaining} to finish the change; your address stays active until then.`});
+    }
+    res.clearCookie('mfw_session',{httpOnly:true,sameSite:'strict',path:'/'}).status(204).end();
   });
   router.post('/tickets',requireUser,async(req,res)=>{
     const input=z.object({stationId:positiveId,category:z.enum(['tampering','adulterated','overpricing','refusal','quality','other']),vehicleType:z.enum(['truck','boda','private','other']),incidentDate:z.iso.date(),description:z.string().trim().min(10).max(5000)}).strict().parse(req.body);
@@ -135,7 +424,10 @@ export function apiRoutes(db,config) {
       if(existing) { ensure(existing.station_id===input.stationId&&existing.description===input.description&&existing.category===input.category&&existing.vehicle_type===input.vehicleType&&new Date(existing.incident_date).toISOString().slice(0,10)===input.incidentDate,409,'Submission key already used.');return existing; }
       const id=randomUUID(),reference=`C2G-${new Date().getUTCFullYear()}-${id.slice(0,8).toUpperCase()}`;
       const ticket=(await client.query(`INSERT INTO tickets(id,reference,user_id,station_id,category,vehicle_type,incident_date,description,idempotency_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[id,reference,req.user.id,input.stationId,input.category,input.vehicleType,input.incidentDate,input.description,requestKey])).rows[0];
-      await audit(client,req.user.id,'ticket.create',id,{reference}); await notify(client,req.user.id,`Complaint ${reference} received. Track updates in My activity.`); return ticket;
+      await audit(client,req.user.id,'ticket.create',id,{reference}); await notify(client,req.user.id,`Complaint ${reference} received. Track updates in My activity.`,'complaintUpdates');
+      const officers=(await client.query("SELECT id FROM users WHERE role='inspector' AND NOT disabled AND id<>$1",[req.user.id])).rows;
+      for(const officer of officers)await notify(client,officer.id,`New consumer case ${reference} received.`,'inspectionAlerts');
+      return ticket;
     });
     res.status(201).json(result);
   });
@@ -161,7 +453,7 @@ export function apiRoutes(db,config) {
       await client.query('INSERT INTO ticket_messages(id,ticket_id,user_id,body) VALUES ($1,$2,$3,$4)',[randomUUID(),ticket.id,req.user.id,body]);
       if(['admin','inspector'].includes(req.user.role)) {
         await client.query('UPDATE tickets SET first_response_at=coalesce(first_response_at,now()) WHERE id=$1',[ticket.id]);
-        await notify(client,ticket.user_id,`A case officer replied to ${ticket.reference}.`);
+        await notify(client,ticket.user_id,`A case officer replied to ${ticket.reference}.`,'complaintUpdates');
       }
       await audit(client,req.user.id,'ticket.message',ticket.id);
     });res.status(201).json({saved:true});
@@ -178,7 +470,8 @@ export function apiRoutes(db,config) {
       await client.query(`UPDATE tickets SET status=$1,assigned_to=$2,updated_at=now(),version=version+1,
         first_response_at=coalesce(first_response_at,now()),resolved_at=CASE WHEN $1='resolved' THEN now() ELSE resolved_at END WHERE id=$3`,[input.status,assignee,ticket.id]);
       await client.query('INSERT INTO ticket_messages(id,ticket_id,user_id,body) VALUES ($1,$2,$3,$4)',[randomUUID(),ticket.id,req.user.id,`${input.status}: ${input.reason}`]);
-      await notify(client,ticket.user_id,`${ticket.reference}: ${input.status}. ${input.reason}`);
+      await notify(client,ticket.user_id,`${ticket.reference}: ${input.status}. ${input.reason}`,'complaintUpdates');
+      if(assignee!==ticket.assigned_to&&assignee!==req.user.id)await notify(client,assignee,`${ticket.reference} assigned to you. Open Consumer cases to review it.`,'assignedCaseNotifications');
       await audit(client,req.user.id,'ticket.transition',ticket.id,{from:ticket.status,to:input.status,assignee,reason:input.reason});
       return {saved:true};
     });res.json(result);
@@ -191,9 +484,55 @@ export function apiRoutes(db,config) {
       await stationLock(client,input.stationId);
       const existing=(await client.query('SELECT * FROM applications WHERE user_id=$1 AND idempotency_key=$2',[req.user.id,requestKey])).rows[0];
       if(existing){ensure(existing.station_id===input.stationId&&existing.license_reference===input.licenseReference,409,'Submission key already used.');return existing;}
+      const existingPending=(await client.query('SELECT * FROM applications WHERE user_id=$1 AND station_id=$2 AND status=\'pending\'',[req.user.id,input.stationId])).rows[0];
+      if(existingPending){
+        if(existingPending.license_reference!==input.licenseReference){ensure(false,409,'A pending application already exists for this station with a different licence reference. Submit supporting documents to the existing application instead.');}
+        return existingPending;
+      }
       const result=(await client.query('INSERT INTO applications(id,user_id,station_id,license_reference,idempotency_key) VALUES ($1,$2,$3,$4,$5) RETURNING *',[randomUUID(),req.user.id,input.stationId,input.licenseReference,requestKey])).rows[0];
       await audit(client,req.user.id,'application.submit',result.id); return result;
     });res.status(201).json(application);
+  });
+  router.post('/station-requests',roles('citizen'),async(req,res)=>{
+    const input=z.object({
+      stationName:z.string().trim().min(2).max(200),
+      operatorName:z.string().trim().min(2).max(150),
+      district:z.string().trim().min(2).max(100),
+      area:z.string().trim().min(2).max(100),
+      region:z.enum(['Central','Eastern','Northern','Western']),
+      latitude:z.number().min(-1.6).max(4.3),
+      longitude:z.number().min(29.5).max(35.1),
+      contactName:z.string().trim().min(2).max(80),
+      contactPhone:z.string().trim().regex(/^\+[1-9][0-9]{7,14}$/,'Use an international phone number, e.g. +256700000000.'),
+      contactEmail:emailSchema,
+      licenseReference:z.string().trim().min(3).max(200)
+    }).strict().parse(req.body);
+    const requestKey=key(req);
+    await limit(db,`station-request:${req.user.id}`,5,3600);
+    const proposed={station_name:input.stationName,operator_name:input.operatorName,district:input.district,area:input.area,region:input.region,
+      latitude:input.latitude,longitude:input.longitude,contact_name:input.contactName,contact_phone:input.contactPhone,contact_email:input.contactEmail,license_reference:input.licenseReference};
+    const request=await transaction(db,async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(734183)');
+      const existing=(await client.query('SELECT * FROM station_requests WHERE user_id=$1 AND idempotency_key=$2',[req.user.id,requestKey])).rows[0];
+      if(existing){ensure(Object.entries(proposed).every(([name,value])=>existing[name]===value),409,'Submission key already used for different station details.');return existing;}
+      const existingPending=(await client.query("SELECT * FROM station_requests WHERE user_id=$1 AND lower(station_name)=lower($2) AND lower(district)=lower($3) AND status='pending'",[req.user.id,input.stationName,input.district])).rows[0];
+      if(existingPending){ensure(Object.entries(proposed).every(([name,value])=>existingPending[name]===value),409,'A pending request already exists with different details. Open your saved request to upload documents.');return existingPending;}
+      const result=(await client.query(`INSERT INTO station_requests(id,user_id,station_name,operator_name,district,area,region,latitude,longitude,contact_name,contact_phone,contact_email,license_reference,idempotency_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[randomUUID(),req.user.id,...Object.values(proposed),requestKey])).rows[0];
+      await audit(client,req.user.id,'station-request.submit',result.id); return result;
+    });res.status(201).json({...request,duplicates:await stationRequestDuplicates(db,request)});
+  });
+  router.post('/station-requests/duplicates',roles('citizen'),async(req,res)=>{
+    const input=z.object({stationName:z.string().trim().min(2).max(200),latitude:z.number().min(-1.6).max(4.3),longitude:z.number().min(29.5).max(35.1)}).strict().parse(req.body);
+    res.json({items:await stationRequestDuplicates(db,{station_name:input.stationName,latitude:input.latitude,longitude:input.longitude})});
+  });
+  router.get('/station-requests',requireUser,async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const items=(await db.query(`SELECT r.*,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.name)) FROM attachments f WHERE f.station_request_id=r.id),'[]') AS attachments
+      FROM station_requests r WHERE r.user_id=$1 ORDER BY r.created_at DESC,r.id LIMIT $2 OFFSET $3`,[req.user.id,limit,offset])).rows;
+    for(const item of items)item.duplicates=await stationRequestDuplicates(db,item);
+    res.json({items});
   });
   router.get('/applications',requireUser,async(req,res)=>{
     const {limit,offset}=pageSchema.parse(req.query);
@@ -213,6 +552,7 @@ export function apiRoutes(db,config) {
         ensure(!applicant.disabled && ['citizen','operator'].includes(applicant.role),409,'Applicant must be an active citizen or operator.');
         await client.query("UPDATE users SET role='operator' WHERE id=$1",[application.user_id]);
         await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[application.user_id,application.station_id]);
+        await client.query('DELETE FROM sessions WHERE user_id=$1',[application.user_id]);
       }
       await client.query('UPDATE applications SET status=$1,decision_reason=$2,reviewed_by=$3 WHERE id=$4',[input.status,input.reason,req.user.id,application.id]);
       await notify(client,application.user_id,`Station access application ${input.status}: ${input.reason}`);
@@ -220,17 +560,21 @@ export function apiRoutes(db,config) {
     });res.json({saved:true});
   });
   // Raw uploads are size-bounded before buffering; signatures are checked independently of MIME headers.
-  for(const kind of ['tickets','applications']) router.post(`/${kind}/:id/attachments`,requireUser,express.raw({type:()=>true,limit:'5mb'}),async(req,res)=>{
+  for(const kind of ['tickets','applications','station-requests']) router.post(`/${kind}/:id/attachments`,requireUser,express.raw({type:()=>true,limit:'5mb'}),async(req,res)=>{
     ensure(Buffer.isBuffer(req.body)&&req.body.length,400,'Choose a file.');
     const detected=await fileTypeFromBuffer(req.body).catch(()=>null);
     ensure(detected&&['image/png','image/jpeg','application/pdf'].includes(detected.mime),400,'Only PNG, JPEG or PDF evidence is accepted.');
     const name=z.string().min(1).max(180).refine(value=>!value.includes('/')&&!value.includes('\\')&&[...value].every(c=>c.charCodeAt(0)>=32&&c.charCodeAt(0)!==127),'Invalid file name.').parse(req.get('x-file-name'));
     await limit(db,`upload:${req.user.id}`,20,3600);
     const id=await transaction(db,async client=>{
-      const parent=kind==='tickets'?await ticketAccess(client,req.params.id,req.user,true):await applicationAccess(client,req.params.id,req.user,true);
+      const parent=kind==='tickets'?await ticketAccess(client,req.params.id,req.user,true):kind==='applications'?await applicationAccess(client,req.params.id,req.user,true):await stationRequestAccess(client,req.params.id,req.user,true);
       ensure(parent.user_id===req.user.id,403,'Only the submitter can add evidence.');
       ensure(kind==='tickets'?!['resolved','closed'].includes(parent.status):parent.status==='pending',409,'Evidence collection is closed.');
-      const column=kind==='tickets'?'ticket_id':'application_id';
+      const column=kind==='tickets'?'ticket_id':kind==='applications'?'application_id':'station_request_id';
+      if(kind==='station-requests'){
+        const existing=(await client.query('SELECT id FROM attachments WHERE station_request_id=$1 AND name=$2 AND content=$3',[parent.id,name,req.body])).rows[0];
+        if(existing)return existing.id;
+      }
       const count=(await client.query(`SELECT count(*)::int AS n FROM attachments WHERE ${column}=$1`,[parent.id])).rows[0].n;
       ensure(count<3,400,'Maximum three attachments per submission.');
       const id=randomUUID();
@@ -239,9 +583,11 @@ export function apiRoutes(db,config) {
     });res.status(201).json({id});
   });
   router.get('/attachments/:id',requireUser,async(req,res)=>{
-    const metadata=(await db.query('SELECT id,ticket_id,application_id,name,media_type FROM attachments WHERE id=$1',[uuid.parse(req.params.id)])).rows[0];
+    const metadata=(await db.query('SELECT id,ticket_id,application_id,station_request_id,name,media_type FROM attachments WHERE id=$1',[uuid.parse(req.params.id)])).rows[0];
     ensure(metadata,404,'Attachment not found.');
-    if(metadata.ticket_id) await ticketAccess(db,metadata.ticket_id,req.user); else await applicationAccess(db,metadata.application_id,req.user);
+    if(metadata.ticket_id) await ticketAccess(db,metadata.ticket_id,req.user);
+    else if(metadata.application_id) await applicationAccess(db,metadata.application_id,req.user);
+    else await stationRequestAccess(db,metadata.station_request_id,req.user);
     const file=(await db.query('SELECT content FROM attachments WHERE id=$1',[metadata.id])).rows[0];
     res.set('Content-Security-Policy',"default-src 'none'; sandbox").type(metadata.media_type).attachment(metadata.name).send(file.content);
   });
@@ -264,8 +610,9 @@ export function apiRoutes(db,config) {
   });
   router.get('/rooms',async(_req,res)=>res.json({items:(await db.query('SELECT * FROM rooms ORDER BY name')).rows}));
   router.get('/rooms/:id/messages',async(req,res)=>{
-    res.json({items:(await db.query(`SELECT m.id,m.body,m.created_at,u.display_name,m.user_id,
-      (SELECT count(*)::int FROM message_votes v WHERE v.message_id=m.id) AS votes FROM messages m JOIN users u ON u.id=m.user_id
+    res.json({items:(await db.query(`SELECT m.id,m.body,m.created_at,${publicAuthorName} AS display_name,
+      (SELECT count(*)::int FROM message_votes v WHERE v.message_id=m.id) AS votes FROM messages m
+      JOIN users u ON u.id=m.user_id LEFT JOIN user_preferences p ON p.user_id=u.id
       WHERE m.room_id=$1 AND NOT m.hidden ORDER BY m.created_at DESC LIMIT 50`,[positiveId.parse(req.params.id)])).rows.reverse()});
   });
   router.post('/rooms/:id/messages',requireUser,async(req,res)=>{
@@ -284,12 +631,14 @@ export function apiRoutes(db,config) {
       ensure(result.rowCount,404,'Message not found.');await audit(client,req.user.id,'message.hide',req.params.id);
     });res.status(204).end();
   });
-  router.get('/advisories',async(_req,res)=>res.json({items:(await db.query('SELECT a.*,u.display_name AS author FROM advisories a JOIN users u ON u.id=a.author_id ORDER BY a.created_at DESC LIMIT 100')).rows}));
+  router.get('/advisories',async(_req,res)=>res.json({items:(await db.query(`SELECT a.id,a.title,a.body,a.source_url,a.created_at,'${officialAuthor}' AS author FROM advisories a ORDER BY a.created_at DESC LIMIT 100`)).rows}));
   router.post('/advisories',roles('admin'),async(req,res)=>{
     const input=z.object({title:z.string().trim().min(5).max(200),body:z.string().trim().min(10).max(10000),sourceUrl:httpsUrl}).strict().parse(req.body);
     const id=randomUUID();await transaction(db,async client=>{
       await client.query('INSERT INTO advisories(id,author_id,title,body,source_url) VALUES ($1,$2,$3,$4,$5)',[id,req.user.id,input.title,input.body,input.sourceUrl]);
       await audit(client,req.user.id,'advisory.publish',id);
+      const recipients=(await client.query('SELECT id FROM users WHERE NOT disabled AND id<>$1',[req.user.id])).rows;
+      for(const recipient of recipients)await notify(client,recipient.id,`New advisory published: ${input.title}.`,'advisories');
     });res.status(201).json({id});
   });
   router.get('/town-halls',async(_req,res)=>res.json({items:(await db.query(`SELECT h.*,coalesce((SELECT jsonb_agg(jsonb_build_object('id',q.id,'body',q.body,'answer',q.answer)) FROM questions q WHERE q.hall_id=h.id),'[]') AS questions FROM town_halls h ORDER BY h.starts_at DESC LIMIT 30`)).rows}));
@@ -313,6 +662,8 @@ export function apiRoutes(db,config) {
       ensure(updated.rowCount,404,'Question not found.'); await audit(client,req.user.id,'question.answer',req.params.id);
     });res.json({saved:true});
   });
+  router.use(mediaRoutes(db));
+
   router.get('/admin/dashboard',readers,async(_req,res)=>{
     const totals=(await db.query(`SELECT (SELECT count(*)::int FROM reports) AS reports,
       (SELECT count(*)::int FROM reports WHERE status='verified') AS verified,
@@ -344,7 +695,7 @@ export function apiRoutes(db,config) {
         await publishPrice(client,req.user.id,report.station_id,report.fuel,report.price,'moderator',id);
       }
       await client.query('UPDATE reports SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',[input.status,input.reason,req.user.id,id]);
-      await audit(client,req.user.id,'report.review',id,input);await notify(client,report.user_id,`Price report ${input.status}: ${input.reason}`);
+      await audit(client,req.user.id,'report.review',id,input);await notify(client,report.user_id,`Price report ${input.status}: ${input.reason}`,'reportUpdates');
     });res.json({saved:true});
   });
   router.get('/admin/audit',readers,async(req,res)=>{
@@ -357,15 +708,47 @@ export function apiRoutes(db,config) {
   });
   router.get('/admin/officers',staff,async(_req,res)=>res.json({items:(await db.query("SELECT id,display_name FROM users WHERE role IN ('admin','inspector') AND NOT disabled ORDER BY display_name")).rows}));
   router.patch('/admin/users/:id',roles('admin'),async(req,res)=>{
-    const input=z.object({identityVerified:z.boolean().optional(),disabled:z.boolean().optional(),reason:z.string().trim().min(10).max(1000)}).strict().refine(v=>v.identityVerified!==undefined||v.disabled!==undefined,'Choose an action.').parse(req.body);
+    const input=z.object({identityVerified:z.boolean().optional(),disabled:z.boolean().optional(),role:z.enum(['citizen','operator','inspector','analyst']).optional(),reason:z.string().trim().min(10).max(1000)}).strict().refine(v=>v.identityVerified!==undefined||v.disabled!==undefined||v.role!==undefined,'Choose an action.').parse(req.body);
     const id=uuid.parse(req.params.id);ensure(id!==req.user.id,403,'Use another administrator to change your own account.');
     await transaction(db,async client=>{
       const user=(await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];ensure(user,404,'Account not found.');
       ensure(user.role!=='admin',403,'Administrator account changes require the administrative CLI.');
-      await client.query('UPDATE users SET identity_verified=coalesce($1,identity_verified),disabled=coalesce($2,disabled) WHERE id=$3',[input.identityVerified??null,input.disabled??null,id]);
-      if(input.disabled) {await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1',[id]);}
-      await audit(client,req.user.id,'account.review',id,input);
+      const roleChanged=input.role!==undefined&&input.role!==user.role;
+      await client.query('UPDATE users SET identity_verified=coalesce($1,identity_verified),disabled=coalesce($2,disabled),role=coalesce($3,role) WHERE id=$4',[input.identityVerified??null,input.disabled??null,input.role??null,id]);
+      if(roleChanged&&input.role!=='operator')await client.query('DELETE FROM station_staff WHERE user_id=$1',[id]);
+      if(input.disabled||roleChanged){await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[id]);}
+      await audit(client,req.user.id,roleChanged?'account.role':'account.review',id,input);
+      await notify(client,id,'An administrator updated your account access or identity verification. Review your account details.');
+      await alertAdministrators(client,req.user.id,`Security alert: an administrator updated account ${id}.`);
     });res.json({saved:true});
+  });
+  router.post('/admin/users/:id/password',roles('admin'),async(req,res)=>{
+    await limit(db,`admin-password-reset:${req.user.id}`,10,3600);
+    const id=uuid.parse(req.params.id);
+    const input=z.object({newPassword:z.string().min(12).max(128),administratorPassword:z.string().min(1).max(128),reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
+    ensure(id!==req.user.id,403,'Use the password-change flow for your own account.');
+    await transaction(db,async client=>{
+      const admin=(await client.query('SELECT id,role,disabled,password_hash FROM users WHERE id=$1 FOR UPDATE',[req.user.id])).rows[0];
+      ensure(admin&&admin.role==='admin'&&!admin.disabled&&await passwordMatches(input.administratorPassword,admin.password_hash),403,'An active application administrator must authorize this password reset.');
+      const target=(await client.query('SELECT role FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];ensure(target,404,'Account not found.');
+      ensure(target.role!=='admin',403,'Administrator credentials require the administrative CLI.');
+      await client.query('UPDATE users SET password_hash=$1 WHERE id=$2',[await passwordHash(input.newPassword),id]);
+      await client.query('DELETE FROM sessions WHERE user_id=$1',[id]);
+      await client.query('UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[id]);
+      await audit(client,admin.id,'account.password_reset',id,{reason:input.reason});
+      await notify(client,id,'An administrator reset your MafutaWatch password. Sign in with the temporary password and change it immediately.');
+      await alertAdministrators(client,admin.id,`Security alert: an administrator reset the password for account ${id}.`);
+    });res.json({saved:true});
+  });
+  router.post('/admin/staff',roles('admin'),async(req,res)=>{
+    await limit(db,`staff-provision-manual:${req.user.id}`,10,3600);
+    const input=z.object({email:z.email().max(254),displayName:z.string().trim().min(2).max(80),password:z.string().min(12).max(128),role:z.enum(['inspector','analyst']),administratorPassword:z.string().min(1).max(128),identityVerified:z.literal(true),reason:z.string().trim().min(20).max(500)}).strict().parse(req.body);
+    const account=await provisionStaffByAdministrator(db,{account:{email:input.email,displayName:input.displayName,password:input.password,role:input.role},administrator:{id:req.user.id,password:input.administratorPassword},reason:input.reason});
+    await alertAdministrators(db,req.user.id,`Security alert: a ${account.role} account was provisioned (${account.id}).`);
+    res.status(201).json({id:account.id,role:account.role});
+  });
+  router.get('/admin/operator-accounts',roles('admin'),async(_req,res)=>{
+    res.json({items:(await db.query("SELECT id,email,display_name FROM users WHERE role='operator' AND NOT disabled ORDER BY display_name,email LIMIT 500")).rows});
   });
   router.post('/admin/operators',roles('admin'),async(req,res)=>{
     const input=z.object({name:z.string().trim().min(2).max(150),shortName:z.string().trim().min(2).max(30)}).strict().parse(req.body);
@@ -388,6 +771,21 @@ export function apiRoutes(db,config) {
     const {limit,offset}=pageSchema.parse(req.query);
     res.json({items:(await db.query(`SELECT ss.user_id,ss.station_id,s.name AS station_name,u.display_name,u.email
       FROM station_staff ss JOIN stations s ON s.id=ss.station_id JOIN users u ON u.id=ss.user_id ORDER BY s.id,u.display_name LIMIT $1 OFFSET $2`,[limit,offset])).rows});
+  });
+  router.post('/admin/stations/:id/staff',roles('admin'),async(req,res)=>{
+    await limit(db,`station-assign:${req.user.id}`,60,3600);
+    const stationId=positiveId.parse(req.params.id);
+    const input=z.object({userId:uuid,reason:z.string().trim().min(10).max(500)}).strict().parse(req.body);
+    await transaction(db,async client=>{
+      const station=(await client.query('SELECT id,name,active FROM stations WHERE id=$1 FOR UPDATE',[stationId])).rows[0];ensure(station,404,'Station not found.');
+      ensure(station.active,409,'Choose an active station.');
+      const user=(await client.query('SELECT id,role,disabled FROM users WHERE id=$1 FOR UPDATE',[input.userId])).rows[0];
+      ensure(user&&!user.disabled&&user.role==='operator',409,'Choose an active operator account.');
+      const inserted=(await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING station_id',[input.userId,stationId])).rows[0];
+      ensure(inserted,409,'That operator is already assigned to this station.');
+      await audit(client,req.user.id,'station.access_grant',stationId,{userId:input.userId,reason:input.reason});
+      await notify(client,input.userId,`You now have access to ${station.name}.`);
+    });res.status(201).json({saved:true});
   });
   router.delete('/admin/stations/:id/staff/:userId',roles('admin'),async(req,res)=>{
     const stationId=positiveId.parse(req.params.id),userId=uuid.parse(req.params.userId);
@@ -435,6 +833,58 @@ export function apiRoutes(db,config) {
     const average=(await db.query(`SELECT round(avg(p.price))::int AS price FROM prices p JOIN stations s ON s.id=p.station_id
       WHERE p.fuel=$1 AND p.updated_at>now()-interval '48 hours' AND s.active AND NOT s.demo AND p.source<>'demo'`,[input.fuel])).rows[0]?.price;
     res.json({distanceKm:distance,litres:distance/input.kmPerLitre,averagePrice:average??null,cost:average?Math.round(distance/input.kmPerLitre*average):null,method});
+  });
+  router.get('/admin/station-requests',roles('admin'),async(req,res)=>{
+    const {limit,offset}=pageSchema.parse(req.query);
+    const items=(await db.query(`SELECT r.*,u.display_name,u.email,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.name)) FROM attachments f WHERE f.station_request_id=r.id),'[]') AS attachments
+      FROM station_requests r JOIN users u ON u.id=r.user_id ORDER BY r.created_at DESC,r.id LIMIT $1 OFFSET $2`,[limit,offset])).rows;
+    for(const item of items)item.duplicates=await stationRequestDuplicates(db,item,true);
+    res.json({items});
+  });
+  router.patch('/admin/station-requests/:id',roles('admin'),async(req,res)=>{
+    const input=z.object({status:z.enum(['approved','rejected']),reason:z.string().trim().min(10).max(1000),stationId:positiveId.optional()}).strict()
+      .refine(v=>v.status==='approved'||v.stationId===undefined,'Only approval may associate a station.').parse(req.body);
+    await transaction(db,async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(734183)');
+      const request=await stationRequestAccess(client,req.params.id,req.user,true);
+      ensure(request.status==='pending',409,'Station request already reviewed.');
+      ensure(request.user_id!==req.user.id,403,'You cannot review your own request.');
+      if(input.status==='approved') {
+        // Prevent simultaneous approvals/direct directory inserts creating duplicates.
+        await client.query('LOCK TABLE stations,operators IN SHARE ROW EXCLUSIVE MODE');
+        ensure((await client.query('SELECT 1 FROM attachments WHERE station_request_id=$1',[request.id])).rowCount,400,'Review supporting documents before approval.');
+        const applicant=(await client.query('SELECT role,disabled FROM users WHERE id=$1 FOR UPDATE',[request.user_id])).rows[0];
+        ensure(applicant&&!applicant.disabled && ['citizen','operator'].includes(applicant.role),409,'Applicant must be an active citizen or operator.');
+        const duplicates=await stationRequestDuplicates(client,request,true);
+        let station,created=false;
+        if(input.stationId){
+          station=(await client.query('SELECT * FROM stations WHERE id=$1 FOR UPDATE',[input.stationId])).rows[0];
+          ensure(station&&station.active&&!station.demo,409,'Associate an active, verified non-demo station.');
+        }else{
+          ensure(!duplicates.length,409,'Possible duplicate stations exist. Review them and associate an existing verified station instead of creating a duplicate.');
+          const operator=(await client.query('SELECT id FROM operators WHERE lower(btrim(name))=lower(btrim($1)) ORDER BY id LIMIT 1',[request.operator_name])).rows[0];
+          const operatorId=operator?.id??(await client.query('INSERT INTO operators(name,short_name) VALUES ($1,$2) RETURNING id',[request.operator_name,request.operator_name.slice(0,30)])).rows[0].id;
+          if(!operator)await audit(client,req.user.id,'operator.create',operatorId,{requestId:request.id,name:request.operator_name});
+          station=(await client.query(`INSERT INTO stations(operator_id,name,area,district,region,latitude,longitude,active,demo)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,true,false) RETURNING *`,[operatorId,request.station_name,request.area,request.district,request.region,request.latitude,request.longitude])).rows[0];
+          created=true;
+          await audit(client,req.user.id,'station.create',station.id,{requestId:request.id,operatorId});
+        }
+        await client.query('INSERT INTO station_staff(user_id,station_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',[request.user_id,station.id]);
+        if(applicant.role!=='operator')await client.query("UPDATE users SET role='operator' WHERE id=$1",[request.user_id]);
+        const revoked=await client.query('DELETE FROM sessions WHERE user_id=$1',[request.user_id]);
+        await client.query('UPDATE station_requests SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now(),station_id=$4 WHERE id=$5',
+          ['approved',input.reason,req.user.id,station.id,request.id]);
+        await notify(client,request.user_id,`New station request approved: ${station.name}. Sign in again to open your Assigned Station Workspace. ${input.reason}`);
+        await audit(client,req.user.id,'station-request.approve',request.id,{stationId:station.id,operatorId:station.operator_id,created,previousRole:applicant.role,sessionsRevoked:revoked.rowCount,reason:input.reason});
+      } else {
+        await client.query('UPDATE station_requests SET status=$1,decision_reason=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$4',
+          ['rejected',input.reason,req.user.id,request.id]);
+        await notify(client,request.user_id,`New station request rejected: ${input.reason}`);
+        await audit(client,req.user.id,'station-request.reject',request.id,input);
+      }
+    });res.json({saved:true});
   });
   return router;
 }

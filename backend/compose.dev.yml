@@ -1,0 +1,19 @@
+# Development-only PostgreSQL. Never reuse these volumes for production.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mafuta
+      POSTGRES_PASSWORD: ${MAFUTA_DB_PASSWORD:?Set MAFUTA_DB_PASSWORD in a local .env}
+      POSTGRES_DB: mafuta_watch
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mafuta -d mafuta_watch"]
+      interval: 5s
+      retries: 10
+    volumes:
+      - mafuta_db:/var/lib/postgresql/data
+volumes:
+  mafuta_db:

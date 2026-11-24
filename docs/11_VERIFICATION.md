@@ -29,7 +29,8 @@ Browser checks used the installed Edge Chromium channel because the downloadable
 - Assigned-operator checks; precise PostgreSQL timestamp concurrency checks; committed follower notifications; hashed/scoped API tokens and revocation.
 - Private case ownership, evidence persistence and download authorization, MIME-signature rejection and attachment quotas.
 - Case state transitions, version conflicts, active staff assignment, citizen replies, server-generated first response and overdue state.
-- Evidence-backed manual operator approval, station assignment revocation, directory deactivation/reactivation, role-restricted corridor creation.
+- Evidence-backed manual operator approval, explicit station assignment/revocation, directory deactivation/reactivation, role-restricted corridor creation.
+- Re-authenticated create-only inspector/analyst provisioning with identity confirmation, no password disclosure, audited role assignment and suspension/restore session revocation.
 - Community author attribution, unique votes, no self-vote and moderation.
 - Administrator-only advisories and effective source-linked district directives.
 - Append-only audit triggers, runtime-role denial of audit/migration mutation and transaction rollback.

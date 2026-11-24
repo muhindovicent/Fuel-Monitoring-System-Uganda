@@ -1,0 +1,9 @@
+{
+  "name": "mafutawatch-frontend",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": { "leaflet": "1.9.4" }
+}
