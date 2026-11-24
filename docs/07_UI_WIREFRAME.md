@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — UI Wireframe Blueprint
 
+> Historical prototype wireframe. The responsive v3 workspace replaces this layout and its sample statistics/institutional claims; see [09_ARCHITECTURE.md](09_ARCHITECTURE.md).
+
 > **App:** MafutaWatch Uganda — National Fuel Price Transparency Platform
 > **File:** `app/index.html` (1621 lines)
 > **Stylesheet:** `app/css/style.css` (1749 lines)

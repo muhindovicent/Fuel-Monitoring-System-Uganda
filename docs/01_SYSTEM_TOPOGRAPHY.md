@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — System Topography Mapping
 
+> Historical proposal. The implemented v3 architecture is in [09_ARCHITECTURE.md](09_ARCHITECTURE.md). Kafka, Redis, USSD/WhatsApp workers and scaling targets below are not implemented services or verified operating claims.
+
 ## 1. End-to-End Cloud Infrastructure Diagram
 
 ```

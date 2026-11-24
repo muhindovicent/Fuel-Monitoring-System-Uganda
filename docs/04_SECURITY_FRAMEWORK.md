@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — Security Framework: Sybil Attack Mitigation Protocol
 
+> Historical design/pseudocode. The current security boundary and limitations are documented in [09_ARCHITECTURE.md](09_ARCHITECTURE.md). This paper does not establish implemented protections or legal compliance; several snippets are incomplete or invalid.
+
 ## 1. Threat Model Overview
 
 ### 1.1 Attack Surface

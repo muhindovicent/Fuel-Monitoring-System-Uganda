@@ -1,4 +1,5 @@
-// MafutaWatch Uganda — Data Definitions
+// HISTORICAL DEMONSTRATION FIXTURES. Not a verified station register or live prices.
+// Imported only by the explicit development seed command; never loaded by the UI.
 
 const OPERATORS = [
   { id:1, name:'Shell Uganda', short:'Shell' }, { id:2, name:'TotalEnergies Uganda', short:'Total' },
@@ -115,3 +116,5 @@ const STATIONS_DATA = [
   { id:59, name:'Stabex Masaka Road', op:3, lat:-0.3000, lng:31.6000, area:'Masaka Road', district:'Masaka', region:'Central', petrol:5410, diesel:5210, phone:'+256712345059' },
   { id:60, name:'Petrocity Gulu Road', op:4, lat:2.5000, lng:32.4000, area:'Gulu Highway', district:'Gulu', region:'Northern', petrol:5610, diesel:5410, phone:'+256712345060' },
 ];
+
+export { OPERATORS, VEHICLES, LOCATIONS, STATIONS_DATA };

@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — USSD Stateful Session Logic Flow
 
+> Historical pseudocode, not a deployed USSD service. See [09_ARCHITECTURE.md](09_ARCHITECTURE.md) for implemented capabilities and [08_REVIEW.md](08_REVIEW.md) for defects. Do not copy these snippets into production without a fresh implementation and provider validation.
+
 ## 1. Redis Session Architecture
 
 ### Key Namespace Convention

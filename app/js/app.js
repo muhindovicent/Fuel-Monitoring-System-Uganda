@@ -1,2435 +1,869 @@
-// MafutaWatch Uganda — Application Logic
+import {api,setCsrf,escapeHtml as esc,money,date} from './api.js';
+import {icon,services} from './ui.js';
+import {discoveryMarkup,mountDiscovery} from './discovery.js';
+import {workspaceFor} from './access.js';
+import {loadLeaflet} from './leaflet.js';
+import {mediaManagementMarkup,mountMediaManagement} from './media-management.js';
+import {newsCard,imageCard,videoCard,videoPlayer,homepageNews,homepageVideos,photoCarousel} from './media-content.js';
+import {mountPasswordToggles,resetPasswordVisibility} from './password-toggle.js';
 
-/* ─── DATABASE ─── */
-const DB_KEY = 'mafuta_watch_v2';
-function loadDB() {
-  try {
-    const raw = localStorage.getItem(DB_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (!d.reports) d.reports = [];
-      if (!d.reviews) d.reviews = [];
-      if (!d.notifications) d.notifications = [];
-      if (!d.subscriptions) d.subscriptions = [];
-      if (!d.priceHistory) d.priceHistory = [];
-      if (d.trustScore === undefined) d.trustScore = 0;
-      if (d.totalReports === undefined) d.totalReports = 0;
-      if (d.verifiedCount === undefined) d.verifiedCount = 0;
-      if (d.authToken === undefined) d.authToken = null;
-      if (!d.broadcasts) d.broadcasts = [];
-      if (!d.p2pRooms) d.p2pRooms = [];
-      if (!d.p2pMessages) d.p2pMessages = {};
-      if (!d.c2gTickets) d.c2gTickets = [];
-      if (!d.g2cPosts) d.g2cPosts = [];
-      if (!d.g2cAma) d.g2cAma = [];
-      if (d.peerScore === undefined) d.peerScore = 0;
-      return d;
-    }
-  } catch(e) {}
-  return { reports:[], reviews:[], notifications:[], subscriptions:[], priceHistory:[],
-           trustScore:0, totalReports:0, verifiedCount:0, authToken:null, broadcasts:[],
-           p2pRooms:[], p2pMessages:{}, c2gTickets:[], g2cPosts:[], g2cAma:[], peerScore:0 };
+const $=selector=>document.querySelector(selector);
+const state={user:null,summary:null,page:'overview',adminTab:'dashboard',room:null,stations:[],assigned:[],ticket:null,authMode:'login',offset:0,activityOffset:0,adminOffset:0,filters:{q:'',district:'',fuel:'petrol',sort:'price',radius:'10'},position:null,carouselIndex:0,bootError:null};
+let map,discovery,mediaManager,toastTimer,routeVersion=0;
+const isStaff=()=>['admin','inspector'].includes(state.user?.role);
+const isAdmin=()=>state.user?.role==='admin';
+const empty=text=>`<div class="empty">${esc(text)}</div>`;
+const badge=(text,kind=text)=>`<span class="badge ${esc(kind)}">${esc(text)}</span>`;
+const heading=(title,description,eyebrow='MAFUTAWATCH UGANDA')=>`<div class="page-heading"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p>${esc(description)}</p></div></div>`;
+const metric=(value,label,warning=false)=>`<div class="metric workspace-metric${warning?' warning':''}"><span class="workspace-metric-icon">${icon(warning?'clock':'chart')}</span><strong>${esc(value??'—')}</strong><span class="label">${esc(label)}</span></div>`;
+const field=(label,name,{type='text',required=true,value='',min,max,step,maxlength=200,placeholder=''}={})=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" ${required?'required':''} value="${esc(value)}" ${min!==undefined?`${['number','date','datetime-local'].includes(type)?'min':'minlength'}="${min}"`:''} ${max!==undefined?`max="${max}"`:''} ${step?`step="${step}"`:''} ${type==='password'?`autocomplete="${['newPassword','password','confirmPassword'].includes(name)?'new-password':'current-password'}"`:''} maxlength="${maxlength}" placeholder="${esc(placeholder)}"></label>`;
+const select=(label,name,options,selected='',required=true)=>`<label>${esc(label)}<select name="${name}" aria-label="${esc(label)}" ${required?'required':''}>${options.map(([value,text])=>`<option value="${esc(value)}" ${String(value)===String(selected)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
+const fuelOptions=[['petrol','Petrol'],['diesel','Diesel'],['kerosene','Kerosene']];
+const fuelField=(selected='petrol')=>select('Fuel type','fuel',fuelOptions,selected);
+const priceField=()=>field('Price (UGX per litre)','price',{type:'number',min:100,max:100000,step:1});
+const textarea=(label,name,{min=1,max=3000}={})=>`<label>${esc(label)}<textarea name="${name}" required minlength="${min}" maxlength="${max}" rows="3"></textarea></label>`;
+const formEnd=text=>`<p class="form-error" role="alert"></p><button class="primary" type="submit">${esc(text)}</button>`;
+const stationSelect=(items=state.stations,selected='')=>select('Fuel station','stationId',[['','Select a station'],...items.map(s=>[s.id,`${s.name} · ${s.district}${s.demo?' (demo)':''}`])],selected);
+const evidenceInput=()=>'<label>Evidence (optional, up to 3 files, 5 MiB each)<input name="evidence" type="file" multiple accept="image/png,image/jpeg,application/pdf"></label><p class="small">Evidence is private to you and authorized case reviewers. Remove personal information that is not relevant.</p>';
+const applicationEvidenceInput=()=>'<label>License documents (required for approval, up to 3 files, 5 MiB each)<input name="evidence" type="file" multiple accept="image/png,image/jpeg,application/pdf"></label><p class="small">License evidence is mandatory before an administrator can approve your station access application. Without documents, your application stays awaiting documents and cannot be approved. Remove personal information that is not relevant.</p>';
+function showError(error){$('#errorBanner').textContent=error.message;$('#errorBanner').hidden=false;if(error.status===401){state.user=null;updateAccount();} }
+function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('#toast').hidden=true;},6000);}
+function updateAccount(){
+  document.body.classList.toggle('signed-in',Boolean(state.user));
+  $('#accountButton').textContent=state.user?`${state.user.display_name} · ${state.user.role}`:'Sign in';
+  $('#accountButton').dataset.action=state.user?'account':'auth';$('#logoutButton').hidden=!state.user;
+  $('[data-page="admin"]').hidden=!['admin','inspector','analyst'].includes(state.user?.role);
+  $('[data-page="operator"]').hidden=Boolean(state.user)&&!['citizen','operator','admin'].includes(state.user.role);
+  if(state.workspaceRole!==state.user?.role){state.adminTab=state.user?.role==='analyst'?'intelligence':'dashboard';state.caseAssignment=state.user?.role==='inspector'?'mine':'all';state.caseStatus='';state.analyticsFuel=null;state.operatorStationId=null;state.workspaceRole=state.user?.role;applySavedWorkspacePreferences();}
+  $('#registerButton').hidden=Boolean(state.user);
+  const workspace=workspaceFor(state.user?.role);
+  $('#workspaceLink').href=`#${workspace.page}`;
+  $('#workspaceLink').title=workspace.title;
+  $('#primaryNavigation .mobile-only[href]').href=`#${workspace.page}`;
+  $('#stakeholderAccess').hidden=Boolean(state.user);
+  $('#notificationButton').hidden=!state.user;
+  const names={citizen:'Citizen services',operator:'Station operations',inspector:'Case management',analyst:'Market analysis',admin:'Platform administration'};
+  $('#workspaceRole').textContent=names[state.user?.role]||'Citizen services';
+  $('#workspaceName').textContent=state.user?.display_name||'Welcome to MafutaWatch';
+  $('#workspaceIdentity').textContent=state.user?`${state.user.role} account`:'Sign in to contribute';
+  $('#accountAvatar').textContent=(state.user?.display_name||'M').slice(0,1).toUpperCase();
+  if(!state.user){state.preferences=null;state.notifications=[];updateNotificationBadge();}
 }
-let DB = loadDB();
-function saveDB() {
-  try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); } catch(e) {}
+function applySavedWorkspacePreferences(){
+  const settings=state.preferences?.roleSettings??{},role=state.user?.role;
+  if(role==='admin'&&settings.dashboardPreferences&&settings.lastAdminTab)state.adminTab=settings.lastAdminTab;
+  if(role==='inspector'&&settings.workspacePreferences){if(settings.lastCaseStatus!==undefined)state.caseStatus=settings.lastCaseStatus;if(settings.lastCaseAssignment)state.caseAssignment=settings.lastCaseAssignment;}
+  if(role==='analyst'&&settings.savedChartFilters&&settings.lastFuelView)state.analyticsFuel=settings.lastFuelView;
+  if(role==='operator'&&settings.assignedStationDashboard&&settings.lastStationId)state.operatorStationId=settings.lastStationId;
 }
-
-/* ─── HELPERS ─── */
-function getOp(id) { return OPERATORS.find(o=>o.id===id)||{name:'Unknown',short:'??'}; }
-function getStations() { return STATIONS_DATA; }
-function getStation(id) { return STATIONS_DATA.find(s=>s.id===id); }
-
-function haversineKm(lat1,lng1,lat2,lng2) {
-  const R=6371; const dLat=(lat2-lat1)*Math.PI/180; const dLng=(lng2-lng1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+async function loadPreferences(){
+  state.preferences=null;if(!state.user)return;
+  const userId=state.user.id,result=await api('/me/preferences');
+  if(state.user?.id===userId)state.preferences=result.preferences;
 }
-
-function getPriceColor(price, fuel) {
-  const all = STATIONS_DATA.map(s=>s[fuel]||9999).filter(p=>p>0);
-  const min=Math.min(...all), max=Math.max(...all), range=max-min||1;
-  const r=(price-min)/range;
-  return r<0.33?'var(--green)':r<0.66?'var(--yellow)':'var(--red)';
+async function rememberSetting(role,partial){
+  const toggle={admin:'dashboardPreferences',inspector:'workspacePreferences',analyst:'savedChartFilters',operator:'assignedStationDashboard'}[role];
+  if(state.user?.role!==role||state.preferences?.roleSettings?.[toggle]!==true)return;
+  const userId=state.user.id;
+  await api('/me/preferences',{method:'PATCH',body:{roleSettings:partial}});
+  if(state.user?.id===userId)state.preferences.roleSettings={...state.preferences.roleSettings,...partial};
 }
-
-function getPriceRange(price) { return price<=5300?'low':price<=5450?'med':'high'; }
-
-/* ─── PRICE REGULATION ─── */
-const DISTRICT_PRICE_CAPS = {
-  'Kampala': { petrol:5400, diesel:5480 },
-  'Wakiso': { petrol:5400, diesel:5480 },
-  'Mukono': { petrol:5400, diesel:5480 },
-  'Masaka': { petrol:5450, diesel:5520 },
-  'Mbarara': { petrol:5550, diesel:5620 },
-  'Kabarole': { petrol:5550, diesel:5620 },
-  'Hoima': { petrol:5550, diesel:5620 },
-  'Kasese': { petrol:5580, diesel:5650 },
-  'Gulu': { petrol:5600, diesel:5680 },
-  'Lira': { petrol:5630, diesel:5700 },
-  'Arua': { petrol:5650, diesel:5720 },
-  'Jinja': { petrol:5430, diesel:5500 },
-  'Mbale': { petrol:5480, diesel:5550 },
-  'Soroti': { petrol:5510, diesel:5580 },
-  'Tororo': { petrol:5470, diesel:5540 },
-};
-
-function checkPriceCap(stationId, fuel, price) {
-  // No public legal cap is established by this prototype. Never flag a legal violation.
-  return { withinCap: true, cap: null, excess: 0 };
-  const s = getStation(stationId);
-  if (!s) return { withinCap: true, cap: null, excess: 0 };
-  const district = s.district;
-  const caps = DISTRICT_PRICE_CAPS[district];
-  if (!caps) return { withinCap: true, cap: null, excess: 0 };
-  const cap = caps[fuel];
-  if (!cap) return { withinCap: true, cap: null, excess: 0 };
-  const withinCap = price <= cap;
-  if (!withinCap) {
-    if (!DB.notifications) DB.notifications = [];
-    DB.notifications.push({
-      id: Date.now(),
-      type: 'price_cap_violation',
-      message: `🚨 Price cap violation at ${s.name}: ${fuel} at UGX ${price.toLocaleString()} (cap: UGX ${cap.toLocaleString()}, excess: UGX ${(price-cap).toLocaleString()})`,
-      stationId, stationName: s.name, read: false, date: new Date().toISOString(),
-    });
-  }
-  return { withinCap, cap, excess: withinCap ? 0 : price - cap };
+function updateNotificationBadge(){const unread=(state.notifications||[]).filter(n=>!n.read_at).length;$('#notificationCount').textContent=unread;$('#notificationCount').hidden=!unread;$('#notificationButton').setAttribute('aria-label',unread?`Notifications, ${unread} unread in the latest 100`:'Notifications');}
+async function refreshNotifications(){if(!state.user)return;const userId=state.user.id;const result=await api('/me/notifications');if(state.user?.id!==userId)return;state.notifications=result.items;updateNotificationBadge();}
+async function notificationDialog(){if(!authRequired())return;await refreshNotifications();if(!state.user)return;$('#detailTitle').textContent='Notifications';$('#detailContent').innerHTML=`<p class="small">Your latest in-app updates. No external delivery is implied.</p><div class="notification-list">${(state.notifications||[]).slice(0,10).map(n=>`<article class="notification-item ${n.read_at?'':'unread'}"><span class="notification-icon">${icon('bell')}</span><div>${n.read_at?'':badge('Unread','pending')}<p>${esc(n.message)}</p><small>${date(n.created_at)}</small></div></article>`).join('')||empty('No updates yet. Follow a station to receive price-change notifications.')}</div><div class="actions"><button data-action="read-notifications">Mark displayed notifications read</button><a class="button primary" href="#activity" data-action="close-detail">View my activity ${icon('arrow')}</a></div>`;$('#detailDialog').showModal();}
+function authRequired(){if(state.user)return true;openAuth();return false;}
+function openAuth(mode='login'){if($('#detailDialog').open)$('#detailDialog').close();state.authMode=mode;renderAuth();$('#authDialog').showModal();}
+function renderAuth(){
+  const register=state.authMode==='register',staff=state.authMode==='staff';$('#authTitle').textContent=register?'Create a citizen account':staff?'Authorized Staff Sign In':'Sign in';
+  $('#authHint').textContent=register?'Registration creates a citizen account only. Operator access requires a separate application and approval.':staff?'For existing administrators, inspectors and analysts. The same secure sign-in checks your assigned account role; this form cannot grant staff access.':'Use your existing account. You will be directed to the workspace authorized by your account role.';
+  $('#registerToggle').hidden=staff;
+  $('#nameLabel').hidden=!register;$('#nameLabel input').required=register;
+  $('#consentLabel').hidden=!register;$('#consentLabel input').required=register;
+  $('#authForm button[type=submit]').textContent=register?'Create account':'Sign in';
+  const password=$('#authForm [name=password]');password.minLength=register?12:1;password.autocomplete=register?'new-password':'current-password';
+  $('#registerToggle').textContent=register?'Already registered? Sign in':'Create a citizen account';$('#authError').textContent='';
+  resetPasswordVisibility($('#authForm'));mountPasswordToggles($('#authForm'));
 }
-
-/* ─── TOAST ─── */
-function showToast(msg, duration) {
-  const t=document.getElementById('toast'); if(!t) return;
-  t.textContent=msg; t.classList.add('show');
-  clearTimeout(t._timer); t._timer=setTimeout(()=>t.classList.remove('show'), duration||3000);
+async function loadDirectory(){
+  // Forms need the full approved register, not just a silently truncated first page.
+  const stations=[];
+  for(let offset=0;;offset+=100){const batch=await api(`/stations?limit=100&offset=${offset}`);stations.push(...batch.items);if(batch.items.length<100)break;}
+  state.stations=stations;return stations;
 }
-
-/* ─── NAVIGATION ─── */
-let activePane='map';
-function switchPage(pane) {
-  activePane=pane;
-  document.querySelectorAll('.tools-pane').forEach(p=>p.classList.remove('active'));
-  const el=document.getElementById(`page-${pane}`);
-  if(el) el.classList.add('active');
-  document.querySelectorAll('.tools-tab').forEach(n=>n.classList.toggle('active',n.dataset.pane===pane));
-  const main=document.getElementById('mainContent');
-  if(main) main.scrollTop=0;
-  // Refresh on show
-  if(pane==='stations') renderStationList();
-  if(pane==='map') setTimeout(()=>{if(map)map.invalidateSize();},100);
-  if(pane==='activity') renderActivity();
-  if(pane==='operator') renderOperatorDash();
-  if(pane==='admin') renderAdminDash();
-  if(pane==='p2p') { renderP2PRooms(); updateHubCounts(); }
-  if(pane==='c2g') { renderC2GTickets(); initC2GForm(); updateHubCounts(); }
-  if(pane==='g2c') { renderG2CPosts(); renderG2CAMA(); updateHubCounts(); }
+function syncDemoBanner(){
+  const banner=$('#demoBanner'),demo=Boolean(state.summary?.demo_stations);
+  if(state.page==='overview'){banner.hidden=false;banner.style.visibility=demo?'visible':'hidden';}
+  else{banner.style.visibility='';banner.hidden=!demo;}
 }
-document.addEventListener('click', e=>{
-  const item=e.target.closest('.tools-tab');
-  if(item) switchPage(item.dataset.pane);
-});
-document.addEventListener('click', e=>{
-  if(e.target.id==='breadcrumbHome') { e.preventDefault(); switchPage('map'); }
-  if(e.target.id==='breadcrumbGov') { e.preventDefault(); document.querySelector('.gov-institutional')?.scrollIntoView({behavior:'smooth'}); }
-  if(e.target.id==='breadcrumbDirs') { e.preventDefault(); document.querySelector('.directory-block')?.scrollIntoView({behavior:'smooth'}); }
-});
-
-/* ─── MAP ─── */
-let map, markers=[], currentStationId=null;
-function initMap() {
-  map=L.map('map',{center:[0.315,32.58],zoom:12,zoomControl:true,attributionControl:true});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom:19,
-  }).addTo(map);
-  renderMapMarkers();
+async function summary(){
+  state.summary=await api('/summary');
+  syncDemoBanner();
+  $('#connection').textContent=`Updated ${new Date().toLocaleTimeString('en-UG',{timeZone:'Africa/Kampala',hour:'2-digit',minute:'2-digit'})} EAT`;
 }
-
-function renderMapMarkers(fuelFilter, radiusKm) {
-  if (!map) return; // The API may resolve before Leaflet is initialized.
-  markers.forEach(m=>map.removeLayer(m)); markers=[];
-  const fuel=fuelFilter||document.getElementById('mapFuel')?.value||'all';
-  const radius=radiusKm||parseInt(document.getElementById('mapRadius')?.value)||0;
-  const search=(document.getElementById('mapSearch')?.value||'').toLowerCase();
-
-  // Get user location for radius filtering
-  let userPos=null;
-  if (radius>0 && window._userLat!=null) userPos={lat:window._userLat,lng:window._userLng};
-
-  let stations=getStations().filter(s=>{
-    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return false;
-    if(search&&!s.name.toLowerCase().includes(search)&&!s.area.toLowerCase().includes(search)
-       &&!s.district.toLowerCase().includes(search)) return false;
-    if(fuel!=='all'&&!s[fuel]) return false;
-    if(userPos&&radius>0){
-      const d=haversineKm(userPos.lat,userPos.lng,s.lat,s.lng);
-      if(d>radius) return false;
-    }
-    return true;
-  });
-
-  if(stations.length===0){
-    document.getElementById('mapResultCount').textContent='No stations found';
-    return;
-  }
-  document.getElementById('mapResultCount').textContent=`${stations.length} station${stations.length>1?'s':''}`;
-
-  stations.forEach(s=>{
-    const displayFuel=fuel==='all'?'petrol':fuel;
-    const price=s[displayFuel]||s.petrol||0;
-    const color=getPriceColor(price,displayFuel||'petrol');
-    const op=getOp(s.op);
-    const rank=getPriceRange(price);
-
-    const icon=L.divIcon({
-      className:'',
-      html:`<div style="background:${color};color:#fff;width:30px;height:30px;border-radius:50%;
-        display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;
-        border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.2);">UGX</div>`,
-      iconSize:[30,30],iconAnchor:[15,15],popupAnchor:[0,-16],
-    });
-
-    const m=L.marker([s.lat,s.lng],{icon}).addTo(map);
-    const pricesHtml=[
-      s.petrol?`<div><span class="price-dot ${getPriceRange(s.petrol)}"></span>Petrol: UGX ${s.petrol.toLocaleString()}/L</div>`:'',
-      s.diesel?`<div><span class="price-dot ${getPriceRange(s.diesel)}"></span>Diesel: UGX ${s.diesel.toLocaleString()}/L</div>`:'',
-      s.kerosene?`<div>Kerosene: UGX ${s.kerosene.toLocaleString()}/L</div>`:'',
-    ].filter(Boolean).join('');
-    m.bindPopup(`
-      <div class="popup-station">${escapeMafutaHtml(s.name)}</div>
-      <div class="popup-operator">${escapeMafutaHtml(op.name)} · ${escapeMafutaHtml(s.area)}, ${escapeMafutaHtml(s.district)}</div>
-      <div style="margin:6px 0;">${pricesHtml}</div>
-      <button class="popup-action" onclick="openStationModal(${s.id})">View Details + Report</button>
-    `);
-    markers.push(m);
-  });
-
-  if(markers.length>0){
-    const g=L.featureGroup(markers);
-    map.fitBounds(g.getBounds().pad(0.15));
-  }
+function skeletonFill(label){return `<div class="loading-surface"><p class="loading-message" role="status">${esc(label)}</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>`;}
+function advisoryGrid(notices){return notices.slice(0,3).map(a=>`<article class="card advisory-card"><span class="advisory-label">${icon('report')}SOURCE LINKED</span><h3>${esc(a.title)}</h3><p class="clamp-three">${esc(a.body)}</p><small>${date(a.created_at)} · ${esc(a.author)}</small><a class="text-link" href="${esc(a.source_url)}" target="_blank" rel="noopener noreferrer">Read original source ${icon('arrow')}</a></article>`).join('')||`<div class="empty advisory-empty">${icon('bell')}<h3>No published advisories yet</h3><p>Source-linked releases will appear here when a platform administrator publishes them.</p><a href="#advisories">Explore advisories & town halls →</a></div>`;}
+function overviewShell(){
+  return `<section class="portal-hero" aria-labelledby="heroTitle">
+    <img class="hero-photograph" src="/assets/kampala-road.jpg" srcset="/assets/kampala-road-960.jpg 960w, /assets/kampala-road-1280.jpg 1280w, /assets/kampala-road-1600.jpg 1600w, /assets/kampala-road.jpg 1920w" sizes="(max-width: 900px) 50vw, 100vw" width="1600" height="1067" alt="Evening traffic on Kampala Road, Uganda" fetchpriority="high">
+    <div class="container hero-inner"><div class="hero-copy"><span class="hero-kicker"><span class="status-dot"></span>UGANDA · MOBILITY & FUEL INTELLIGENCE</span><h1 id="heroTitle">Find Affordable Fuel.<br><span>Drive Smarter.</span></h1><p>Discover fuel stations, compare verified prices, plan journeys, and report fuel market concerns across Uganda.</p><div class="actions hero-actions"><button class="button amber" data-action="find-nearby">${icon('pin')} Find Fuel Near Me</button><a class="button hero-outline" href="#prices">Compare Fuel Prices ${icon('arrow')}</a></div><a class="hero-concern" href="#report">${icon('report')} Report a Price ${icon('arrow')}</a><div class="hero-trust"><span>${icon('check')}Real sources. Clear freshness.</span><span>${icon('check')}Your voice, tracked.</span></div></div>
+    <aside class="hero-price-card"><div class="hero-price-heading">${icon('pump')} THE PRICE PICTURE</div><p>Fresh published price indicators</p><div class="hero-fuel-row"><span>Petrol <small>UGX / litre</small></span><strong data-hero-price="petrol">—</strong></div><div class="hero-fuel-row"><span>Diesel <small>UGX / litre</small></span><strong data-hero-price="diesel">—</strong></div><div class="hero-card-note">${icon('clock')}Regional averages weighted by sample count. Demo and stale prices excluded.</div><a href="#analytics">Explore the data ${icon('arrow')}</a></aside></div>
+    <div class="container hero-credit"><a href="#credits">Kampala Road · Kyakwera / CC BY-SA 4.0</a></div>
+  </section>
+  ${photoCarousel([])}
+  <section class="container search-section" aria-labelledby="searchTitle"><div class="search-panel"><div class="search-intro">${icon('search')}<div><h2 id="searchTitle">Where are you refuelling?</h2><p>Find a station. Check a price. Plan ahead.</p></div></div><form id="homeSearch" class="portal-search">${field('Station name or area','q',{required:false,placeholder:'Search a station or area'})}${districtSelect([])}${select('Fuel type','fuel',fuelOptions)}<button class="primary" type="submit">${icon('search')} Search prices</button></form></div></section>
+  <template id="homeRest">
+  <section class="portal-section discovery-section"><div class="container">${sectionHeading('EXPLORE THE FUEL NETWORK','Your next stop, in one clear view.','Search the directory, select a station, and inspect the source behind its price.','#stations','Open fuel discovery')}<div data-overview="discovery">${skeletonFill('Loading station discovery…')}</div></div></section>
+  <section class="container home-kpis" aria-label="Platform records"><div data-overview="kpis">${skeletonFill('Loading platform records…')}</div></section>
+  <section class="portal-section services-section"><div class="container">${sectionHeading('YOUR QUICK LINKS','One platform. Practical services.','From the next fuel stop to a concern that deserves an answer.', '#services','All citizen services')}${serviceDirectory()}</div></section>
+  <section class="portal-section insights-section"><div class="container">${sectionHeading('FUEL MARKET INTELLIGENCE','Numbers with a source. Not a guess.','Compare fresh operational prices and understand what the available data can tell you.','#analytics','Reports & analytics')}<div class="grid insights-grid"><article class="card"><div class="card-head"><h3>Regional price snapshot</h3>${badge('Fresh · ≤48h')}</div><p class="small">UGX per litre · Accepted operational prices only.</p><div data-overview="region-chart">${skeletonFill('Loading regional averages…')}</div><a class="text-link" href="#analytics">View regional data ${icon('arrow')}</a></article><article class="card"><div class="card-head"><h3>Lowest fresh published prices</h3>${icon('pump')}</div><p class="small">Across the directory · Petrol · Not a price guarantee.</p><div data-overview="price-comparison">${skeletonFill('Loading price comparison…')}</div><a class="text-link" href="#prices">Compare fuel prices ${icon('arrow')}</a></article></div></div></section>
+  <section class="container record-insights"><div class="grid"><article class="card"><h2>Recent verified updates</h2><p class="small">Fresh operational records, with their actual publication source.</p><div data-overview="recent-updates">${skeletonFill('Loading recent updates…')}</div></article><article class="card"><h2>Station distribution</h2><p class="small">Operational entries in this directory, not a measure of national coverage.</p><div data-overview="distribution">${skeletonFill('Loading station distribution…')}</div></article></div></section>
+  <section class="portal-section"><div class="container"><div class="citizen-feature"><div class="citizen-feature-copy"><span class="eyebrow">CITIZEN PARTICIPATION</span><h2>A concern deserves<br>more than a comment.</h2><p>Submit a station concern, attach private evidence, and follow the case through a documented response.</p><ol class="case-steps"><li><span>01</span>Describe the issue</li><li><span>02</span>Receive a tracked case</li><li><span>03</span>Follow the response</li></ol><a class="button amber" href="#complaints">Report a concern ${icon('arrow')}</a><a class="citizen-follow" href="#complaints">Already submitted? Track your case →</a></div><figure class="citizen-photo"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town, Uganda; an illustrative photograph" width="1400" height="1050" loading="lazy" decoding="async" fetchpriority="low"><figcaption>Kabale, Uganda · Documentary photography, not an endorsement. <a href="#credits">Photo credits ↗</a></figcaption></figure></div></div></section>
+   <section class="portal-section advisory-section"><div class="container">${sectionHeading('PUBLIC INFORMATION','Advisories you can trace.','Published platform releases with links to their original sources.','#advisories','All advisories & town halls')}<div class="grid three" data-overview="advisories">${skeletonFill('Loading advisories…')}</div></div></section>
+  <section class="portal-section container" id="homePublishing"><div data-overview="news">${skeletonFill('Loading news…')}</div><div data-overview="videos">${skeletonFill('Loading videos…')}</div></section><section class="container community-strip"><div>${icon('users')}<div><h2>Better journeys begin with shared information.</h2><p>Join the conversation along Uganda’s transport corridors.</p></div></div><a class="button primary" href="#community">Explore driver community ${icon('arrow')}</a></section>
+  </template>`;
 }
-
-// Map filter events
-document.addEventListener('change',e=>{
-  if(e.target.id==='mapFuel'||e.target.id==='mapRadius') renderMapMarkers();
-});
-document.addEventListener('input',e=>{
-  if(e.target.id==='mapSearch') renderMapMarkers();
-});
-
-// GPS Locate
-document.addEventListener('click',e=>{
-  if(e.target.id==='mapLocateBtn'&&navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(pos=>{
-      window._userLat=pos.coords.latitude; window._userLng=pos.coords.longitude;
-      map.setView([window._userLat,window._userLng],14);
-      L.circleMarker([window._userLat,window._userLng],{
-        radius:8,color:'var(--primary)',fillColor:'var(--accent)',fillOpacity:0.8,weight:2,
-      }).addTo(map);
-      showToast('📍 Location found!');
-    },()=>showToast('Could not get location.'),{enableHighAccuracy:true,timeout:10000});
-  }
-});
-
-// Radius clear
-document.addEventListener('click',e=>{
-  if(e.target.id==='mapRadiusClear'){
-    document.getElementById('mapRadius').value='0';
-    window._userLat=null; window._userLng=null;
-    renderMapMarkers();
-  }
-});
-
-/* ─── STATION MODAL ─── */
-function openStationModal(id) {
-  const s=getStation(id); if(!s) return;
-  currentStationId = id;
-  const op=getOp(s.op);
-  document.getElementById('modalTitle').textContent=s.name;
-  document.getElementById('modalSub').innerHTML=`${op.name} · ${s.area}, ${s.district} ${s.phone?'· 📞'+s.phone:''}`;
-
-  let pHtml='';
-  if(s.petrol) pHtml+=`<div class="modal-price-row"><span><span class="price-dot ${getPriceRange(s.petrol)}"></span>Petrol</span><span class="price" style="font-weight:700;font-size:1.1rem;color:${getPriceColor(s.petrol,'petrol')}">UGX ${s.petrol.toLocaleString()}</span></div>`;
-  if(s.diesel) pHtml+=`<div class="modal-price-row"><span><span class="price-dot ${getPriceRange(s.diesel)}"></span>Diesel</span><span class="price" style="font-weight:700;font-size:1.1rem;color:${getPriceColor(s.diesel,'diesel')}">UGX ${s.diesel.toLocaleString()}</span></div>`;
-  document.getElementById('modalPrices').innerHTML=pHtml||'<div style="color:var(--text-muted)">No prices available</div>';
-
-  // Reviews
-  const reviews=(DB.reviews||[]).filter(r=>r.stationId===id);
-  const rContainer=document.getElementById('modalReviews');
-  if(reviews.length===0){
-    rContainer.innerHTML='<div style="color:var(--text-muted);font-size:0.78rem;">No reviews yet. Be the first!</div>';
-  } else {
-    rContainer.innerHTML=reviews.slice(-3).reverse().map(r=>`
-      <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
-        <div>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)} <span style="color:var(--text-muted);font-size:0.7rem;">${new Date(r.date).toLocaleDateString()}</span></div>
-        <div style="color:var(--text-muted);font-size:0.75rem;">${escapeMafutaHtml(r.text||'')} ${r.issues?r.issues.map(i=>'<span class="tag tag-red">'+i+'</span>').join(' '):''}</div>
-      </div>
-    `).join('');
-  }
-
-  document.getElementById('modalReportBtn').onclick=()=>{
-    closeModal();
-    document.getElementById('reportStation').value=id;
-    switchPage('report');
-    setTimeout(()=>document.getElementById('reportStation').scrollIntoView({behavior:'smooth'}),200);
+async function hydrateOverview(version){
+  const alive=()=>version===routeVersion;
+  let restReady=false;const pendingRest=[];
+  const fill=(name,html)=>{
+    if(!restReady){pendingRest.push(()=>fill(name,html));return;}
+    const el=document.querySelector(`[data-overview="${name}"]`);if(el&&alive())el.innerHTML=html;
   };
-  document.getElementById('modalReviewBtn').onclick=()=>{
-    closeModal();
-    document.getElementById('reviewStation').value=id;
-    switchPage('stations');
-    document.getElementById('reviewSection')?.scrollIntoView({behavior:'smooth'});
-  };
-  document.getElementById('modalSubBtn').onclick=()=>{
-    const sub=DB.subscriptions||[];
-    const idx=sub.findIndex(s=>s.stationId===id);
-    if(idx>=0){ sub.splice(idx,1); showToast('Unsubscribed from alerts.'); }
-    else{ sub.push({stationId:id,stationName:s.name,createdAt:new Date().toISOString()}); showToast('✅ Subscribed to price alerts!'); }
-    DB.subscriptions=sub; saveDB();
-  };
-
-  document.getElementById('stationModal').classList.add('show');
+  const summaryTask=summary().catch(error=>{
+    if(!alive())return;
+    showError(error);$('#connection').textContent='Unavailable';
+    fill('kpis',empty('Platform metrics are unavailable right now. Use Refresh data to try again.'));
+    fill('region-chart',empty('Regional averages are unavailable right now.'));
+  });
+  const mediaTask=api('/media').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const newsTask=api('/news').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const videosTask=api('/videos').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const advisoriesTask=api('/advisories').then(result=>({ok:true,items:result.items??[]})).catch(()=>({ok:false,items:[]}));
+  const insightsTask=api('/stations/insights');
+  await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+  if(!alive())return;
+  const rest=document.getElementById('homeRest');
+  if(rest)rest.replaceWith(...rest.content.childNodes);
+  restReady=true;
+  while(pendingRest.length)pendingRest.shift()();
+  fill('discovery',discoveryMarkup(state.discoveryPreferences));
+  mountFuelDiscovery();
+  insightsTask.then(data=>{
+    if(!alive())return;
+    fill('price-comparison',priceComparison(data.comparison));
+    fill('recent-updates',recentPriceUpdates(data.updates));
+    fill('distribution',stationDistribution(data.distribution));
+    const district=$('#homeSearch [name=district]');
+    if(district?.closest('label'))district.closest('label').outerHTML=districtSelectFromList(data.districts);
+  }).catch(()=>{
+    if(!alive())return;
+    fill('price-comparison',empty('Station price insights are unavailable right now. Try Refresh data.'));
+    fill('recent-updates',empty('Station update insights are unavailable right now. Try Refresh data.'));
+    fill('distribution',empty('Station distribution is unavailable right now. Try Refresh data.'));
+  });
+  summaryTask.then(()=>{
+    if(!alive()||!state.summary)return;
+    document.querySelectorAll('[data-hero-price]').forEach(el=>{el.innerHTML=fuelIndicator(el.dataset.heroPrice);});
+    const s=state.summary,regions=new Set(s.regions.map(r=>r.region)).size;
+    fill('kpis',`<div class="metrics">${publicMetric(s.verified_today,'Verified reports today','shield')}${publicMetric(s.stations-s.demo_stations,'Operational directory stations','pump')}${publicMetric(regions,'Regions with fresh prices','globe')}${publicMetric(s.resolved_tickets,'Resolved consumer cases','check')}</div><p class="data-note">${icon('info')}Metrics are actual platform records. ${s.demo_stations?`${s.demo_stations} demonstration directory entries are excluded from the operational station count.`:'Prices older than 48 hours are excluded from fresh-price insights.'}</p>`);
+    fill('region-chart',regionChart(s.regions));
+  });
+  mediaTask.then(result=>{
+    if(!alive())return;
+    const carousel=$('.photo-carousel');if(!carousel)return;
+    carousel.outerHTML=result.ok?photoCarousel(result.items):photoCarousel([], 'Featured photography is unavailable right now. Try Refresh data.');
+    renderCarousel();
+  });
+  Promise.all([newsTask,videosTask]).then(([news,videos])=>{
+    if(!alive())return;
+    fill('news',news.ok?homepageNews(news.items):empty('News is unavailable right now. Try Refresh data.'));
+    fill('videos',videos.ok?homepageVideos(videos.items):empty('Videos are unavailable right now. Try Refresh data.'));
+  });
+  advisoriesTask.then(result=>{
+    if(!alive())return;
+    fill('advisories',result.ok?advisoryGrid(result.items):empty('Advisories are unavailable right now. Try Refresh data.'));
+  });
+  await Promise.all([summaryTask,mediaTask,newsTask,videosTask,advisoriesTask,insightsTask.catch(()=>null)]);
 }
-function closeModal(){
-  document.getElementById('stationModal').classList.remove('show');
+function sectionHeading(kicker,title,text,href,label){return `<div class="section-heading"><div><span class="eyebrow">${esc(kicker)}</span><h2>${esc(title)}</h2><p>${esc(text)}</p></div>${href?`<a class="text-link" href="${href}">${esc(label)} ${icon('arrow')}</a>`:''}</div>`;}
+function serviceDirectory(){return `<div class="service-grid">${services.map((s,i)=>`<a class="service-card service-tone-${i%3}" href="${s.href}"><span class="service-icon">${icon(s.icon)}</span><span class="service-tag">${s.tag}</span><h3>${s.title}</h3><p>${s.description}</p><span class="service-arrow">${icon('arrow')}</span></a>`).join('')}</div>`;}
+function districtOptions(stations){return [['','All districts'],...[...new Set(stations.map(s=>s.district))].sort().map(d=>[d,d])];}
+function districtSelect(stations,selected=''){return select('District','district',districtOptions(stations),selected,false);}
+function districtSelectFromList(districts,selected=''){return select('District','district',[['','All districts'],...districts.map(d=>[d,d])],selected,false);}
+function publicMetric(value,label,name){return `<article class="metric public-metric"><span class="metric-icon">${icon(name)}</span><div><strong>${Number(value).toLocaleString('en-UG')}</strong><span class="label">${esc(label)}</span></div></article>`;}
+function fuelIndicator(fuel){const rows=state.summary.regions.filter(r=>r.fuel===fuel);const samples=rows.reduce((n,r)=>n+r.samples,0);return samples?Math.round(rows.reduce((n,r)=>n+r.average*r.samples,0)/samples).toLocaleString('en-UG'):'<span class="unavailable-price">Awaiting data</span>';}
+function regionChart(rows){if(!rows.length)return empty('No fresh operational prices yet. Accepted non-demo observations will appear here.');const max=Math.max(...rows.map(r=>r.average)),fuels=[...new Set(rows.map(r=>r.fuel))];return `<div class="region-chart" role="group" aria-label="Regional average published prices in UGX per litre"><div class="chart-legend">${fuels.map(f=>`<span class="legend-${esc(f)}">${esc(f.charAt(0).toUpperCase()+f.slice(1))}</span>`).join('')}</div>${rows.map(r=>`<div class="region-bar-row"><span>${esc(r.region)}<small>${esc(r.fuel)} · ${r.samples} samples</small></span><span class="region-bar-track" aria-hidden="true"><span class="region-bar ${r.fuel==='diesel'?'diesel':r.fuel==='kerosene'?'kerosene':''}" style="width:${r.average/max*100}%"></span></span><strong>${Number(r.average).toLocaleString('en-UG')}</strong></div>`).join('')}</div>`;}
+function priceComparison(rows){return rows.length?`<div class="comparison-list">${rows.map((r,i)=>`<div><span class="comparison-rank">${i+1}</span><div><strong>${esc(r.name)}</strong><small>${esc(r.district)} · ${esc(r.source)}</small></div><strong>${money(r.price)}</strong><button class="quiet small" data-action="station" data-id="${r.id}" aria-label="View ${esc(r.name)}">${icon('arrow')}</button></div>`).join('')}</div>`:empty('No fresh operational petrol prices are available for comparison. Demo prices are not ranked.');}
+function recentPriceUpdates(updates){return updates.length?`<div class="verified-update-feed">${updates.map(u=>`<article><span class="update-icon">${icon('check')}</span><div><strong>${esc(u.name)}</strong><p>${esc(u.fuel)} · ${money(u.price)} / litre</p><small>${esc(u.source)} · ${date(u.updated_at)}</small></div><button class="quiet small" data-action="station" data-id="${u.id}" aria-label="Inspect ${esc(u.name)} price update">${icon('arrow')}</button></article>`).join('')}</div>`:empty('No fresh verified operational updates yet. Sample and outdated prices are excluded.');}
+function stationDistribution(rows){if(!rows.length)return empty('No operational station distribution is available. Demonstration entries are not counted.');const max=Math.max(...rows.map(r=>r.count));return `<div class="distribution-chart">${rows.map(r=>`<div><span>${esc(r.region)}</span><span class="region-bar-track"><span class="region-bar" style="width:${r.count/max*100}%"></span></span><strong>${r.count}</strong></div>`).join('')}</div>`;}
+async function fuelDiscoveryView(){return `${heading('Find your next fuel stop.','Discover stations, compare source-labeled prices, and choose a stop that fits your journey.','MOBILITY / FUEL DISCOVERY')}${discoveryMarkup(state.discoveryPreferences)}<div class="discovery-followup"><span>${icon('info')}Distance is a straight-line estimate, not a road route. A recorded price does not confirm fuel stock.</span><div class="actions"><a href="#prices">Compare prices</a><a href="#trip">Plan trip cost</a><a href="#report">Report a price</a></div></div>`;}
+async function servicesView(){return `${heading('Every journey. A practical service.','Choose the service you need. Personal records and submissions require sign-in.','CITIZEN SERVICES')}${serviceDirectory()}<section class="card service-explainer"><h2>One citizen account, different journeys.</h2><p>Boda riders, truck drivers and private motorists use the same citizen permissions. Choose a transport type when submitting a case or your own fuel efficiency when planning a trip.</p><div class="actions"><a class="button primary" href="#complaints">Consumer cases ${icon('arrow')}</a><a class="button secondary" href="#trip">Plan a journey ${icon('route')}</a></div></section>`;}
+async function analyticsView(){const [caps,insights]=await Promise.all([api('/caps'),api('/stations/insights')]);return `${heading('A clearer view of the fuel market.','Operational price intelligence drawn from published platform records.','REPORTS & ANALYTICS')}<div class="metrics">${publicMetric(state.summary.verified_today,'Reports verified today','shield')}${publicMetric(state.summary.stations-state.summary.demo_stations,'Operational stations','pump')}${publicMetric(state.summary.active_tickets,'Active consumer cases','report')}${publicMetric(state.summary.resolved_tickets,'Resolved cases','check')}</div><div class="grid"><section class="card"><h2>Fresh regional averages</h2><p class="small">UGX / litre · Source-linked records · Demo and stale prices excluded.</p>${regionChart(state.summary.regions)}</section><section class="card"><h2>Lowest fresh petrol prices</h2>${priceComparison(insights.comparison)}</section></div><section class="card"><h2>Currently effective district directives</h2><p>Only administrator-published, source-linked directives within their effective period are shown. These records do not imply a nationwide legal price cap.</p>${capTable(caps.items)}</section>`;}
+function aboutView(){return `${heading('Information that moves Uganda.','An independent fuel-price transparency and citizen engagement platform.','ABOUT MAFUTAWATCH')}<div class="grid"><section class="card"><span class="feature-icon">${icon('pump')}</span><h2>Know what is behind the price.</h2><p>Every published price identifies its source and update time. Operator updates, independently confirmed observations and moderator decisions have distinct provenance.</p><p>Prices more than 48 hours old are labeled stale. Demonstration entries never contribute to fresh operational price analytics.</p><a class="text-link" href="#prices">Explore price information ${icon('arrow')}</a></section><section class="card"><span class="feature-icon">${icon('shield')}</span><h2>A record of your concern.</h2><p>Consumer cases keep evidence private to the submitter and authorized case officers. Replies, assignment and decisions form a trackable conversation.</p><p>The platform records a 24-hour response target. Actual response depends on the operating case team; submission is not a guarantee of enforcement.</p><a class="text-link" href="#complaints">Open a consumer case ${icon('arrow')}</a></section></div><section class="card"><h2>Independent by design. Clear about authority.</h2><p>MafutaWatch branding does not assert government ownership, ministry endorsement or a partnership with any station shown. Published source links let you inspect the original information. The platform is not a substitute for an authorized regulator or an emergency service.</p><a href="#privacy">Read our data-use notice →</a></section>`;}
+function contactView(){return `${heading('Find the right way to get help.','Use a tracked workflow for station concerns and case follow-up.','HELP & CONTACT')}<div class="grid"><section class="card"><span class="feature-icon">${icon('report')}</span><h2>A concern about a fuel station?</h2><p>Submit a consumer case, attach relevant evidence, and read replies from the operating case team in your account.</p><a class="button primary" href="#complaints">Open or track a case ${icon('arrow')}</a></section><section class="card"><span class="feature-icon">${icon('users')}</span><h2>Account or access assistance</h2><p>Account recovery and staff access are managed by the organization operating this deployment. No public support phone number or email address has been configured.</p><p class="small">We do not publish an invented contact or imply that a government support service is connected.</p><a class="text-link" href="#operator">Station access applications ${icon('arrow')}</a></section></div><section class="card"><h2>Before you submit</h2><p>Keep a receipt where available, note the station and incident date, and avoid including unrelated personal information in uploaded evidence. Reports and replies require a live connection.</p><div class="actions"><a href="#privacy">Privacy & data use</a><a href="#activity">My activity</a></div></section>`;}
+function creditsView(){return `${heading('A real place. A credited photograph.','Documentary images of Ugandan transport and the fuel sector.','PHOTOGRAPHY CREDITS')}<div class="grid"><article class="card credit-card"><img src="/assets/kampala-road.jpg" alt="Evening traffic on Kampala Road" width="1600" height="1067" loading="lazy"><h2>Evening traffic jam setting in on Kampala road 05</h2><p>Kyakwera · 20 February 2020 · Kampala, Uganda.</p><p>Original JPEG retained; responsive cropping and a separate gradient overlay are used in the hero. This photograph remains under CC BY-SA 4.0.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Evening_traffic_jam_setting_in_on_Kampala_road_05.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0 ↗</a></div></article><article class="card credit-card"><img src="/assets/kabale-station.jpg" alt="Agaba petrol station in Kabale town" width="1400" height="1050" loading="lazy"><h2>Agaba petrol station in Kabale town</h2><p>Owobusingye · 24 August 2025 · Kabale, Uganda.</p><p>Original JPEG retained, responsively cropped in the citizen-services feature. Depiction does not imply affiliation, a live price observation or endorsement.</p><div class="actions"><a href="https://commons.wikimedia.org/wiki/File:Agaba_petrol_station_in_Kabale_town.jpg" target="_blank" rel="noopener noreferrer">Original source ↗</a><a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0 ↗</a></div></article></div>`;}
+async function profileView(){
+  if(!state.user)return loginCard('Sign in to view your profile.');
+  let profile,preferences,subs,emailChange;try{const [p,pr,s,ec]=await Promise.all([api('/me/profile'),api('/me/preferences'),api('/me/subscriptions'),api('/me/email/status').catch(()=>null)]);profile=p;preferences=pr.preferences??{};state.preferences=preferences;preferences.notifications={priceChanges:true,reportUpdates:true,complaintUpdates:true,advisories:true,...preferences.notifications};subs=s.items??[];emailChange=ec;}catch(error){return `<div class="empty">Unable to load your profile. ${error.message}</div>`;}
+  const initials=(profile.displayName??'U').split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
+  const avatarImg=profile.avatarUrl?`<img src="${esc(profile.avatarUrl)}" alt="Profile picture" class="avatar">`:`<div class="avatar placeholder">${esc(initials)}</div>`;
+  let stationsHtml;
+  if(subs.length){stationsHtml=`<div class="card-head"><h2>Saved stations</h2><p class="small">Stations you follow for price-change alerts.</p></div>${subs.map(s=>`<div class="list-item"><div><strong>Station #${esc(s.station_id)}</strong><p class="small">Followed for price-change alerts</p></div><div class="actions"><button class="small" data-action="station" data-id="${s.station_id}">View details ${icon('arrow')}</button><button class="small danger" data-action="unsubscribe" data-id="${s.station_id}">Remove ${icon('close')}</button></div></div>`).join('')}<div class="actions"><a class="text-link" href="#stations">Browse stations ${icon('arrow')}</a></div>`;}else{stationsHtml=`${empty('No saved stations yet. Follow a station from the directory to track its price changes.')}<div class="actions"><a class="text-link" href="#stations">Browse stations ${icon('arrow')}</a></div>`;}
+  const del=await api('/me/deletion-request').catch(()=>({request:null}));
+  const request=del.request;
+  const active=request&&['pending','info_requested'].includes(request.status);
+  const delHtml=request?`<p><strong>Deletion request:</strong> ${badge(request.status.replaceAll('_',' '),request.status)} · submitted ${date(request.created_at)}${request.reviewed_at?` · reviewed ${date(request.reviewed_at)}`:''}</p><p class="small">Reason: ${esc(request.reason)}</p>${request.review_note?`<p class="small">Administrator note: ${esc(request.review_note)}</p>`:''}${request.user_response?`<p class="small">Your response: ${esc(request.user_response)}</p>`:''}${request.status==='approved'?`<p class="small">Approved. An authorized administrator runs the deletion procedure separately; accounts and evidence are never erased automatically. Investigation records, financial evidence and legally required data are retained under the approved retention policy.</p>`:''}${request.status==='rejected'?`<p class="small">Rejected. Your account remains active.</p>`:''}`:'';
+  return `${heading('My profile','Your personal details, preferences and account settings.','MY PROFILE')}<div class="grid"><section class="card profile-card"><div class="actions" style="justify-content:flex-start;gap:14px;margin-bottom:18px;">${avatarImg}<div><h2 style="margin:0 0 2px 0;">${esc(profile.displayName)}</h2><p class="small">${esc(profile.preferredName??'')}${profile.preferredName?' · ':''}${esc(profile.role)} · ${profile.identityVerified?badge('Verified identity','verified'):''}</p><p class="small">Member since ${date(profile.created_at)}</p></div></div><section class="card"><h2>Personal information</h2><form id="profileForm">${field('Display name','displayName',{value:profile.displayName??'',maxlength:80})}${field('Preferred name','preferredName',{value:profile.preferredName??'',maxlength:80,placeholder:'Optional'})}${field('Phone number','phone',{type:'tel',value:profile.phone??'',maxlength:15,placeholder:'e.g. +256700000000'})}${field('Preferred district','district',{value:profile.district??'',maxlength:100,placeholder:'e.g. Kampala'})}<div class="actions"><button class="primary" data-action="profile-save">Save changes</button><span id="profileSaveStatus" class="small"></span></div></form></section><section class="card"><h2>Profile picture</h2><div class="actions" style="flex-direction:column;gap:10px;align-items:flex-start;"><label>Upload photo (JPEG, PNG or WebP, max 2 MiB)<input type="file" id="avatarFile" accept="image/jpeg,image/png,image/webp"></label><img id="avatarPreview" src="" alt="Preview" style="max-width:160px;border-radius:50%;border:1px solid var(--line);margin-top:8px;display:none"><button class="primary" data-action="profile-avatar">Save photo</button><button${profile.avatarUrl?'':' hidden'} class="danger small" data-action="profile-avatar-remove">Remove photo</button><span id="avatarStatus" class="small"></span></div></section></section></div><section class="card"><h2>Password &amp; security</h2><form id="profilePasswordForm">${field('Current password','currentPassword',{type:'password',maxlength:128})}${field('New password (at least 12 characters)','newPassword',{type:'password',min:12,maxlength:128})}${formEnd('Change password')}<p class="small">Changing your password signs out all active sessions and revokes integration credentials.</p></form></section><section class="card"><h2>Fuel &amp; vehicle preferences</h2><p class="small">These personalize fuel discovery and trip-planning defaults for your account.</p><form id="preferencesForm">${select('Preferred fuel','fuelType',[['petrol','Petrol'],['diesel','Diesel'],['kerosene','Kerosene']],preferences.fuelType??'')}${select('Vehicle category','vehicleType',[['private','Private car'],['boda','Boda boda'],['taxi','Taxi'],['truck','Truck'],['other','Other']],preferences.vehicleType??'')}${field('Preferred district','preferredDistrict',{value:preferences.preferredDistrict??'',maxlength:100,placeholder:'e.g. Kampala'})}<div class="actions"><button class="primary" data-action="preferences-save">Save preferences</button><span id="prefSaveStatus" class="small"></span></div><details class="card"><summary>Notification settings</summary><p class="small">In-app alerts only. No SMS, email or push channels are configured.</p><label class="check"><input name="priceChanges" type="checkbox"${preferences.notifications&&preferences.notifications.priceChanges?' checked':''}> Price changes at followed stations</label><label class="check"><input name="reportUpdates" type="checkbox"${preferences.notifications&&preferences.notifications.reportUpdates?' checked':''}> Updates to your reports</label><label class="check"><input name="complaintUpdates" type="checkbox"${preferences.notifications&&preferences.notifications.complaintUpdates?' checked':''}> Complaint &amp; investigation progress</label><label class="check"><input name="advisories" type="checkbox"${preferences.notifications&&preferences.notifications.advisories?' checked':''}> Published platform advisories</label><div class="actions"><button class="primary" data-action="preferences-save">Save notification settings</button></div></details><details class="card"><summary>Privacy &amp; visibility</summary><label class="check"><input name="publicDisplayName" type="checkbox"${preferences.privacy&&preferences.privacy.publicDisplayName?' checked':''}> Show my display name publicly</label><p class="small">Your email, phone and password are never shown publicly. When this is off, station reviews and community messages show you as Anonymous Member.</p></details></form></section>${stationsHtml}<section class="card"><h2>Account management</h2>${delHtml}${request?.status==='info_requested'?`<form id="deletionResponseForm">${textarea('Additional information','response',{min:10,max:2000})}${formEnd('Send additional information')}</form>`:''}${active?`<p class="small">Your request is in the administrator review queue. You will be notified when its status changes.</p>`:`<form id="deletionForm">${field('Reason','reason',{min:5,maxlength:1000})}${field('Current password','delPassword',{type:'password',maxlength:128})}<div class="actions"><button class="danger" data-action="deletion-request">Request account deletion</button><span id="delStatus" class="small"></span></div></form>`}<p class="small">Account deletion requires administrator review. Records required by law or for active investigations are retained according to policy.</p></section>${roleSettingsHtml(emailChange)}</div>`;}
+function avatarPreview(input){const preview=$('#avatarPreview');if(input.files&&input.files[0]){preview.src=URL.createObjectURL(input.files[0]);preview.style.display='block';}else{preview.style.display='none';}}
+function roleSettingsHtml(emailChange){
+  const role=state.user?.role;if(role==='citizen')return'';
+  const settings=state.preferences?.roleSettings??{};
+  const check=(key,label,defaultOn=false)=>`<label class="check"><input name="${key}" type="checkbox"${(settings[key]??defaultOn)?' checked':''}> ${label}</label>`;
+  const card=(title,controls,description)=>`<section class="card"><h2>${title}</h2><form id="roleSettingsForm">${controls}<p class="small">${description}</p><div class="actions"><button class="primary" data-action="role-settings-save">Save settings</button><span id="roleSettingsStatus" class="small" role="status"></span></div></form></section>`;
+  const emailRow=`<div class="actions" style="margin-top:10px;"><button class="primary" data-action="profile-email-save">Save email</button><span id="emailSaveStatus" class="small"></span></div>`;
+  const common=emailChange?.enabled
+    ?`<section class="card"><h2>Email address</h2><p class="small">Changing your email requires approval from both mailboxes: one single-use link is sent to your current address and another to the new one. Your address does not change until both are confirmed, each link expires in 24 hours, and confirming the second link signs out every session.</p><form id="profileEmailForm">${field('New email address','email',{type:'email',maxlength:254})}${field('Current password','emailPassword',{type:'password',maxlength:128})}${emailRow}</form></section>`
+    :`<section class="card"><h2>Email address</h2><p class="banner warning" role="status">Email changes are unavailable on this deployment: an email delivery provider is not configured, so no verification link can be sent. Your address cannot be changed from the app right now. Contact the operator of this deployment to update it.</p></section>`;
+  if(role==='admin')return common+card('Administrator settings',check('securityAlerts','Security alerts',true)+check('dashboardPreferences','Remember my selected operations tab'),'Security alerts cover account changes, password resets and staff provisioning by other administrators. Essential notices to the affected account are always delivered. Remembering restores your selected operations tab after sign-in.');
+  if(role==='inspector')return common+card('Inspector settings',check('assignedCaseNotifications','Assigned-case notifications',true)+check('inspectionAlerts','Inspection alerts',true)+check('workspacePreferences','Remember my case queue filters'),'Receive alerts when another officer assigns you a case or a new consumer case arrives. Remembering restores your case status and assignment filters after sign-in.');
+  if(role==='analyst')return common+card('Analyst settings',check('savedChartFilters','Remember my applied chart fuel view'),'Restore your last applied intelligence fuel view after sign-in.');
+  if(role==='operator')return common+card('Station operator settings',check('priceUpdateNotifications','Fuel-price update notifications',true)+check('assignedStationDashboard','Remember my selected station'),'Receive price changes published by others at your assigned stations. Remembering restores your station selection after sign-in; it does not grant station access.');
+  return '';
 }
-document.addEventListener('click',e=>{
-  const overlay=document.getElementById('stationModal');
-  if(e.target===overlay) closeModal();
-});
+function capTable(items){return items.length?`<div class="table-wrap"><table><thead><tr><th>District</th><th>Fuel</th><th>Maximum UGX/L</th><th>Expires (EAT)</th><th>Source</th></tr></thead><tbody>${items.map(c=>`<tr><td>${esc(c.district)}</td><td>${esc(c.fuel)}</td><td>${money(c.price)}</td><td>${date(c.effective_until)}</td><td><a href="${esc(c.source_url)}" target="_blank" rel="noopener noreferrer">View directive ↗</a></td></tr>`).join('')}</tbody></table></div>`:empty('No currently effective directives have been published.');}
+async function stationsView(){
+  const query=new URLSearchParams({...state.filters,limit:50,offset:state.offset});
+  if(!state.filters.district)query.delete('district');
+  if(state.position){query.set('lat',state.position.latitude);query.set('lng',state.position.longitude);}
+  const result=await api(`/stations?${query}`);
+  state.visibleStations=result.items;
+  const rangeLabel=result.items.length?`${state.offset+1}–${state.offset+result.items.length}`:'0 matching stations';
+  return `${heading('Find your next fuel stop.','Search the directory, compare a fuel type, and check when a price was last confirmed.','DIRECTORY / COMPARE PRICES')}
+    <form id="stationFilter" class="filters">${field('Search station, area or district','q',{required:false,value:state.filters.q,placeholder:'e.g. Ntinda or Jinja'})}${field('District (exact name, optional)','district',{required:false,value:state.filters.district})}${select('Fuel','fuel',fuelOptions,state.filters.fuel)}${select('Sort by','sort',[['price','Lowest fresh price'],['name','Station name']],state.filters.sort)}${select('GPS radius','radius',[['3','Within 3 km'],['10','Within 10 km'],['25','Within 25 km'],['100','Within 100 km']],state.filters.radius)}<button type="submit" class="primary">Search</button><button type="button" data-action="locate">${state.position?'Update location':'Use my location'}</button>${state.position?'<button type="button" data-action="clear-location">Clear GPS</button>':''}</form>
+    <div class="actions"><button data-action="price-map" aria-controls="stationMap" aria-expanded="false">Map View</button></div><div id="stationMap" class="map" aria-label="Station locations" hidden></div>
+    <section class="card"><div class="card-head"><h2>Station directory</h2><span class="small">${rangeLabel} · ${esc(state.filters.fuel)} prices / litre</span></div>${result.items.length?`<div class="table-wrap"><table><thead><tr><th>Station</th><th>District</th><th>Price (UGX/L)</th><th>Source & freshness</th><th>Details</th></tr></thead><tbody>${result.items.map(s=>{const p=s.prices.find(p=>p.fuel===state.filters.fuel);return `<tr><td><strong>${esc(s.name)}</strong><br><small>${esc(s.operator_name)} · ${esc(s.area)}</small>${s.demo?`<br>${badge('Demo directory entry','demo')}`:''}</td><td>${esc(s.district)}</td><td class="price">${money(p?.price)}</td><td>${p?`${badge(p.source)} ${p.stale?badge('Stale · >48h','stale'):''}<br><small>${date(p.updated_at)}</small>`:'No observation'}</td><td><button class="small" data-action="station" data-id="${s.id}">View station</button></td></tr>`;}).join('')}</tbody></table></div>`:empty('No matching stations. Try another area or clear your GPS filter.')}${pagination(state.offset,result.items.length,'stations-page')}</section>`;
+}
+function pagination(offset,length,action){return `<div class="pagination"><button class="small" data-action="${action}" data-offset="${Math.max(0,offset-50)}" ${offset===0?'disabled':''}>← Previous</button><span>Page ${Math.floor(offset/50)+1}</span><button class="small" data-action="${action}" data-offset="${offset+50}" ${length<50?'disabled':''}>Next →</button></div>`;}
+function initMap(){
+  const el=$('#stationMap');if(!el)return;const L=window.L;
+  if(map){map.invalidateSize();return;}
+  if(!L){el.innerHTML=empty('Map unavailable. All stations remain accessible in the directory below.');return;}
+  map=L.map(el).setView([0.6,32.5],7);
+  const tiles=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,referrerPolicy:'strict-origin-when-cross-origin',attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'});
+  tiles.on('tileerror',()=>{if(!el.querySelector('.map-feedback')){const note=document.createElement('div');note.className='map-feedback';note.setAttribute('role','status');note.textContent='Map tiles unavailable. Station locations and linked directory results are still available.';el.append(note);}});
+  tiles.addTo(map);
+  const points=[];
+  for(const s of state.visibleStations){const marker=L.circleMarker([s.latitude,s.longitude],{radius:7,color:s.demo?'#a07418':'#2f703c',fillOpacity:.8}).addTo(map);const content=document.createElement('div');const title=document.createElement('strong');title.textContent=s.name;const button=document.createElement('button');button.textContent='View station';button.dataset.action='station';button.dataset.id=s.id;content.append(title,document.createElement('br'),button);marker.bindPopup(content);points.push([s.latitude,s.longitude]);}
+  if(state.position)L.circleMarker([state.position.latitude,state.position.longitude],{radius:8,color:'#245fc5'}).addTo(map);
+  if(points.length)map.fitBounds(points,{padding:[24,24],maxZoom:14});
+}
+async function stationDetail(id){
+  const s=await api(`/stations/${id}`);state.currentStation=s;
+  let subscribed=false;if(state.user){const subs=await api('/me/subscriptions');subscribed=subs.items.some(x=>x.station_id===s.id);}
+  $('#detailTitle').textContent=s.name;
+  $('#detailContent').innerHTML=`<p>${esc(s.operator_name)} · ${esc(s.area)}, ${esc(s.district)}</p>${s.demo?'<div class="banner warning">This directory entry is a demonstration fixture. Confirm the station and prices independently.</div>':''}<div class="metrics">${s.prices.map(p=>`<div class="metric"><strong class="price">${money(p.price)}</strong><span class="label">${esc(p.fuel)} / litre</span><br>${badge(p.source)} ${p.stale?badge('Stale','stale'):''}<br><small>${date(p.updated_at)}</small></div>`).join('')||empty('No published prices yet.')}</div>
+    <div class="actions"><button class="primary" data-action="report-station" data-id="${s.id}">Report a price</button><button data-action="subscribe" data-id="${s.id}" data-enabled="${!subscribed}">${subscribed?'Unfollow price changes':'Follow price changes'}</button><a class="button" href="https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}" target="_blank" rel="noopener noreferrer">Driving directions ↗</a></div>
+    <h3>Recent accepted price history</h3>${s.history.length?`<div class="table-wrap"><table><thead><tr><th>Fuel</th><th>Price</th><th>Source</th><th>Updated</th></tr></thead><tbody>${s.history.slice(0,12).map(p=>`<tr><td>${esc(p.fuel)}</td><td>${money(p.price)}</td><td>${esc(p.source)}</td><td>${date(p.created_at)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted price history yet.')}
+    <h3>Station reviews</h3>${s.reviews.map(r=>`<div class="list-item"><strong>${esc(r.display_name)} · ${r.rating}/5</strong><p>${esc(r.body)}</p><small>${date(r.created_at)}</small></div>`).join('')||empty('No reviews yet.')}
+    <details><summary>Write or update your review</summary>${state.user?`<form id="reviewForm" data-id="${s.id}">${select('Rating','rating',[[5,'5 — Excellent'],[4,'4 — Good'],[3,'3 — Average'],[2,'2 — Poor'],[1,'1 — Very poor']])}${textarea('Your experience','body',{max:2000})}${formEnd('Save review')}</form>`:'<button data-action="auth">Sign in to write a review</button>'}</details>`;
+  if(!$('#detailDialog').open)$('#detailDialog').showModal();
+}
+async function reportView(){
+  if(!state.user)return loginCard('Sign in before entering an observation so it can be tracked to your account.');
+  await loadDirectory();return `${heading('Share the price you see.','Report the displayed pump price. You can follow its review status in My activity.','CITIZEN / PRICE OBSERVATIONS')}<div class="grid"><section class="card"><form id="reportForm" data-key="${crypto.randomUUID()}">${stationSelect()}<div class="form-row">${fuelField()}${priceField()}</div><label>Optional observation note<textarea name="note" maxlength="500" placeholder="Pump label, time or useful context"></textarea></label><div class="actions"><button type="button" data-action="report-gps">Attach GPS location (optional)</button><span id="gpsStatus" class="small">Location not shared</span></div>${formEnd('Submit for verification')}</form></section><aside class="card soft"><h2>Useful evidence. Responsible publishing.</h2><p>Each observation is tied to your account and checked against accepted prices and current source-linked directives.</p><p>Unusual prices go to a case officer. Automatic consensus needs three independently identity-verified citizens in a 15-minute window. Creating accounts or repeating reports does not establish independence.</p><p>GPS coordinates are self-reported supporting context, not proof that a price is correct.</p><a href="#activity">Track your contributions →</a></aside></div>`;
+}
+function loginCard(text){return `${heading('Your account, your records.',text)}<section class="card">${empty('Sign in to access this workspace.')}<button class="primary" data-action="auth">Sign in or create an account</button></section>`;}
+async function complaintsView(){
+  if(!state.user)return loginCard('Consumer cases and evidence are private to you and authorized case officers.');
+  await loadDirectory();const tickets=await api('/tickets?limit=50');
+  return `${heading(isStaff()?'Consumer case queue':'Consumer complaints','Describe what happened, attach evidence, and follow a documented response.','ACCOUNTABILITY / CASE MANAGEMENT')}
+    <div class="banner info">The platform tracks a 24-hour response target and overdue cases. Actual response depends on the operating case team. Updates are delivered here in the app.</div>
+    <details class="card"><summary>+ Open a consumer case</summary><form id="complaintForm" data-key="${crypto.randomUUID()}">${stationSelect()}<div class="form-row">${select('Issue category','category',[['tampering','Pump or meter tampering'],['adulterated','Suspected adulterated fuel'],['overpricing','Pricing concern'],['refusal','Refusal to comply with a directive'],['quality','Fuel quality'],['other','Other consumer concern']])}${select('Transport type','vehicleType',[['boda','Boda boda'],['truck','Truck'],['private','Private vehicle'],['other','Other']])}</div>${field('Date of incident','incidentDate',{type:'date',value:new Date().toISOString().slice(0,10),max:new Date().toISOString().slice(0,10)})}${textarea('What happened?','description',{min:10,max:5000})}${evidenceInput()}${formEnd('Create tracked case')}</form></details><section><div class="card-head"><h2>${isStaff()?'Cases available to your team':'Your cases'}</h2><span class="small">${tickets.items.length} on this page</span></div>${ticketCards(tickets.items)}</section>`;
+}
+function sla(ticket){if(['resolved','closed'].includes(ticket.status))return `Resolved ${date(ticket.resolved_at)}`;const hours=(new Date(ticket.due_at)-Date.now())/3600000;return hours<0?`${Math.abs(hours).toFixed(1)}h overdue`:`${hours.toFixed(1)}h to response target`;}
+function ticketCards(tickets){return tickets.length?tickets.map(t=>`<article class="ticket-card ${t.overdue?'overdue':''}"><div class="item-header"><div><span class="reference">${esc(t.reference)}</span><h3>${esc(t.station_name||'Consumer case')}</h3></div>${badge(t.status)}</div><p>${esc(t.description.slice(0,220))}</p><div class="actions"><span class="small">${esc(sla(t))} · ${esc(t.assignee||'Awaiting assignment')}</span><button class="small" data-action="ticket" data-id="${t.id}">Open case →</button></div></article>`).join(''):empty('No cases found. New cases will appear here.');}
+async function ticketDetail(id,{refresh=false}={}){
+  const ticket=await api(`/tickets/${id}`);
+  let officers=[];if(isStaff())officers=(await api('/admin/officers')).items;
+  // A delayed save response must not reopen a case the user has already dismissed.
+  if(refresh&&(!$('#detailDialog').open||state.ticket?.id!==id))return;
+  state.ticket=ticket;
+  $('#detailTitle').textContent=ticket.reference;
+  const next={open:['investigating'],investigating:['dispatched','resolved'],dispatched:['resolved'],resolved:['closed'],closed:[]};
+  $('#detailContent').innerHTML=`<div class="actions">${badge(ticket.status)}<span class="small">${esc(sla(ticket))}</span></div><p class="notice-text">${esc(ticket.description)}</p><p class="small">Incident: ${new Date(ticket.incident_date).toLocaleDateString('en-UG',{timeZone:'Africa/Kampala'})} · ${esc(ticket.category)} · ${esc(ticket.vehicle_type)} · Created ${date(ticket.created_at)}</p>
+    <h3>Private evidence</h3><div class="evidence-links">${ticket.attachments.map(a=>`<a href="/api/v1/attachments/${a.id}">${esc(a.name)} (${Math.ceil(a.size/1024)} KB) ↓</a>`).join('')||'<span class="small">No evidence attached.</span>'}</div>
+    ${ticket.user_id===state.user.id&&!['resolved','closed'].includes(ticket.status)?`<details><summary>Attach additional evidence</summary><form id="ticketEvidence" data-id="${ticket.id}">${evidenceInput()}${formEnd('Upload evidence')}</form></details>`:''}
+    <h3>Case conversation</h3><div class="chat-box">${ticket.messages.map(m=>`<article class="message ${['admin','inspector'].includes(m.role)?'official':''}"><strong>${esc(m.display_name)} · ${['admin','inspector'].includes(m.role)?'Case officer':'Citizen'}</strong><p>${esc(m.body)}</p><small>${date(m.created_at)}</small></article>`).join('')||empty('No replies yet.')}</div>
+    ${!['resolved','closed'].includes(ticket.status)?`<form class="messages-form" id="ticketMessage" data-id="${ticket.id}">${textarea('Reply to this case','body')}${formEnd('Send reply')}</form>`:''}
+    ${isStaff()&&next[ticket.status].length?`<details open><summary>Case officer action</summary><form id="ticketAction" data-id="${ticket.id}" data-version="${ticket.version}">${select('Next status','status',[[ticket.status,`Keep ${ticket.status} (assignment only)`],...next[ticket.status].map(s=>[s,s])])}${select('Assigned officer','assignedTo',officers.map(o=>[o.id,o.display_name]),ticket.assigned_to||state.user.id)}${textarea('Action taken / reason (shared with citizen)','reason',{min:5,max:1000})}${formEnd('Save case decision')}</form></details>`:''}`;
+  if(!$('#detailDialog').open)$('#detailDialog').showModal();
+}
+async function activityView(){
+  if(!state.user)return loginCard('Sign in to track your observations, cases and price-change notifications.');
+  const [reports,notifications,tickets]=await Promise.all([api(`/me/reports?limit=50&offset=${state.activityOffset}`),api('/me/notifications'),api('/tickets?limit=50')]);state.notifications=notifications.items;
+  updateNotificationBadge();
+  return `${heading(state.user.role==='citizen'?'Citizen Dashboard':'Your contributions. In one place.','Track decisions, case updates and the stations you follow.','ACCOUNT / MY ACTIVITY')}${state.user.role==='citizen'?'<p class="workspace-access-request"><a href="#operator">Station Operator Access Request →</a><span class="small">Station permissions require approval; your account remains a citizen until approved.</span></p>':''}${citizenExperience()}<div class="metrics">${metric(reports.items.length,'Reports on this page')}${metric(notifications.items.filter(n=>!n.read_at).length,'Unread notifications')}${metric(tickets.items.filter(t=>t.user_id===state.user.id).length,'Your cases on this page')}${metric(state.user.identity_verified?'Verified':'Not verified','Independent identity status')}</div><div class="grid"><section class="card"><div class="card-head"><h2>Price observations</h2><button class="small" data-action="refresh">Refresh status</button></div>${reportTable(reports.items)}${pagination(state.activityOffset,reports.items.length,'activity-page')}</section><section class="card"><div class="card-head"><h2>Notifications</h2><button class="small" data-action="read-notifications">Mark displayed read</button></div>${notifications.items.map(n=>`<div class="list-item">${n.read_at?'':badge('New')}<p>${esc(n.message)}</p><small>${date(n.created_at)}</small></div>`).join('')||empty('No notifications. Follow a station to receive price changes.')}</section></div><details class="card"><summary>Change your password</summary><form id="passwordForm">${field('Current password','currentPassword',{type:'password',maxlength:128})}${field('New password (at least 12 characters)','newPassword',{type:'password',min:12,maxlength:128})}${formEnd('Change password and sign out all sessions')}</form></details>`;
+}
+function citizenExperience(){if(state.user?.role!=='citizen')return '';return `<section class="citizen-experience card"><div><span class="eyebrow">YOUR JOURNEY</span><h2>One account. A workspace that fits.</h2><p>Choose useful starting defaults. This changes your experience, not your citizen permissions.</p></div><div class="experience-options" aria-label="Journey preferences">${[['private','Private motorist','route'],['boda','Boda rider','bike'],['truck','Truck driver','truck']].map(([mode,label,name])=>`<button data-action="citizen-mode" data-mode="${mode}" aria-pressed="${(state.citizenMode||'private')===mode}">${icon(name)}${label}</button>`).join('')}</div></section><nav class="citizen-quicklinks" aria-label="Journey shortcuts"><a href="#stations">${icon('pin')}Nearby fuel discovery</a><a href="#prices">${icon('pump')}Compare published prices</a><a href="#trip">${icon('route')}Plan fuel budget</a><a href="#complaints">${icon('shield')}Your complaints & cases</a><a href="#profile">${icon('user')}Your profile</a></nav>`;}
+function reportTable(reports,moderate=false){return reports.length?`<div class="table-wrap"><table><thead><tr><th>Station / date</th><th>Observation</th><th>Status / reason</th>${moderate?'<th>Decision</th>':''}</tr></thead><tbody>${reports.map(r=>`<tr><td><strong>${esc(r.station_name)}</strong><br><small>${date(r.created_at)}</small></td><td>${esc(r.fuel)}<br><strong>${money(r.price)}</strong></td><td>${badge(r.status)}<br><small>${esc(r.decision_reason||r.note||'Awaiting independent confirmation or officer review')}</small></td>${moderate?`<td><button class="small" data-action="review-report" data-id="${r.id}" data-status="verified">Verify</button><button class="small danger" data-action="review-report" data-id="${r.id}" data-status="rejected">Reject</button></td>`:''}</tr>`).join('')}</tbody></table></div>`:empty('No price observations to show.');}
+async function operatorView(){
+  if(!state.user)return `${heading('Station Operator Access Request','Start with a citizen account, then submit a station application and supporting license documents.','STATION ACCESS')}<section class="card"><p>Registration does not make you an operator. An administrator reviews your documents before granting access to the named station. After sign-in, use the Station Operator Access Request link in your dashboard.</p><div class="actions"><button class="primary" data-action="auth">Sign In</button><button data-action="register">Citizen Registration</button></div></section>`;
+  if(!['citizen','operator','admin'].includes(state.user.role))return `${heading('Station access is role-specific.','Your current staff account has no station-operator assignment.','WORKSPACE / ACCESS')}<section class="card"><p>Price publication and station integrations require an approved operator account or administrator permission.</p><a class="button primary" href="#admin">Return to your authorized workspace ${icon('arrow')}</a></section>`;
+  await loadDirectory();const applications=await api('/applications?limit=50');
+  const authorized=['operator','admin'].includes(state.user.role);
+  let workspace='';
+  if(authorized){const [assigned,reports,tokens,caps]=await Promise.all([api('/operator/stations'),api('/operator/reports'),api('/tokens'),api('/caps')]);state.assigned=assigned.items;
+    const current=assigned.items.find(s=>s.id===state.operatorStationId)||assigned.items[0];
+    const currentPrice=current?.prices.find(p=>p.fuel==='petrol');
+    const districts=new Set(assigned.items.map(s=>s.district));
+    workspace=`<div class="metrics">${metric(assigned.items.length,'Assigned active stations')}${metric(reports.items.length,'Recent station observations')}${metric(tokens.items.filter(t=>!t.revoked_at&&new Date(t.expires_at)>new Date()).length,'Active integration credentials')}${metric(applications.items.filter(a=>a.status==='pending').length,'Pending applications')}</div>
+      <div class="grid operator-primary"><section class="card"><h2>Publish a pump price</h2><p class="small">Choose an assigned station. Your update is audited and subscribers receive an in-app notification.</p><form id="operatorPrice">${stationSelect(assigned.items,current?.id)}<div class="form-row">${fuelField()}${priceField()}</div><div id="currentPrice" class="banner info">${currentPrice?`Current petrol: ${money(currentPrice.price)} · ${esc(currentPrice.source)} · ${date(currentPrice.updated_at)}`:'No published petrol price for this station.'}</div>${formEnd('Publish official operator price')}</form></section><section class="card" id="operatorStationOverview">${operatorProfile(current)}</section></div>
+      <div class="grid"><section class="card"><h2>Community observations for your stations</h2>${reportTable(reports.items)}</section><section class="card"><h2>Effective sourced directives</h2><p class="small">Published directives for the districts of your assigned stations. Inspect the original source and effective dates.</p>${capTable(caps.items.filter(c=>districts.has(c.district)))}</section></div>
+      <section class="card"><h2>Station integration credentials</h2><p class="small">Credentials can only publish prices for their assigned station and expire after 90 days. Secrets are displayed once.</p><form id="tokenForm"><div class="form-row">${stationSelect(assigned.items)}${field('Credential name','name',{min:3,maxlength:80})}</div>${formEnd('Generate scoped credential')}</form><div id="tokenOnce"></div><div class="table-wrap"><table><thead><tr><th>Name / prefix</th><th>Station</th><th>Expiry</th><th>Action</th></tr></thead><tbody>${tokens.items.map(t=>`<tr><td>${esc(t.name)}<br><code>${esc(t.prefix)}…</code></td><td>#${t.station_id}</td><td>${date(t.expires_at)}</td><td>${t.revoked_at?badge('Revoked','closed'):`<button class="small danger" data-action="revoke-token" data-id="${t.id}">Revoke</button>`}</td></tr>`).join('')}</tbody></table></div></section>`;
+  }
+  return `${heading(authorized?'Assigned Station Workspace':'Station Operator Access Request','Access is limited to approved station assignments.','OPERATORS / STATION WORKSPACE')}${workspace}<section class="card"><h2>Station not listed?</h2><a class="button primary" href="#station-requests">Register a New Station</a><p class="small">Citizens can propose an unlisted station for verification. Documents and contact details remain private. A request does not publish a station or grant access.</p></section><details class="card" ${authorized?'':'open'}><summary>Request access to a station</summary><form id="applicationForm" data-key="${crypto.randomUUID()}">${stationSelect()}${field('Trading / operating license reference','licenseReference',{min:3,maxlength:200})}${applicationEvidenceInput()}${formEnd('Submit access application')}</form></details><section class="card"><h2>Your access applications</h2>${applicationCards(applications.items.filter(a=>a.user_id===state.user.id))}</section>`;
+}
+function stationDuplicateLinks(items){return items.length?`<div class="banner warning"><strong>Possible duplicate stations</strong><p>Check these stations first. If yours is listed, request access to that existing station instead.</p><ul>${items.map(s=>`<li>${esc(s.name)} · ${esc(s.district)} (#${s.id})${s.demo?' · demo':''}${s.active?'':' · inactive'}</li>`).join('')}</ul><a href="#operator">Request access to an existing station →</a></div>`:empty('No possible directory duplicates currently found. Administrator verification is still required.');}
+function stationRequestCards(items,review=false){return items.map(r=>{
+  const pending=r.status==='pending',hasDocs=r.attachments.length>0;
+  return `<article class="card station-request" data-request-id="${r.id}"><div class="card-head"><h2>${esc(r.station_name)}</h2>${badge(pending?(hasDocs?'Pending verification':'Awaiting documents'):r.status,pending?'pending':r.status)}</div>
+    <p>${esc(r.operator_name)} · ${esc(r.area)}, ${esc(r.district)} · ${esc(r.region)}</p><p class="small">Coordinates: ${esc(r.latitude)}, ${esc(r.longitude)} · Licence reference: ${esc(r.license_reference)}</p>
+    <p class="small">Applicant contact: ${esc(r.contact_name)} · ${esc(r.contact_phone)} · ${esc(r.contact_email)}</p><p class="small">Submitted ${date(r.created_at)}${r.reviewed_at?` · Reviewed ${date(r.reviewed_at)}`:''}</p>
+    ${r.decision_reason?`<p>Decision reason: ${esc(r.decision_reason)}</p>`:''}${r.station_id?`<p>Verified station #${r.station_id}. Sign in again to open your Assigned Station Workspace.</p>`:''}
+    <h3>Private supporting documents</h3><div class="evidence-links">${r.attachments.map(f=>`<a href="/api/v1/attachments/${f.id}">${esc(f.name)} ↓</a>`).join('')||'No documents submitted. Approval is blocked.'}</div>
+    ${pending?stationDuplicateLinks(r.duplicates):''}
+    ${pending&&!review?`<details><summary>Upload new-station documents</summary><form class="stationRequestEvidence" data-id="${r.id}">${applicationEvidenceInput()}${formEnd('Upload station documents')}</form></details>`:''}
+    ${pending&&review?`<form class="stationRequestReview" data-id="${r.id}"><p>Verify the licence, site, applicant authority and documents before approval. Any listed duplicate must be resolved by associating an existing verified station. Approval ends all applicant sessions.</p>
+      ${select('Verified station association','stationId',[['','Create verified station (blocked if duplicates exist)'],...r.duplicates.filter(s=>s.active&&!s.demo).map(s=>[s.id,`${s.name} (#${s.id})`])],'',false)}
+      <label>Decision<select name="status" aria-label="Decision" required><option value="">Choose a decision</option><option value="approved" ${hasDocs?'':'disabled'}>Approve</option><option value="rejected">Reject</option></select></label>
+      ${textarea('Recorded review reason','reason',{min:10,max:1000})}${formEnd('Record new station decision')}</form>`:''}</article>`;
+}).join('')||empty('No new station requests.');}
+async function stationRequestView(){
+  if(!state.user)return loginCard('Sign in with your citizen account to propose an unlisted fuel station.');
+  const requests=await api(`/station-requests?limit=50&offset=${state.stationRequestOffset||0}`);
+  return `${heading('Register a New Station','Proposals stay private and pending until an administrator verifies and approves them.','STATION ONBOARDING')}
+    <section class="card"><a href="#operator">Station already listed? Request access instead →</a><p>Licence evidence is required before approval. Contact information and documents are visible only to you and authorized administrators.</p>
+    ${state.user.role==='citizen'?`<form id="stationRequestForm" data-key="${crypto.randomUUID()}">${field('Proposed station name','stationName')}${field('Operator / brand','operatorName',{maxlength:150})}
+      <div class="form-row">${field('Station district','district',{maxlength:100})}${field('Station area','area',{maxlength:100})}</div>
+      ${select('Station region','region',['Central','Eastern','Northern','Western'].map(v=>[v,v]))}
+      <div class="form-row">${field('Station latitude','latitude',{type:'number',min:-1.6,max:4.3,step:0.000001})}${field('Station longitude','longitude',{type:'number',min:29.5,max:35.1,step:0.000001})}</div>
+      <button type="button" data-action="station-request-duplicates">Check for existing stations</button><div id="stationRequestDuplicates" aria-live="polite"></div>
+      ${field('Applicant contact name','contactName',{value:state.user.display_name,maxlength:80})}${field('Applicant phone (international format)','contactPhone',{type:'tel',maxlength:16,placeholder:'+256700000000'})}${field('Applicant contact email','contactEmail',{type:'email',value:state.user.email,maxlength:254})}
+      ${field('New station licence reference','licenseReference')}${applicationEvidenceInput()}${formEnd('Submit new station for verification')}</form>`:'<p>Only citizen accounts submit new registration requests. Your saved requests remain accessible below.</p>'}</section>
+    <section id="stationRequests"><h2>Your new station requests</h2>${stationRequestCards(requests.items)}${pagination(state.stationRequestOffset||0,requests.items.length,'station-request-page')}</section>`;
+}
+function operatorProfile(s){if(!s)return empty('No active station is assigned. Request access below to begin the approval workflow.');return `<div class="card-head"><h2>${isAdmin()?'Accessible station profile':'Assigned station profile'}</h2>${icon('building')}</div><h3>${esc(s.name)}</h3><p class="small">${esc(s.operator_name)} · ${esc(s.area)}, ${esc(s.district)} · ${esc(s.region)} region</p>${s.demo?badge('Demonstration entry','demo'):badge(isAdmin()?'Administrator station access':'Approved operator assignment')}<div class="operator-price-grid">${s.prices.map(p=>`<div><small>${esc(p.fuel)} / litre</small><strong>${money(p.price)}</strong><span>${esc(p.source)}${p.stale?' · Stale':''}</span><small>${date(p.updated_at)}</small></div>`).join('')||empty('No prices published for this station yet.')}</div><p class="small">Coordinates: ${Number(s.latitude).toFixed(4)}, ${Number(s.longitude).toFixed(4)}. A published price does not confirm fuel stock.</p><div class="actions"><button class="secondary" data-action="station" data-id="${s.id}">View price history & profile ${icon('arrow')}</button><button class="quiet" data-action="station-map" data-id="${s.id}">${icon('pin')}Locate on map</button></div>`;}
+function applicationCards(applications,review=false){return applications.length?applications.map(a=>{
+  const hasDocs=a.attachments&&a.attachments.length;
+  const isPending=a.status==='pending';
+  const statusBadge=isPending?badge(hasDocs?'Pending review':'Awaiting documents',hasDocs?'pending-review':'awaiting-documents'):badge(a.status);
+  const statusLine=isPending?hasDocs?'License documents submitted. Awaiting administrator review.':'License evidence is required before approval can be granted. Upload your documents below.':`${esc(a.decision_reason||'')}`;
+  return `<article class="list-item"><div class="item-header"><h3>${esc(a.station_name)}</h3>${statusBadge}</div><p>${esc(a.display_name)} · License reference: ${esc(a.license_reference)}</p><p class="small">${statusLine}</p><div class="evidence-links">${a.attachments.map(f=>`<a href="/api/v1/attachments/${f.id}">${esc(f.name)} ↓</a>`).join('')}${isPending&&!hasDocs?`<span class="small">No license documents uploaded yet.</span>`:''}</div>${a.user_id===state.user.id&&isPending?`<details><summary>Add supporting license documents</summary><form class="applicationEvidence" data-id="${a.id}">${applicationEvidenceInput()}${formEnd('Upload license evidence')}</form></details>`:''}${review&&isPending?`<div class="actions">${hasDocs?`<button class="small" data-action="review-application" data-id="${a.id}" data-status="approved">Approve access</button>`:`<span class="small badge awaiting-documents">Not eligible — upload license documents first</span>`}<button class="small danger" data-action="review-application" data-id="${a.id}" data-status="rejected">Reject</button></div>`:''}</article>`}).join(''):empty('No access applications.');}
+function deletionRequestTable(items){return items.length?`<div class="table-wrap"><table><thead><tr><th>Requester</th><th>Role</th><th>Reason</th><th>Submitted</th><th>Status</th><th>Review</th></tr></thead><tbody>${items.map(r=>`<tr><td>${esc(r.display_name)}<br><small>${esc(r.email)}</small></td><td>${esc(r.role)}</td><td class="overflow-wrap">${esc(r.reason)}${r.user_response?`<br><small>Response: ${esc(r.user_response)}</small>`:''}</td><td class="nowrap">${date(r.created_at)}</td><td>${badge(r.status.replaceAll('_',' '),r.status)}</td><td>${['pending','info_requested'].includes(r.status)?`<button class="small" data-action="deletion-review" data-id="${r.id}">Review</button>`:`<small>${r.reviewed_at?date(r.reviewed_at):'Decided'}</small>`}</td></tr>`).join('')}</tbody></table></div>`:empty('No deletion requests.');}
+async function communityView(){
+  const rooms=await api('/rooms');if(!state.room&&rooms.items.length)state.room=rooms.items[0].id;
+  const messages=state.room?await api(`/rooms/${state.room}/messages`):{items:[]};
+  return `${heading('The road is better, together.','Share corridor updates. Your display name appears only when you enable Show my display name publicly in your profile privacy settings; otherwise you show as Anonymous Member. Community messages are observations, not verified price directives.','COMMUNITY / DRIVER CORRIDORS')}<div class="two-column"><section class="card"><h2>Transport corridors</h2>${rooms.items.map(r=>`<button class="room-button ${r.id===state.room?'active':''}" data-action="room" data-id="${r.id}">${esc(r.name)} →</button>`).join('')||empty('No corridor rooms configured yet.')}</section><section class="card"><div class="card-head"><h2>${esc(rooms.items.find(r=>r.id===state.room)?.name||'Community messages')}</h2><button class="small" data-action="refresh">Refresh messages</button></div><div class="chat-box" id="chatMessages">${messages.items.map(m=>`<article class="message"><div class="item-header"><strong>${esc(m.display_name)}</strong><small>${date(m.created_at)}</small></div><p>${esc(m.body)}</p><div class="actions"><button class="small quiet" data-action="vote" data-id="${m.id}">Helpful · ${m.votes}</button>${isStaff()?`<button class="small danger" data-action="hide-message" data-id="${m.id}">Hide message</button>`:''}</div></article>`).join('')||empty('No messages yet. Share the first useful corridor update.')}</div>${state.room?`<form id="messageForm" class="messages-form">${textarea('Your corridor update','body',{max:500})}${formEnd('Send message')}</form>`:''}</section></div>`;
+}
+async function advisoriesView(){
+  const [notices,halls]=await Promise.all([api('/advisories'),api('/town-halls')]);
+  return `${heading('Information you can trace.','Read source-linked platform releases and ask questions ahead of scheduled town halls.','PUBLIC INFORMATION / ADVISORIES')}<div class="grid"><section><h2>Published advisories</h2>${notices.items.map(a=>`<article class="card"><div class="eyebrow">PLATFORM ADVISORY · ${date(a.created_at)}</div><h2>${esc(a.title)}</h2><p class="notice-text">${esc(a.body)}</p><p class="small">Published by ${esc(a.author)}</p><a href="${esc(a.source_url)}" target="_blank" rel="noopener noreferrer">Read original source ↗</a></article>`).join('')||empty('No source-linked advisories have been published.')}</section><section><h2>Town halls & questions</h2>${halls.items.map(h=>`<article class="card"><h3>${esc(h.title)}</h3><p>${esc(h.host)} · ${date(h.starts_at)}</p>${h.questions.map(q=>`<div class="message"><p><strong>Question:</strong> ${esc(q.body)}</p>${q.answer?`<p><strong>Platform response:</strong> ${esc(q.answer)}</p>`:isAdmin()?`<button class="small" data-action="answer-question" data-id="${q.id}">Answer</button>`:''}</div>`).join('')}${new Date(h.starts_at)>new Date()?`<form class="questionForm" data-id="${h.id}">${textarea('Ask a question','body',{min:5,max:1000})}${formEnd('Submit question')}</form>`:badge('Questions closed','closed')}</article>`).join('')||empty('No town halls scheduled.')}</section></div>`;
+}
+function tripView(){
+  const mode=state.user?.role==='citizen'?state.citizenMode:'private';
+  const efficiency=mode==='truck'?3:mode==='boda'?30:12;
+  return `${heading('Plan the fuel. Know the estimate.','Use your road distance and vehicle efficiency. Costs use fresh operational prices for the fuel you select.','MOBILITY / TRIP COST')}<div class="grid"><section class="card"><form id="tripForm"><div class="form-row">${field('Road distance (km)','distanceKm',{type:'number',min:.1,max:3000,step:.1,placeholder:'Distance from your navigation app'})}${field('Fuel efficiency (km per litre)','kmPerLitre',{type:'number',min:1,max:100,step:.1,value:efficiency})}</div>${fuelField(mode==='truck'?'diesel':'petrol')}<p class="small">For example: a boda at 30 km/L, a car at 12 km/L, or a truck at 3 km/L. These are editable starting estimates, not measured consumption. Adjust for your actual vehicle and conditions.</p>${formEnd('Estimate trip fuel cost')}</form></section><section class="card" id="tripResult">${empty('Enter the road distance to see fuel needed and an indicative cost. Prices and consumption can change.')}</section></div>`;
+}
+function trendChart(rows){
+  if(!rows.length)return '';
+  const values=rows.slice(-14),max=Math.max(...values.map(r=>r.average));
+  return `<figure class="price-trend"><figcaption>Latest ${values.length} daily fuel averages <span>Zero baseline · UGX / litre</span></figcaption><div class="trend-plot" role="img" aria-label="Daily average accepted update prices, detailed in the table below">${values.map(r=>`<div class="trend-column"><strong>${Number(r.average).toLocaleString('en-UG')}</strong><div class="trend-bar-area"><span class="trend-bar ${r.fuel==='diesel'?'diesel':''}" style="height:${r.average/max*100}%"></span></div><small>${esc(String(r.day).slice(5,10))}<br>${esc(r.fuel)}</small></div>`).join('')}</div></figure>`;
+}
+const adminTabs=()=>[['dashboard','Overview'],['intelligence','Price intelligence'],...(isStaff()?[['reports','Price review'],['tickets','Consumer cases']]:[]),...(isAdmin()?[['applications','Operator access'],['station-requests','New station requests'],['directory','Station directory'],['publishing','Public information'],['media','Media management'],['users','User management'],['deletions','Deletion requests']]:[]),['audit','Audit trail']];
+function commandHeading(){
+  const headings={admin:[workspaceFor('admin').title,'Platform administration, source-backed intelligence and authorized operations.'],inspector:[workspaceFor('inspector').title,'Prioritize your assigned cases, examine evidence, and record accountable decisions.'],analyst:[workspaceFor('analyst').title,'Analyze published observations and accepted price history without unsupported predictions.']};
+  const [title,description]=headings[state.user.role];return heading(title,description,'MAFUTAWATCH / COMMAND CENTER');
+}
+function commandPriorities(){const actions=state.user.role==='admin'?[['users','User verification & access','users'],['directory','Station registration','building'],['applications','Operator approvals','shield'],['tickets','Case operations','report'],['publishing','Sourced notices & directives','bell'],['audit','Audit records','clock']]:state.user.role==='inspector'?[['tickets','My assigned investigations','shield'],['reports','Price verification queue','report'],['audit','Decision audit trail','clock']]:[['intelligence','Price comparisons & history','chart'],['audit','System activity records','clock']];return `<section class="command-priorities" aria-label="Authorized workspace priorities">${actions.map(([tab,label,name])=>`<button data-action="admin-tab" data-tab="${tab}" ${state.user.role==='inspector'&&tab==='tickets'?'data-assignment="mine"':''}>${icon(name)}<span>${label}</span>${icon('arrow')}</button>`).join('')}</section>`;}
+async function readinessStatus(){try{const response=await fetch('/health/ready',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(5000)});const value=await response.json();return {ready:response.ok&&value.status==='ready',checked:new Date().toISOString()};}catch(_error){return {ready:false,checked:new Date().toISOString()};}}
+function readinessCard(status){return `<section class="card readiness-card"><div class="card-head"><h2>Operational readiness</h2>${badge(status.ready?'Ready':'Unavailable',status.ready?'verified':'flagged')}</div><p>${status.ready?'The application readiness endpoint confirmed database/schema access.':'The readiness endpoint could not confirm availability. Check deployment monitoring for details.'}</p><small>Checked ${date(status.checked)}. This is a readiness check, not an uptime, capacity or predictive health metric.</small><div class="actions"><a href="/health/ready" target="_blank" rel="noopener noreferrer">Inspect readiness response ↗</a><button class="quiet small" data-action="refresh">Refresh</button></div></section>`;}
+function assignedCaseOverview(tickets){const assigned=tickets.filter(t=>t.assigned_to===state.user.id&&!['resolved','closed'].includes(t.status));return `<section class="card"><div class="card-head"><h2>Your assigned investigations</h2><button class="small" data-action="admin-tab" data-tab="tickets" data-assignment="mine">Open assigned queue</button></div><p class="small">${assigned.length} active assigned cases in the latest ${tickets.length} accessible records. Deadlines are server-owned.</p>${ticketCards(assigned.slice(0,5))}</section>`;}
+async function intelligencePanel(){const [d,insights]=await Promise.all([api('/admin/dashboard'),api('/stations/insights')]);const fuel=state.analyticsFuel||'all',history=d.trend.filter(r=>fuel==='all'||r.fuel===fuel),regions=state.summary.regions.filter(r=>fuel==='all'||r.fuel===fuel);return `<form id="intelligenceFilter" class="intelligence-toolbar">${select('Fuel view','fuelView',[['all','All reported fuels'],...fuelOptions],fuel)}<button type="submit">Apply fuel view</button><button type="button" class="primary" data-action="export-price-history" ${history.length?'':'disabled'}>Export accepted history CSV</button></form><div class="metrics">${metric(d.verified,'Verified reports · all time')}${metric(state.summary.stations-state.summary.demo_stations,'Operational directory stations')}${metric(regions.reduce((n,r)=>n+r.samples,0),'Fresh published fuel records')}${metric(history.length,'Daily history rows in view')}</div><div class="grid"><section class="card"><h2>Regional fuel comparisons</h2><p class="small">Fresh operational prices in UGX per litre. Demo and stale entries excluded.</p>${regionChart(regions)}</section><section class="card"><h2>Accepted historical observations</h2><p class="small">Actual daily averages of accepted updates in the last 30 days. Missing dates are not imputed.</p>${trendChart(history)}${history.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${history.map(r=>`<tr><td>${esc(r.day)}</td><td>${esc(r.fuel)}</td><td>${money(r.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted price history for this fuel view.')}</section></div><div class="grid"><section class="card"><h2>Station activity distribution</h2>${stationDistribution(insights.distribution)}</section><section class="card"><h2>Recent verified public updates</h2>${recentPriceUpdates(insights.updates)}</section></div><section class="workspace-map-panel"><div class="card-head"><h2>Station network discovery</h2><a href="#stations">Open public explorer ↗</a></div><p class="small">Public directory locations and source-labeled prices. Map filters are independent from the analytical fuel view above.</p>${discoveryMarkup(state.discoveryPreferences)}</section>`;}
+async function adminView(){
+  if(!['admin','inspector','analyst'].includes(state.user?.role))return state.user?`${heading('Workspace access is restricted.','Your current account does not have an administrator, inspector or analyst role.')}<a class="button primary" href="#${workspaceFor(state.user.role).page}">Return to ${esc(workspaceFor(state.user.role).title)}</a>`:loginCard('This workspace is restricted to provisioned operations staff.');
+  if(!adminTabs().some(([id])=>id===state.adminTab))state.adminTab='dashboard';
+  const shell=`${commandHeading()}<nav class="workspace-tabs" aria-label="Operations sections">${adminTabs().map(([id,text])=>`<button data-action="admin-tab" data-tab="${id}" class="${state.adminTab===id?'active':''}">${text}</button>`).join('')}</nav>`;
+  if(state.adminTab==='intelligence')return shell+commandPriorities()+await intelligencePanel();
+  if(state.adminTab==='dashboard'){
+    const [d,health,tickets]=await Promise.all([api('/admin/dashboard'),isAdmin()?readinessStatus():Promise.resolve(null),state.user.role==='inspector'?api('/tickets?limit=50'):Promise.resolve({items:[]})]);return shell+commandPriorities()+`<div class="metrics">${metric(d.reports,'Total price observations')}${metric(d.review_queue,'Observations awaiting review',true)}${metric(d.overdue,'Cases beyond response target',true)}${metric(d.signed_in_today,'Accounts signed in today')}</div>${state.user.role==='inspector'?assignedCaseOverview(tickets.items):''}<div class="grid"><section class="card"><h2>Verification & response</h2><div class="list-item">Verified observations <strong>${d.verified}</strong></div><div class="list-item">Pending station applications <strong>${d.applications}</strong></div><div class="list-item">Mean time to first officer response <strong>${d.average_response_hours==null?'Not enough data':`${d.average_response_hours}h`}</strong></div><p class="small">Signed-in accounts count distinct accounts with a session created today. It is not a total visitor count.</p><button data-action="export-dashboard">Download KPI CSV</button></section><section class="card"><h2>Accepted price observations · last 30 days</h2><p class="small">Daily average of accepted updates; not a continuously sampled national index. Missing dates have no observations.</p>${trendChart(d.trend)}${d.trend.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Fuel</th><th>Average UGX/L</th></tr></thead><tbody>${d.trend.map(p=>`<tr><td>${esc(String(p.day).slice(0,10))}</td><td>${esc(p.fuel)}</td><td>${money(p.average)}</td></tr>`).join('')}</tbody></table></div>`:empty('No accepted operational price history yet.')}</section></div>${health?readinessCard(health):''}`;
+  }
+  if(state.adminTab==='reports'){const reports=await api(`/admin/reports?limit=50&offset=${state.adminOffset}`);return shell+`<section class="card"><h2>Verification queue</h2><p class="small">Check the observed price and source before verifying. A newer published price cannot be overwritten by an older report.</p>${reportTable(reports.items,true)}${pagination(state.adminOffset,reports.items.length,'admin-page')}</section>`;}
+  if(state.adminTab==='tickets'){const tickets=await api(`/tickets?limit=50&offset=${state.adminOffset}${state.caseStatus?`&status=${encodeURIComponent(state.caseStatus)}`:''}`),assignment=state.caseAssignment||'all',visible=tickets.items.filter(t=>assignment==='all'||assignment==='mine'&&t.assigned_to===state.user.id||assignment==='unassigned'&&!t.assigned_to);return shell+`<form id="caseQueueFilter" class="case-queue-toolbar">${select('Case status','caseStatus',[['','All statuses'],['open','Open'],['investigating','Investigating'],['dispatched','Dispatched'],['resolved','Resolved'],['closed','Closed']],state.caseStatus||'',false)}${select('Assignment','caseAssignment',[['mine','Assigned to me'],['all','All accessible cases'],['unassigned','Unassigned cases']],assignment)}<button type="submit" class="primary">Apply case filters</button></form><p class="small">${visible.length} matched among ${tickets.items.length} loaded records. Assignment filtering applies to this page; use pagination for further accessible cases.</p>`+ticketCards(visible)+pagination(state.adminOffset,tickets.items.length,'admin-page');}
+  if(state.adminTab==='applications'){const applications=await api(`/applications?limit=50&offset=${state.adminOffset}`);return shell+`<section class="card"><h2>Operator access review</h2><p>Validate the license and supporting documents with the issuing authority before approval. Approval grants access only to the named station.</p>${applicationCards(applications.items,true)}${pagination(state.adminOffset,applications.items.length,'admin-page')}</section>`;}
+  if(state.adminTab==='station-requests'){const requests=await api(`/admin/station-requests?limit=50&offset=${state.adminOffset}`);return shell+heading('New station verification','Review proposals, private evidence and duplicate warnings before a recorded decision.')+stationRequestCards(requests.items,true)+pagination(state.adminOffset,requests.items.length,'admin-page');}
+  if(state.adminTab==='audit'){const audit=await api(`/admin/audit?limit=50&offset=${state.adminOffset}`);return shell+`<section class="card"><div class="card-head"><h2>Append-only audit trail</h2><button class="small" data-action="export-audit">Export displayed rows</button></div><p class="small">Protected from update, delete and truncate by the application database role. Database owners retain infrastructure authority.</p><div class="table-wrap"><table><thead><tr><th>Time (EAT)</th><th>Actor</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>${audit.items.map(a=>`<tr><td class="nowrap">${date(a.created_at)}</td><td>${esc(a.actor||'System CLI')}</td><td>${esc(a.action)}</td><td class="overflow-wrap">${esc(a.entity_id)}</td><td class="overflow-wrap"><small>${esc(JSON.stringify(a.details))}</small></td></tr>`).join('')}</tbody></table></div>${pagination(state.adminOffset,audit.items.length,'admin-page')}</section>`;}
+  if(state.adminTab==='users'){const users=await api(`/admin/users?limit=50&offset=${state.adminOffset}`),assignable=['citizen','operator','inspector','analyst'];return shell+`<section class="card"><h2>Staff accounts & access</h2><p>Provision an inspector or analyst only after verifying their identity and appointment through your approved procedure. No email is sent; deliver the temporary password through a secure channel.</p><form id="staffProvision"><div class="form-row">${field('Email address','email',{type:'email',maxlength:254})}${field('Display name','displayName',{min:2,maxlength:80})}</div><div class="form-row">${select('Staff role','role',[['inspector','Inspector'],['analyst','Analyst']])}${field('Temporary password','password',{type:'password',min:12,maxlength:128})}</div><div class="form-row">${field('Confirm temporary password','confirmPassword',{type:'password',min:12,maxlength:128})}${field('Your administrator password','administratorPassword',{type:'password',maxlength:128})}</div>${field('Authorization reason','reason',{min:20,maxlength:500})}<label class="check"><input name="identityVerified" type="checkbox" required> I verified this person's identity and appointment.</label>${formEnd('Provision staff account')}</form><p class="small">Mark a citizen identity verified only after independently validating the person through the operating organization's identity procedure. Only assign a role after confirming the person and their authorization. A role change ends that account's active sessions and station integrations. Operator role assignment does not grant a station; station access still requires an approved application or assignment. Administrator roles remain CLI-managed.</p><div class="table-wrap"><table><thead><tr><th>Account</th><th>Role</th><th>Identity</th><th>Actions</th></tr></thead><tbody>${users.items.map(u=>`<tr><td>${esc(u.display_name)}<br><small>${esc(u.email)}</small></td><td>${esc(u.role)}</td><td>${badge(u.identity_verified?'Verified':'Not verified',u.identity_verified?'verified':'pending')}</td><td>${u.role!=='admin'?`<div class="actions"><select data-role-for="${u.id}" aria-label="Role for ${esc(u.display_name)}">${assignable.map(role=>`<option value="${role}"${role===u.role?' selected':''}>${role}</option>`).join('')}</select><button class="small" data-action="assign-role" data-id="${u.id}" data-name="${esc(u.display_name)}" data-current="${u.role}">Update role</button></div><div class="actions"><button class="small" data-action="verify-user" data-id="${u.id}" data-value="${!u.identity_verified}">${u.identity_verified?'Remove identity verification':'Verify identity'}</button><button class="small danger" data-action="disable-user" data-id="${u.id}" data-value="${!u.disabled}">${u.disabled?'Restore account':'Disable account'}</button></div>`:'Administrator roles are managed through the deployment CLI.'}</td></tr>`).join('')}</tbody></table></div>${pagination(state.adminOffset,users.items.length,'admin-page')}</section><section class="card"><h2>Reset an account password</h2><p>Reset a non-administrator password only after verifying the request through your approved recovery procedure. Existing sessions and integration credentials are revoked; no email is sent.</p>${users.items.some(u=>u.role!=='admin')?`<form id="adminPasswordReset">${select('Account','userId',users.items.filter(u=>u.role!=='admin').map(u=>[u.id,`${u.display_name} · ${u.email}`]))}<div class="form-row">${field('New temporary password','newPassword',{type:'password',min:12,maxlength:128})}${field('Confirm temporary password','confirmPassword',{type:'password',min:12,maxlength:128})}</div>${field('Your administrator password','administratorPassword',{type:'password',maxlength:128})}${field('Authorization reason','reason',{min:20,maxlength:500})}${formEnd('Reset password and revoke access')}</form>`:'<p class="small">No non-administrator accounts are on this page.</p>'}</section>`;}
+  if(state.adminTab==='directory'){
+    const [operators,register,assignments,operatorAccounts]=await Promise.all([api('/operators'),api(`/admin/stations?limit=50&offset=${state.adminOffset}`),api(`/admin/assignments?limit=50&offset=${state.adminOffset}`),api('/admin/operator-accounts')]);
+    return shell+`<div class="grid"><section class="card"><h2>Register an operator brand</h2><form id="operatorBrand">${field('Full operator name','name',{min:2,maxlength:150})}${field('Short name','shortName',{min:2,maxlength:30})}${formEnd('Add operator')}</form><hr><h2>Create a driver corridor</h2><form id="roomCreate">${field('Corridor room name','name',{min:3,maxlength:100})}${formEnd('Create corridor room')}</form></section>
+      <section class="card"><h2>Register a verified station</h2><form id="stationCreate">${select('Operator','operatorId',operators.items.map(o=>[o.id,o.name]))}${field('Station name','name',{min:2})}<div class="form-row">${field('Area','area',{min:2,maxlength:100})}${field('District','district',{min:2,maxlength:100})}</div>${select('Region','region',[['Central','Central'],['Eastern','Eastern'],['Northern','Northern'],['Western','Western']])}<div class="form-row">${field('Latitude','latitude',{type:'number',min:-1.6,max:4.3,step:.000001})}${field('Longitude','longitude',{type:'number',min:29.5,max:35.1,step:.000001})}</div>${formEnd('Add station')}</form></section></div>
+      <section class="card"><h2>Station register</h2>${register.items.map(s=>`<div class="list-item item-header"><div><strong>${esc(s.name)}</strong> <small>${esc(s.district)}${s.demo?' · Demo fixture':''}</small> ${s.active?'':badge('Inactive','closed')}</div><button class="small ${s.active?'danger':''}" data-action="deactivate-station" data-id="${s.id}" data-active="${!s.active}">${s.active?'Deactivate':'Reactivate'}</button></div>`).join('')||empty('No stations registered.')}${pagination(state.adminOffset,register.items.length,'admin-page')}</section>
+      <section class="card"><h2>Assign an operator to a station</h2><p class="small">Station access is explicit and audited. Assign only an active operator account that has been authorized for this station.</p>${operatorAccounts.items.length&&register.items.some(s=>s.active)?`<form id="stationAssign">${select('Active station','stationId',register.items.filter(s=>s.active).map(s=>[s.id,`${s.name} · ${s.district}`]))}${select('Operator account','userId',operatorAccounts.items.map(u=>[u.id,`${u.display_name} · ${u.email}`]))}${field('Authorization reason','reason',{min:10,maxlength:500})}${formEnd('Assign station access')}</form>`:'<p class="small">Register an active station and create an operator account before assigning station access.</p>'}<h2>Station staff assignments</h2>${assignments.items.map(a=>`<div class="list-item item-header"><div><strong>${esc(a.display_name)}</strong><p class="small">${esc(a.email)} · ${esc(a.station_name)}</p></div><button class="small danger" data-action="revoke-assignment" data-id="${a.station_id}" data-user="${a.user_id}">Revoke station access</button></div>`).join('')||empty('No staff assignments on this page.')}</section>`;
+  }
+  if(state.adminTab==='media'){state.mediaContent=await api('/admin/media');return shell+mediaManagementMarkup(state.mediaContent);}
+  if(state.adminTab==='deletions'){const requests=await api(`/admin/deletion-requests?limit=50&offset=${state.adminOffset}`);return shell+`<section class="card"><h2>Account deletion requests</h2><p class="small">Review each request and record your reason for the decision. Approving authorizes the separate, authorized deletion procedure; it never erases accounts or evidence automatically. Investigation records, financial evidence and legally required data are retained under the approved retention policy.</p>${deletionRequestTable(requests.items)}${pagination(state.adminOffset,requests.items.length,'admin-page')}</section>`;}
+  const caps=await api('/caps');return shell+`<div class="grid"><section class="card"><h2>Publish a source-linked advisory</h2><form id="advisoryForm">${field('Title','title',{min:5})}${textarea('Release text','body',{min:10,max:10000})}${field('Original source URL (HTTPS)','sourceUrl',{type:'url',maxlength:2000})}${formEnd('Publish advisory')}</form></section><section class="card"><h2>Schedule a town hall</h2><form id="hallForm">${field('Session title','title',{min:5})}${field('Host / office','host',{min:2,maxlength:100})}${field('Starts at (your device local time)','startsAt',{type:'datetime-local'})}${formEnd('Schedule session')}</form></section><section class="card"><h2>Publish a district directive</h2><form id="capForm">${field('District','district',{min:2,maxlength:100})}<div class="form-row">${fuelField()}${priceField()}</div>${field('Authoritative source URL (HTTPS)','sourceUrl',{type:'url',maxlength:2000})}<div class="form-row">${field('Effective from (device local time)','effectiveFrom',{type:'datetime-local'})}${field('Effective until (device local time)','effectiveUntil',{type:'datetime-local'})}</div>${formEnd('Save sourced directive')}</form></section><section class="card"><h2>Currently effective directives</h2>${capTable(caps.items)}</section></div>`;
+}
+function privacyView(){return `${heading('Privacy & data use.','Understand what the platform stores and who can see it.','PLATFORM / YOUR INFORMATION')}<section class="card"><h2>What is collected</h2><p>Your account stores an email address, display name and password hash. Price reports include station, price, note, time and optional GPS coordinates. Station reviews and community messages show your display name only when you enable Show my display name publicly in My profile; otherwise you appear as Anonymous Member. Your account email is available to authorized administrators.</p><h2>Private complaints & evidence</h2><p>Consumer cases, conversations and uploaded evidence are available to the submitting account and authorized administrators/case officers. Operator applications and license evidence are available to the applicant and approving administrators. Files are downloaded, not publicly hosted.</p><h2>Purpose & retention</h2><p>Records support fuel-price transparency, complaint investigation and abuse prevention. Sessions expire after 12 hours. Rate-limit identifiers are hashed. In-app notifications are cleaned after 90 days when scheduled maintenance runs. The deployment operator must publish its controller identity, contact details and approved retention policy before collecting live data.</p><h2>Your access & corrections</h2><p>Use My activity to view your reports and notifications, and the complaint workspace for your cases. Request access, corrections, deletion or account recovery from the organization operating this deployment. The administrator must verify ownership before processing requests.</p><h2>External providers</h2><p>Map tiles are requested from OpenStreetMap; directions open Google Maps. Those providers receive ordinary connection metadata and the destination you choose. Optional routing services receive submitted route coordinates. Passwords, session tokens and private case data are never stored in localStorage or the offline cache.</p><h2>Offline operation</h2><p>The application shell can open offline. Operational data and writes require a live connection. Failed submissions are not presented as accepted, and no sensitive records are silently queued on a shared device.</p></section>`;}
 
-/* ─── DIRECTIONS ─── */
-document.addEventListener('click', e => {
-  if (e.target.id === 'modalDirectionsBtn') {
-    const s = getStation(currentStationId);
-    if (!s) return showToast('Station location not available.');
-    if (!navigator.geolocation) return showToast('Geolocation not supported by your browser.');
-    navigator.geolocation.getCurrentPosition(pos => {
-      const url = `https://www.google.com/maps/dir/?api=1&origin=${pos.coords.latitude},${pos.coords.longitude}&destination=${s.lat},${s.lng}&travelmode=driving`;
-      window.open(url, '_blank');
-      if (map) {
-        L.polyline([[pos.coords.latitude, pos.coords.longitude], [s.lat, s.lng]], {
-          color: '#76FF03', weight: 3, dashArray: '10,10',
-        }).addTo(map);
-        map.setView([(pos.coords.latitude + s.lat) / 2, (pos.coords.longitude + s.lng) / 2], 12);
+async function newsView(){
+  const items=(await api('/news')).items??[];
+  return `${heading('Energy News & Updates','Verified reporting on Uganda’s fuel, energy and transport sectors.','ENERGY NEWSROOM')}<section id="publicMediaContent" class="grid three">${items.map(newsCard).join('')||empty('No news articles published yet.')}</section>`;
+}
+async function mediaGalleryView(){
+  const items=(await api('/media')).items??[];
+  return `${heading('Photography & Media Gallery','Documented images of Uganda’s fuel stations, transport and energy sector.','PHOTOGRAPHY & MEDIA')}<section id="publicMediaContent" class="grid three">${items.map(imageCard).join('')||empty('No media gallery entries yet.')}</section>`;
+}
+async function videoCentreView(){
+  const items=(await api('/videos')).items??[];
+  return `${heading('Video & Education Centre','Learn about fuel prices, road safety and how MafutaWatch works.','VIDEO & EDUCATION')}<section id="publicMediaContent" class="grid three">${items.map(videoCard).join('')||empty('No videos published yet.')}</section>`;
+}
+
+function emailVerifyMessage(title,detail,{signIn=false}={}){
+  return `${heading(title,detail,'ACCOUNT SECURITY')}<section class="card"><h2>${esc(title)}</h2><p>${esc(detail)}</p><div class="actions">${signIn?`<button class="primary" data-action="auth">Sign in to confirm</button>`:''}<a class="button secondary" href="#profile">Go to my profile</a></div></section>`;
+}
+function emailVerifiedView(){
+  return `${heading('Email address updated.','Your new email address is now the address you sign in with.','ACCOUNT SECURITY')}<section class="card"><h2>You have been signed out</h2><p>Every previous session was signed out when the change was confirmed. Sign in with your new email address and your existing password; your reports, cases and settings are unchanged.</p><div class="actions"><button class="primary" data-action="auth">Sign in with the new address</button><a class="button secondary" href="#overview">Back to home</a></div></section>`;
+}
+async function emailVerifyView(){
+  const pending=state.emailVerify;
+  if(!pending)return emailVerifyMessage('This verification link is incomplete.','Open the link from your email again, or request a new email change from My profile.',{signIn:!state.user});
+  if(pending.status==='pending'){
+    if(!state.user)return emailVerifyMessage('Sign in to confirm your new email address.','Your verification link is valid for 24 hours. Sign in to the account you are changing and this confirmation completes automatically.',{signIn:true});
+    pending.status='confirming';
+    try{
+      const result=await api('/me/email/confirm',{method:'POST',body:{token:pending.token}});
+      if(result&&result.complete===false){pending.status='awaiting';pending.approved=result.approved??'new';}
+      else{
+        pending.status='done';state.user=null;setCsrf(null);updateAccount();refreshNotifications().catch(()=>{});
+        history.replaceState(null,'',`${location.pathname}#email-verified`);
+        state.page='email-verified';
+        return emailVerifiedView();
       }
-      showToast('🗺️ Directions opened in Google Maps.');
-    }, () => showToast('Could not get your location.'), { enableHighAccuracy: true, timeout: 10000 });
-  }
-});
-
-/* ─── STATIONS LIST ─── */
-function renderStationList() {
-  const container=document.getElementById('stationList');
-  if(!container) return;
-  const search=(document.getElementById('listSearch')?.value||'').toLowerCase();
-  const fuel=document.getElementById('listFuel')?.value||'all';
-
-  let stations=getStations().filter(s=>{
-    if(search&&!s.name.toLowerCase().includes(search)&&!s.area.toLowerCase().includes(search)) return false;
-    if(fuel==='petrol'&&!s.petrol) return false;
-    if(fuel==='diesel'&&!s.diesel) return false;
-    return true;
-  });
-  stations.sort((a,b)=>(a.petrol||9999)-(b.petrol||9999));
-
-  if(stations.length===0){
-    container.innerHTML='<div class="empty-state"><div class="icon">🔍</div><p>No stations found</p></div>';
-    return;
-  }
-  container.innerHTML=stations.map((s,i)=>{
-    const op=getOp(s.op);
-    const rc=i===0?'gold':i===1?'silver':i===2?'silver':'normal';
-    return `<div class="station-card" onclick="openStationModal(${s.id})">
-      <div class="rank ${rc}">${i+1}</div>
-      <div class="info">
-        <div class="name">${s.name}</div>
-        <div class="meta">${op.short} · ${s.area}, ${s.district}</div>
-      </div>
-      <div class="prices">
-        ${s.petrol?`<div class="amt" style="color:${getPriceColor(s.petrol,'petrol')}">UGX ${s.petrol.toLocaleString()}</div>`:'<div class="amt">—</div>'}
-        <div class="sub" style="font-size:0.65rem">${s.diesel?'D: UGX '+s.diesel.toLocaleString():''}</div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-document.addEventListener('input',e=>{if(e.target.id==='listSearch') renderStationList();});
-document.addEventListener('change',e=>{if(e.target.id==='listFuel') renderStationList();});
-
-function escapeMafutaHtml(value){ return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-/* ─── REVIEWS ─── */
-function submitReview() {
-  if (window.MafutaApi?.isLive()) return showToast('Reviews are not available in connected mode yet.');
-  // Demo-only review. Production review moderation has not yet been implemented.
-  const stationId=parseInt(document.getElementById('reviewStation')?.value);
-  const ratingEl=document.querySelector('.star-rating');
-  const rating=parseInt(ratingEl?.dataset?.rating)||0;
-  const text=document.getElementById('reviewText')?.value?.trim()||'';
-  const issues=[];
-  if(document.getElementById('issueLines')?.checked) issues.push('long_lines');
-  if(document.getElementById('issuePumps')?.checked) issues.push('bad_pumps');
-  if(document.getElementById('issueFuel')?.checked) issues.push('adulterated_fuel');
-
-  if(!stationId) return showToast('Please select a station.');
-  if(!rating) return showToast('Please give a star rating.');
-
-  if(!DB.reviews) DB.reviews=[];
-  DB.reviews.push({stationId,rating,text,issues,date:new Date().toISOString()});
-  saveDB();
-  showToast('✅ Review submitted! Thank you.');
-  document.getElementById('reviewText').value='';
-  renderStationList();
-  renderReviews();
-}
-
-function renderReviews() {
-  const container=document.getElementById('recentReviews');
-  if(!container) return;
-  const all=DB.reviews||[];
-  if(all.length===0){
-    container.innerHTML='<div style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:20px;">No reviews yet. Report a station issue above.</div>';
-    return;
-  }
-  container.innerHTML=all.slice(-10).reverse().map(r=>{
-    const s=getStation(r.stationId);
-    const issues=r.issues||[];
-    return `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
-      <div style="display:flex;justify-content:space-between;">
-        <strong>${s?s.name:'Unknown'}</strong>
-        <span>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
-      </div>
-      ${r.text?`<div style="color:var(--text-muted);margin-top:2px;">${escapeMafutaHtml(r.text)}</div>`:''}
-      <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;">
-        ${issues.includes('long_lines')?'<span class="tag tag-red">Long lines</span>':''}
-        ${issues.includes('bad_pumps')?'<span class="tag tag-yellow">Bad pumps</span>':''}
-        ${issues.includes('adulterated_fuel')?'<span class="tag tag-red">⚠ Adulterated fuel</span>':''}
-      </div>
-      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${new Date(r.date).toLocaleDateString()}</div>
-    </div>`;
-  }).join('');
-}
-
-/* ─── REPORT PRICE ─── */
-function populateReportForm() {
-  const sel=document.getElementById('reportStation');
-  if(!sel) return;
-  sel.innerHTML='<option value="">Select a station...</option>';
-  getStations().forEach(s=>{
-    const op=getOp(s.op);
-    sel.innerHTML+=`<option value="${s.id}">${escapeMafutaHtml(s.name)} — ${escapeMafutaHtml(op.short)}, ${escapeMafutaHtml(s.area)}</option>`;
-  });
-}
-
-document.addEventListener('click',e=>{
-  if(e.target.id==='submitReportBtn') submitReport();
-});
-function submitReport() {
-  // In connected mode the server is the only source of truth for submitted prices.
-  if (window.MafutaApi && window.MafutaApi.isLive()) return window.MafutaApi.submitPrice();
-  const stationId=parseInt(document.getElementById('reportStation')?.value);
-  const fuel=document.getElementById('reportFuel')?.value;
-  const price=parseFloat(document.getElementById('reportPrice')?.value);
-  const loc=document.getElementById('reportLocation')?.value?.trim()||'';
-
-  if(!stationId) return showToast('Please select a station.');
-  if(!price||price<2000||price>10000) return showToast('Enter valid price (UGX 2,000–10,000).');
-
-  const s=getStation(stationId); if(!s) return;
-  const current=s[fuel]||0;
-
-  // Price cap cross-reference
-  const capResult = checkPriceCap(stationId, fuel, price);
-  if (!capResult.withinCap) {
-    showToast('⚠️ Price UGX ' + price.toLocaleString() + ' exceeds district cap of UGX ' + capResult.cap.toLocaleString() + '! Flagged for review.', 4000);
-  }
-
-  // Deviation check
-  if(current>0){
-    const dev=Math.abs(price-current)/current*100;
-    if(dev>25&&!confirm(`⚠️ This price (UGX ${price.toLocaleString()}) is ${dev.toFixed(0)}% off current (UGX ${current.toLocaleString()}). Still submit?`))
-      return;
-  }
-
-  // Anti-fraud: check against median
-  const allPrices=(DB.reports||[]).filter(r=>r.stationId===stationId&&r.fuel===fuel&&r.status==='verified').map(r=>r.price);
-  if(allPrices.length>=3){
-    const sorted=[...allPrices,price].sort((a,b)=>a-b);
-    const median=sorted[Math.floor(sorted.length/2)];
-    const dev=Math.abs(price-median)/median*100;
-    if(dev>25){
-      showToast('⚠️ Price flagged — deviates from local median. Will require verification.',4000);
+    }catch(error){
+      pending.status='error';pending.message=error.message;
+      if(error.status===401){state.user=null;setCsrf(null);updateAccount();pending.signIn=true;}
     }
   }
-
-  const report={id:Date.now(),stationId,stationName:s.name,fuel,price,location:loc,
-    timestamp:new Date().toISOString(),status:'pending',userTrust:DB.trustScore||0,
-    criticalCompliance: !capResult.withinCap || undefined};
-  DB.reports.push(report);
-  DB.totalReports=(DB.totalReports||0)+1;
-  saveDB();
-
-  // Track price history
-  if(!DB.priceHistory) DB.priceHistory=[];
-  DB.priceHistory.push({stationId,fuel,price,date:new Date().toISOString()});
-
-  // Demo reports remain pending; no browser-side transition to verified exists.
-  showToast('DEMO ONLY: stored locally and not sent to a regulator.');
-
-  document.getElementById('reportStation').value='';
-  document.getElementById('reportPrice').value='';
-  document.getElementById('reportLocation').value='';
-  switchPage('activity');
-}
-
-document.addEventListener('click',e=>{
-  if(e.target.id==='reportGpsBtn'&&navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(pos=>{
-      document.getElementById('reportLocation').value=`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
-      showToast('📍 Location captured!');
-    },()=>showToast('GPS unavailable.'),{enableHighAccuracy:true,timeout:10000});
+  if(pending.status==='awaiting'){
+    const fromNew=pending.approved==='new';
+    return emailVerifyMessage('One more confirmation is needed.',fromNew
+      ?'Your new address is confirmed. Open the link we emailed to your current address to finish the change; until then your current address still signs you in and nothing has been modified.'
+      :'Your current address has approved the change. Open the link we emailed to your new address to finish; the address does not change until that confirmation arrives.',{signIn:false});
   }
-});
-
-/* ─── TRIP PLANNER ─── */
-function findLocation(query) {
-  query=query.toLowerCase().trim();
-  const locs=LOCATIONS.filter(l=>l.name.toLowerCase().includes(query)||l.district.toLowerCase().includes(query)||l.area.toLowerCase().includes(query));
-  return locs.length>0?locs[0]:null;
+  if(pending.status==='confirming')return emailVerifyMessage('Confirming your new email address…','This takes a moment. Refresh the page if the confirmation does not complete.',{signIn:false});
+  if(pending.status==='done')return emailVerifiedView();
+  return emailVerifyMessage('We could not confirm this email address.',`${pending.message||'This link could not be used.'} Request a new email change from My profile to try again.`,{signIn:Boolean(pending.signIn)||!state.user});
 }
-
-document.addEventListener('click',e=>{
-  if(e.target.id==='calcTripBtn'){
-    const from=document.getElementById('tripFrom')?.value?.trim();
-    const to=document.getElementById('tripTo')?.value?.trim();
-    const vehicle=document.getElementById('tripVehicle')?.value;
-    if(!from||!to) return showToast('Please enter both start and destination.');
-    if(!vehicle) return showToast('Please select a vehicle type.');
-
-    const fromLoc=findLocation(from);
-    const toLoc=findLocation(to);
-    if(!fromLoc) return showToast('Start location not found. Try "Kampala Post Office".');
-    if(!toLoc) return showToast('Destination not found. Try "Mukono Town".');
-
-    const distKm=haversineKm(fromLoc.lat,fromLoc.lng,toLoc.lat,toLoc.lng);
-    const veh=VEHICLES.find(v=>v.id===vehicle);
-    if(!veh) return;
-    const fuelL=distKm/veh.consumption;
-    const avgPetrolPrice=STATIONS_DATA.reduce((s,st)=>s+(st.petrol||0),0)/STATIONS_DATA.filter(s=>s.petrol).length;
-    const cost=fuelL*avgPetrolPrice;
-
-    const resultDiv=document.getElementById('tripResult');
-    resultDiv.style.display='block';
-    resultDiv.innerHTML=`
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div>
-          <div style="font-weight:600;font-size:0.9rem;">${fromLoc.name} → ${toLoc.name}</div>
-          <div style="font-size:0.75rem;color:var(--text-muted);">${veh.name}</div>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-size:1.6rem;font-weight:800;color:var(--primary);">UGX ${Math.round(cost).toLocaleString()}</div>
-          <div style="font-size:0.7rem;color:var(--text-muted);">estimated cost</div>
-        </div>
-      </div>
-      <div class="route-detail">
-        <div><div class="val">${distKm.toFixed(1)} km</div><div class="lbl">Distance</div></div>
-        <div><div class="val">${fuelL.toFixed(1)} L</div><div class="lbl">Fuel needed</div></div>
-        <div><div class="val">UGX ${Math.round(avgPetrolPrice).toLocaleString()}</div><div class="lbl">Avg price/L</div></div>
-      </div>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-        <div style="font-weight:600;font-size:0.8rem;margin-bottom:6px;">🛢️ Cheapest stations on your route:</div>
-        ${getStations().filter(s=>{
-          const d1=haversineKm(fromLoc.lat,fromLoc.lng,s.lat,s.lng);
-          const d2=haversineKm(toLoc.lat,toLoc.lng,s.lat,s.lng);
-          return d1<10||d2<10;
-        }).sort((a,b)=>(a.petrol||9999)-(b.petrol||9999)).slice(0,3).map(s=>{
-          const dFrom=haversineKm(fromLoc.lat,fromLoc.lng,s.lat,s.lng).toFixed(1);
-          return `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:0.8rem;border-bottom:1px solid var(--border);">
-            <span>${s.name} <span style="color:var(--text-muted);font-size:0.7rem;">(${dFrom} km)</span></span>
-            <span style="font-weight:700;color:${getPriceColor(s.petrol,'petrol')};">UGX ${s.petrol.toLocaleString()}</span>
-          </div>`;
-        }).join('')}
-      </div>
-    `;
-
-    // Show on map
-    if(map){
-      map.setView([(fromLoc.lat+toLoc.lat)/2,(fromLoc.lng+toLoc.lng)/2],10);
-      L.marker([fromLoc.lat,fromLoc.lng]).addTo(map).bindPopup(`<b>${fromLoc.name}</b>`).openPopup();
-      L.marker([toLoc.lat,toLoc.lng]).addTo(map).bindPopup(`<b>${toLoc.name}</b>`);
-      L.polyline([[fromLoc.lat,fromLoc.lng],[toLoc.lat,toLoc.lng]],{color:'var(--accent)',weight:3,dashArray:'8,8'}).addTo(map);
-    }
-  }
-});
-
-// Quick planner from map via GPS
-document.addEventListener('click',e=>{
-  if(e.target.id==='useGpsTripFrom'&&navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(pos=>{
-      // Find nearest location
-      let nearest=null, minDist=Infinity;
-      LOCATIONS.forEach(l=>{
-        const d=haversineKm(pos.coords.latitude,pos.coords.longitude,l.lat,l.lng);
-        if(d<minDist){minDist=d;nearest=l;}
-      });
-      document.getElementById('tripFrom').value=nearest?nearest.name:'';
-    },()=>showToast('GPS unavailable.'));
-  }
-});
-
-/* ─── ACTIVITY ─── */
-function renderActivity() {
-  const container=document.getElementById('activityList');
-  if(!container) return;
-  document.getElementById('statTotal').textContent=DB.totalReports||0;
-  document.getElementById('statVerified').textContent=DB.verifiedCount||0;
-  const trust=DB.trustScore||0;
-  document.getElementById('statTrust').textContent=trust;
-  document.getElementById('trustBadge').textContent=`Trust: ${trust}`;
-  document.getElementById('trustBadge').classList.toggle('show',true);
-  document.getElementById('trustBadge').style.background=trust>=50?'var(--green)':trust>=20?'var(--yellow)':'var(--accent)';
-
-  const reports=DB.reports||[];
-  if(reports.length===0){
-    container.innerHTML='<div class="empty-state"><div class="icon">📝</div><p>No reports yet</p></div>';
-    return;
-  }
-  container.innerHTML=reports.slice(-20).reverse().map(r=>{
-    const sc=r.status==='verified'?'green':r.status==='rejected'?'red':'yellow';
-    const sl=r.status==='verified'?'✅ Verified':r.status==='rejected'?'❌ Rejected':'⏳ Pending';
-    return `<div class="station-card" style="cursor:default;">
-      <div class="info">
-        <div class="name">${escapeMafutaHtml(r.stationName)}</div>
-        <div class="meta">${r.fuel.charAt(0).toUpperCase()+r.fuel.slice(1)} · UGX ${r.price.toLocaleString()} · ${new Date(r.timestamp).toLocaleDateString()}</div>
-      </div>
-      <span class="badge badge-${sc}">${sl}</span>
-    </div>`;
-  }).join('');
+const renderers={overview:overviewShell,prices:stationsView,stations:fuelDiscoveryView,services:servicesView,analytics:analyticsView,about:aboutView,contact:contactView,credits:creditsView,news:newsView,gallery:mediaGalleryView,videos:videoCentreView,profile:profileView,report:reportView,complaints:complaintsView,community:communityView,advisories:advisoriesView,trip:tripView,activity:activityView,operator:operatorView,admin:adminView,privacy:privacyView,'email-verify':emailVerifyView,'email-verified':emailVerifiedView};
+renderers['station-requests']=stationRequestView;
+const publicPages=new Set(['overview','prices','stations','services','analytics','advisories','about','contact','credits','privacy','news','gallery','videos']);
+const summaryPages=new Set(['overview','analytics','admin','stations']);
+function mountFuelDiscovery(){
+  if(!$('#fuelDiscovery'))return;
+  discovery=mountDiscovery($('#fuelDiscovery'),{embeddedMap:state.page==='admin',initial:state.discoveryPreferences,position:state.discoveryPosition,asOf:state.summary?.as_of,onDetails:stationDetail,onChange:(filters,position)=>{state.discoveryPreferences=filters;state.discoveryPosition=position;}});
+  if(state.locateOnArrival){state.locateOnArrival=false;discovery.locate();}
+  if(state.mapStationOnArrival){discovery.select(state.mapStationOnArrival);state.mapStationOnArrival=null;}
 }
-
-/* ─── NOTIFICATIONS ─── */
-function checkPriceChanges() {
-  // Simulate price changes and check subscriptions
-  const subs=DB.subscriptions||[];
-  if(subs.length===0) return;
-  subs.forEach(sub=>{
-    const s=getStation(sub.stationId);
-    if(!s) return;
-    const change=Math.floor(Math.random()*60)-30; // -30 to +30 UGX
-    if(Math.abs(change)>=100){
-      if(!DB.notifications) DB.notifications=[];
-      DB.notifications.push({
-        id:Date.now()+Math.random(),
-        type:'price_hike',
-        stationId:sub.stationId,
-        stationName:s.name,
-        message:`${change>0?'📈 Price Up':'📉 Price Down'} at ${s.name}: UGX ${(s.petrol||0)+change}/L`,
-        oldPrice:s.petrol||0,
-        newPrice:(s.petrol||0)+change,
-        change,
-        read:false,
-        date:new Date().toISOString(),
-      });
-      s.petrol=(s.petrol||0)+change;
-      saveDB();
-    }
-  });
+function closeMenu(){const nav=$('#primaryNavigation');nav.classList.remove('is-open');$('#menuToggle').setAttribute('aria-expanded','false');$('#menuToggle').setAttribute('aria-label','Open navigation');}
+const compactWorkspace=()=>matchMedia('(max-width: 900px)').matches;
+function syncWorkspaceShell(){
+  const workspace=document.body.dataset.shell==='workspace',compact=compactWorkspace();
+  $('#sidebarToggle').hidden=!workspace;
+  $('#workspaceSidebar').hidden=!workspace||(compact&&!state.sidebarOpen);
+  $('#sidebarBackdrop').hidden=!(workspace&&compact&&state.sidebarOpen);
+  $('#main').inert=workspace&&compact&&Boolean(state.sidebarOpen);
+  $('.site-footer').inert=workspace&&compact&&Boolean(state.sidebarOpen);
+  document.body.classList.toggle('sidebar-collapsed',workspace&&!compact&&Boolean(state.sidebarCollapsed));
+  document.body.classList.toggle('sidebar-open',workspace&&compact&&Boolean(state.sidebarOpen));
+  $('#sidebarToggle').setAttribute('aria-expanded',String(compact?Boolean(state.sidebarOpen):!state.sidebarCollapsed));
+  $('#sidebarToggle').setAttribute('aria-label',compact?(state.sidebarOpen?'Close workspace navigation':'Open workspace navigation'):(state.sidebarCollapsed?'Expand workspace navigation':'Collapse workspace navigation'));
 }
-
-function renderNotifications() {
-  const notifs=DB.notifications||[];
-  const badge=document.getElementById('notifBadge');
-  if(!badge) return;
-  const unread=notifs.filter(n=>!n.read).length;
-  badge.style.display=unread>0?'block':'none';
-  badge.textContent=unread;
+function decorateWorkspaceNav(){const icons={overview:'grid',stations:'pin',report:'report',complaints:'shield',community:'chat',advisories:'bell',trip:'route',activity:'chart',operator:'building',admin:'grid',profile:'user'};document.querySelectorAll('#navigation a').forEach(a=>{const text=a.textContent;a.innerHTML=`${icon(icons[a.dataset.page])}<span class="nav-text">${esc(text)}</span>`;a.title=text;});}
+function syncHeroPreload(enabled){
+  let link=document.getElementById('heroPreload');
+  if(!enabled){link?.remove();return;}
+  if(link)return;
+  link=document.createElement('link');link.id='heroPreload';link.rel='preload';link.as='image';link.href='/assets/kampala-road.jpg';
+  link.setAttribute('imagesrcset','/assets/kampala-road-960.jpg 960w, /assets/kampala-road-1280.jpg 1280w, /assets/kampala-road-1600.jpg 1600w, /assets/kampala-road.jpg 1920w');
+  link.setAttribute('imagesizes','(max-width: 900px) 50vw, 100vw');link.setAttribute('fetchpriority','high');
+  document.head.append(link);
 }
-setInterval(()=>{checkPriceChanges();renderNotifications();},15000);
-setTimeout(checkPriceChanges,5000);
-
-// Notification bell click
-document.addEventListener('click',e=>{
-  const panel=e.target.closest('#notifPanel');
-  const dd=document.getElementById('notifDropdown');
-  if(panel){
-    e.stopPropagation();
-    dd.classList.toggle('open');
-    if(dd.classList.contains('open')) renderNotifDropdown();
-    return;
-  }
-  if(e.target.closest('#notifDropdown')) return;
-  dd.classList.remove('open');
-});
-function renderNotifDropdown(){
-  const list=document.getElementById('notifList');
-  if(!list) return;
-  const notifs=DB.notifications||[];
-  const unread=notifs.filter(n=>!n.read).length;
-  notifs.forEach(n=>{n.read=true;});
-  saveDB();
-  renderNotifications();
-  if(notifs.length===0){
-    list.innerHTML='<div class="notif-empty">No notifications yet.</div>';
-    return;
-  }
-  list.innerHTML=notifs.slice().reverse().map(n=>`
-    <div class="notif-item ${unread>0?'':'read'}">
-      ${n.message}
-      <div class="notif-time">${new Date(n.time||n.createdAt).toLocaleString()}</div>
-    </div>
-  `).join('');
-}
-
-/* ─── FRAUD DETECTION ─── */
-function runFraudDetection() {
-  const pending=DB.reports.filter(r=>r.status==='pending');
-  if(pending.length===0) return false;
-
-  let flagged=false;
-  pending.forEach(r=>{
-    const s=getStation(r.stationId);
-    if(!s) return;
-
-    // 1. Check deviation from current price
-    const currentPrice=s[r.fuel]||0;
-    if(currentPrice>0){
-      const dev=Math.abs(r.price-currentPrice)/currentPrice*100;
-      if(dev>25){
-        r.status='rejected';
-        r.rejectionReason=`Price deviates ${dev.toFixed(0)}% from current pump price.`;
-        DB.trustScore=Math.max(0,(DB.trustScore||0)-5);
-        flagged=true;
-        if(!DB.reviews) DB.reviews=[];
-        DB.reviews.push({stationId:r.stationId,rating:1,text:`⚠️ Fraud alert: report for UGX ${r.price.toLocaleString()} rejected (${dev.toFixed(0)}% deviation).`,issues:['adulterated_fuel'],date:new Date().toISOString()});
-        saveDB();
-        return;
+async function navigate(){
+  const version=++routeVersion;
+  const raw=location.hash.slice(1)||'overview';
+  if(raw.startsWith('email-verify')){
+    state.page='email-verify';
+    const token=/^email-verify\?token=([a-f0-9]{64})$/.exec(raw)?.[1]??null;
+    if(token){if(state.emailVerify?.token!==token)state.emailVerify={token,status:'pending'};}
+    else state.emailVerify=null;
+  }else if(raw==='email-verified'){state.page='email-verified';}
+  else state.page=raw;
+  if(!renderers[state.page])state.page='overview';
+  syncHeroPreload(state.page==='overview');
+  closeMenu();state.sidebarOpen=false;document.body.dataset.shell=publicPages.has(state.page)?'public':'workspace';document.body.classList.toggle('is-home',state.page==='overview');syncWorkspaceShell();
+  const pageNames={overview:'Home',prices:'Fuel prices',stations:'Fuel stations',services:'Citizen services',analytics:'Reports & analytics',activity:'My activity',operator:'Station workspace',admin:'Operations dashboard',complaints:'Consumer complaints',report:'Price observation',community:'Driver community',trip:'Trip planner',advisories:'Advisories',privacy:'Privacy',about:'About',contact:'Contact',credits:'Photography credits',profile:'My profile',news:'Energy News',gallery:'Media Gallery',videos:'Video Centre','email-verify':'Verify email address','email-verified':'Email address updated'};
+  $('#errorBanner').hidden=true;$('#breadcrumb').textContent=pageNames[state.page]||state.page;
+  document.querySelectorAll('[data-page]').forEach(a=>{a.classList.toggle('active',a.dataset.page===state.page);if(a.dataset.page===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  document.querySelectorAll('[data-public-page]').forEach(a=>{if(a.dataset.publicPage===state.page)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
+  mediaManager?.destroy();mediaManager=null;discovery?.destroy();discovery=null;if(map){map.remove();map=null;}$('#view').setAttribute('aria-busy','true');
+  try{
+    syncDemoBanner();
+    if(state.page==='overview'){
+      $('#view').innerHTML=overviewShell();
+      renderCarousel();
+      await hydrateOverview(version);
+    }else{
+      $('#view').innerHTML='<div class="loading-surface"><p class="loading-message" role="status">Loading current records…</p><div aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>';
+      if(state.bootError){
+        try{
+          const session=await api('/auth/session');
+          state.user=session.user;setCsrf(session.csrfToken);state.bootError=null;
+          await loadPreferences().catch(()=>{});updateAccount();
+        }catch(error){state.bootError=error;throw error;}
       }
+      if(summaryPages.has(state.page))await summary();
+      const html=await renderers[state.page]();
+      if(version!==routeVersion)return;
+      $('#view').innerHTML=html;
+      if($('#fuelDiscovery'))mountFuelDiscovery();
     }
-
-    // 1a. Check price cap compliance
-    const capResult = checkPriceCap(r.stationId, r.fuel, r.price);
-    if (!capResult.withinCap) {
-      r.criticalCompliance = true;
-      r.status = 'flagged_critical';
-      if (!DB.admin) DB.admin = {};
-      if (!DB.admin.fraudQueue) DB.admin.fraudQueue = [];
-      DB.admin.fraudQueue.push({
-        id: Date.now(),
-        stationId: r.stationId,
-        stationName: s.name,
-        reportedPrice: r.price,
-        currentPrice: s[r.fuel] || 0,
-        fuel: r.fuel,
-        deviationPct: parseFloat(((r.price - capResult.cap) / capResult.cap * 100).toFixed(1)),
-        confidence: 'high',
-        userId: 'AUTO-FLAG',
-        location: s.area + ', ' + s.district,
-        timestamp: new Date().toISOString(),
-        status: 'pending',
-      });
-      flagged = true;
-      saveDB();
-    }
-
-    // 2. Check against 48h rolling median from price history
-    const history=DB.priceHistory?.filter(h=>h.stationId===r.stationId&&h.fuel===r.fuel)||[];
-    if(history.length>=3){
-      const prices=history.map(h=>h.price);
-      const sorted=[...prices,r.price].sort((a,b)=>a-b);
-      const median=sorted[Math.floor(sorted.length/2)];
-      const dev=Math.abs(r.price-median)/median*100;
-      if(dev>20){
-        r.status='rejected';
-        r.rejectionReason=`Deviates ${dev.toFixed(0)}% from 48h median.`;
-        DB.trustScore=Math.max(0,(DB.trustScore||0)-3);
-        flagged=true;
-        saveDB();
-        return;
-      }
-    }
-
-    // 3. If reporter is trusted (>=50), verify immediately
-    if((r.userTrust||0)>=50){
-      r.status='verified';
-      r.verifiedAt=new Date().toISOString();
-      s[r.fuel]=r.price;
-      s.lastUpdated=r.verifiedAt;
-      DB.verifiedCount=(DB.verifiedCount||0)+1;
-      DB.trustScore=Math.min(100,(DB.trustScore||0)+2);
-      saveDB();
-      return;
-    }
-
-    // 4. Check consensus: 3 matching reports from different users
-    const matching=DB.reports.filter(x=>
-      x.stationId===r.stationId&&x.fuel===r.fuel&&x.status==='pending'&&x.id!==r.id
-    );
-    const withinRange=matching.filter(x=>Math.abs(x.price-r.price)/r.price<=0.05);
-    if(withinRange.length>=2){
-      r.status='verified';
-      withinRange.forEach(x=>{x.status='verified';x.verifiedAt=new Date().toISOString();});
-      s[r.fuel]=Math.round((r.price+withinRange.reduce((a,b)=>a+b.price,0))/(withinRange.length+1));
-      s.lastUpdated=new Date().toISOString();
-      DB.verifiedCount=(DB.verifiedCount||0)+(1+withinRange.length);
-      DB.trustScore=Math.min(100,(DB.trustScore||0)+3);
-      saveDB();
-    }
-  });
-
-  if(flagged){
-    renderMapMarkers();
-    renderStationList();
-    renderActivity();
+    if(version!==routeVersion)return;
+    if(state.page==='report'&&state.reportStation){$('#reportForm [name=stationId]').value=state.reportStation;delete state.reportStation;}
+    if(state.page==='complaints'&&state.citizenMode&&$('#complaintForm'))$('#complaintForm [name=vehicleType]').value=state.citizenMode;
   }
-  return flagged;
+  catch(error){if(version!==routeVersion)return;$('#view').innerHTML=empty('Unable to load current records. Check your connection and use Refresh data.');showError(error);$('#connection').textContent='Unavailable';}
+  finally{if(version===routeVersion){$('#view').setAttribute('aria-busy','false');mountPasswordToggles($('#view'));if($('#mediaManagement'))mediaManager=mountMediaManagement($('#mediaManagement'),state.mediaContent,{onSaved:announceContentUpdate});}}
 }
-setInterval(runFraudDetection,8000);
-
-/* ─── GOVERNANCE DASHBOARD ─── */
-let adminChart=null;
-let adminActiveTab='dashboard';
-
-function initAdminSystem() {
-  if (!DB.admin) DB.admin = {};
-  if (!DB.admin.fraudQueue) {
-    DB.admin.fraudQueue = [
-      { id:1, stationId:42, stationName:'Shell Mbarara', reportedPrice:6800, currentPrice:5550, fuel:'petrol',
-        deviationPct:22.5, confidence:'high', userId:'USR-7X3K9', location:'Mbarara Town',
-        timestamp:new Date(Date.now()-120000).toISOString(), status:'pending' },
-      { id:2, stationId:17, stationName:'Kobil Bombo Road', reportedPrice:4200, currentPrice:5390, fuel:'petrol',
-        deviationPct:22.1, confidence:'high', userId:'USR-2B8M1', location:'Bombo Road, Kampala',
-        timestamp:new Date(Date.now()-300000).toISOString(), status:'pending' },
-      { id:3, stationId:36, stationName:'Shell Jinja Main', reportedPrice:6000, currentPrice:5430, fuel:'petrol',
-        deviationPct:10.5, confidence:'med', userId:'USR-9F4D2', location:'Jinja Town',
-        timestamp:new Date(Date.now()-600000).toISOString(), status:'pending' },
-      { id:4, stationId:5, stationName:'Total Ntinda', reportedPrice:4900, currentPrice:5380, fuel:'diesel',
-        deviationPct:8.9, confidence:'low', userId:'USR-5H7J8', location:'Ntinda, Kampala',
-        timestamp:new Date(Date.now()-900000).toISOString(), status:'pending' },
-      { id:5, stationId:47, stationName:'Shell Arua', reportedPrice:7100, currentPrice:5650, fuel:'petrol',
-        deviationPct:25.7, confidence:'high', userId:'USR-1C3V5', location:'Arua Town',
-        timestamp:new Date(Date.now()-1800000).toISOString(), status:'pending' },
-    ];
-  }
-  if (!DB.admin.kycApplications) {
-    DB.admin.kycApplications = [
-      { id:1, name:'Jinja North Fuel Station', operator:'Sarah Nakato', phone:'+256712998877', email:'sarah@jinnorth.ug',
-        district:'Jinja', region:'Eastern', docs:['Trading License','URA Tax Clearance','Station Photos'],
-        submitted:new Date(Date.now()-86400000*2).toISOString(), status:'pending' },
-      { id:2, name:'Mbarara Express Fuel', operator:'Peter Byansi', phone:'+256771234567', email:'peter@mbarfuel.ug',
-        district:'Mbarara', region:'Western', docs:['Trading License','Environmental Permit','Fire Clearance'],
-        submitted:new Date(Date.now()-86400000*5).toISOString(), status:'pending' },
-      { id:3, name:'Gulu Highway Depot', operator:'Grace Akello', phone:'+256783456789', email:'grace@guludepot.ug',
-        district:'Gulu', region:'Northern', docs:['Trading License','Fuel Storage Permit','Tax Clearance'],
-        submitted:new Date(Date.now()-86400000*7).toISOString(), status:'pending' },
-    ];
-  }
-  if (!DB.admin.apiTokens) {
-    DB.admin.apiTokens = [
-      { id:1, name:'Shell Uganda — Forecourt Sync', token:'DEMO_TOKEN_REMOVED',
-        operator:'Shell Uganda', created:new Date(Date.now()-86400000*30).toISOString(),
-        lastUsed:new Date(Date.now()-3600000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:2, name:'TotalEnergies — Pump Integration', token:'DEMO_TOKEN_REMOVED',
-        operator:'TotalEnergies Uganda', created:new Date(Date.now()-86400000*14).toISOString(),
-        lastUsed:new Date(Date.now()-7200000).toISOString(), status:'active', rateLimit:'1000 req/min' },
-      { id:3, name:'Stabex — Legacy API Bridge', token:'DEMO_TOKEN_REMOVED',
-        operator:'Stabex Uganda', created:new Date(Date.now()-86400000*60).toISOString(),
-        lastUsed:null, status:'revoked', rateLimit:'500 req/min' },
-    ];
-  }
-  if (!DB.admin.auditLog) {
-    const entries = [];
-    const channels = ['web','ussd','wa','api','operator','admin'];
-    const actions = ['price_update','fraud_dismiss','operator_auth','broadcast'];
-    for (let i=0; i<25; i++) {
-      const station = STATIONS_DATA[Math.floor(Math.random()*STATIONS_DATA.length)];
-      const channel = channels[Math.floor(Math.random()*channels.length)];
-      const oldP = 5100 + Math.floor(Math.random()*500);
-      const newP = oldP + Math.floor(Math.random()*200)-100;
-      entries.push({
-        id:Date.now()-i*3600000, timestamp:new Date(Date.now()-i*3600000).toISOString(),
-        stationId:station.id, stationName:station.name,
-        modifiedBy:['API:Shell','API:Total','Admin:memd_user','Operator:'+station.name,'USSD:user'][Math.floor(Math.random()*5)],
-        previousPrice:oldP, newPrice:newP, fuel:Math.random()>0.5?'petrol':'diesel',
-        channel, action:actions[Math.floor(Math.random()*actions.length)],
-      });
-    }
-    DB.admin.auditLog = entries;
-  }
-  if (!DB.admin.hierarchy) {
-    DB.admin.hierarchy = [
-      { id:1, name:'Central Region', type:'region', children:[
-        { id:11, name:'Kampala', type:'district', children:['Kampala Central','Nakawa','Kawempe','Makindye','Rubaga'].map((a,i)=>({id:110+i,name:a,type:'area',stations:STATIONS_DATA.filter(s=>s.area===a).map(s=>s.name)})) },
-        { id:12, name:'Wakiso', type:'district', children:[{id:120,name:'Entebbe',type:'area',stations:['Shell Entebbe Airport','Total Entebbe Town']},{id:121,name:'Nansana',type:'area',stations:['Shell Nansana']}] },
-        { id:13, name:'Mukono', type:'district', children:[{id:130,name:'Mukono Town',type:'area',stations:['Stabex Mukono','Shell Mukono']}] },
-      ]},
-      { id:2, name:'Western Region', type:'region', children:[
-        { id:21,name:'Mbarara',type:'district',children:[{id:210,name:'Mbarara Town',type:'area',stations:['Shell Mbarara','Total Mbarara']}]},
-        { id:22,name:'Kabarole',type:'district',children:[{id:220,name:'Fort Portal',type:'area',stations:['Shell Fort Portal','Total Fort Portal']}]},
-      ]},
-      { id:3, name:'Eastern Region', type:'region', children:[
-        { id:31,name:'Jinja',type:'district',children:[{id:310,name:'Jinja Town',type:'area',stations:['Shell Jinja Main','Total Jinja']}]},
-        { id:32,name:'Mbale',type:'district',children:[{id:320,name:'Mbale Town',type:'area',stations:['Shell Mbale','Total Mbale']}]},
-      ]},
-      { id:4, name:'Northern Region', type:'region', children:[
-        { id:41,name:'Gulu',type:'district',children:[{id:410,name:'Gulu Town',type:'area',stations:['Shell Gulu','Total Gulu']}]},
-        { id:42,name:'Arua',type:'district',children:[{id:420,name:'Arua Town',type:'area',stations:['Shell Arua','Total Arua']}]},
-      ]},
-    ];
-  }
-  saveDB();
+function validateFiles(files){if(files.length>3)throw new Error('Choose no more than three files.');for(const file of files)if(file.size>5242880||!['image/png','image/jpeg','application/pdf'].includes(file.type))throw new Error('Use JPEG, PNG or PDF files, each no larger than 5 MiB.');}
+async function uploadFiles(kind,id,files){for(const file of files)await api(`/${kind}/${id}/attachments`,{method:'POST',headers:{'content-type':file.type,'x-file-name':file.name.replace(/[^\x20-\x7E]/g,'_')},raw:file});}
+function csv(rows,filename){
+  if(!rows.length)return toast('No data to export.');
+  const columns=Object.keys(rows[0]);const cell=value=>{let s=typeof value==='object'?JSON.stringify(value):String(value??'');if(/^[\s]*[=+\-@\t\r\n]/.test(s))s=`'${s}`;return `"${s.replace(/"/g,'""')}"`;};
+  const text=[columns.map(cell).join(','),...rows.map(r=>columns.map(c=>cell(r[c])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff',text],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${filename}-${new Date().toISOString().slice(0,10)}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-
-/* ─── ADMIN ACCOUNTS & RBAC ─── */
-// Credentials are verified only by the production backend. No browser-owned accounts.
-let adminSession = null;
-
-/* ─── ADMIN SUB-NAV ─── */
-document.addEventListener('click', e => {
-  const tab = e.target.closest('.admin-tab');
-  if (tab) {
-    const pane = tab.dataset.adminTab;
-    document.querySelectorAll('.admin-tab').forEach(t=>t.classList.remove('active'));
-    tab.classList.add('active');
-    document.querySelectorAll('.admin-pane').forEach(p=>p.classList.remove('active'));
-    const el = document.getElementById('adminPane-'+pane);
-    if (el) el.classList.add('active');
-    adminActiveTab = pane;
-    if (pane==='dashboard') renderAdminDash();
-    if (pane==='fraud') renderFraudQueue();
-    if (pane==='c2g') renderC2GAdmin();
-    if (pane==='stations') renderKYCPipeline();
-    if (pane==='audit') renderAuditTrail();
-    if (pane==='config') renderHierarchyTree();
-    if (pane==='caps') renderCapEditor();
-    if (pane==='api') renderAPITokens();
+const infoTitles={about:'About MafutaWatch',advisories:'Advisories & town halls',contact:'Help & contact',privacy:'Privacy & data use',credits:'Photography credits'};
+const infoPages=new Set(['about','advisories','contact','privacy','credits']);
+let infoCurrent=null,infoStack=[];
+async function renderInfo(kind){const renderer=renderers[kind];if(!renderer)return'';try{return await renderer();}catch(error){return `<div class="empty">${esc(error.message||'This information is unavailable right now.')}</div>`;}}
+async function openInfo(kind){if(infoCurrent!==null&&infoCurrent!==kind)infoStack.push(infoCurrent);infoCurrent=kind;const html=await renderInfo(kind);$('#infoTitle').textContent=infoTitles[kind]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;$('#infoDialog').showModal();}
+async function showInfoBack(){const prev=infoStack.pop();if(prev===undefined)return;infoCurrent=prev;const html=await renderInfo(prev);$('#infoTitle').textContent=infoTitles[prev]||'Information';$('#infoContent').innerHTML=html;$('#backInfo').hidden=infoStack.length===0;}
+function renderCarousel(){const track=$('.carousel-track');if(!track)return;const slides=track.querySelectorAll('.carousel-slide');if(!slides.length)return;const dots=$('.carousel-dots');const idx=((state.carouselIndex%slides.length)+slides.length)%slides.length;state.carouselIndex=idx;slides.forEach((s,i)=>{s.style.display=i===idx?'block':'none';});if(dots)dots.querySelectorAll('.carousel-dot').forEach((d,i)=>{d.classList.toggle('active',i===idx);});}
+async function action(button){
+  const id=button.dataset.id,kind=button.dataset.action;
+  if(kind==='skip'){$('#main').focus();return;}
+  if(kind==='open-info'){await openInfo(button.dataset.info);return;}
+  if(kind==='close-info'){$('#infoDialog').close();infoCurrent=null;infoStack=[];return;}
+  if(kind==='back-info'){await showInfoBack();return;}
+  if(kind==='auth')return openAuth();
+  if(kind==='staff-auth')return openAuth('staff');
+  if(kind==='register')return openAuth('register');
+  if(kind==='menu'){state.sidebarOpen=false;syncWorkspaceShell();const open=$('#primaryNavigation').classList.toggle('is-open');button.setAttribute('aria-expanded',String(open));button.setAttribute('aria-label',open?'Close navigation':'Open navigation');return;}
+  if(kind==='sidebar'){closeMenu();if(compactWorkspace())state.sidebarOpen=!state.sidebarOpen;else state.sidebarCollapsed=!state.sidebarCollapsed;syncWorkspaceShell();if(compactWorkspace()&&state.sidebarOpen)$('#navigation a:not([hidden])').focus();return;}
+  if(kind==='sidebar-close'){state.sidebarOpen=false;syncWorkspaceShell();$('#sidebarToggle').focus();return;}
+  if(kind==='notifications')return notificationDialog();
+  if(kind==='price-map'){const el=$('#stationMap'),opening=el.hidden;el.hidden=!opening;button.textContent=opening?'Back to List':'Map View';button.setAttribute('aria-expanded',String(opening));if(!opening){map?.remove();map=null;return;}try{await loadLeaflet();if(el.isConnected&&!el.hidden)initMap();}catch(error){if(el.isConnected)el.innerHTML=empty(error.message);}return;}
+  if(kind==='citizen-mode'){if(state.user?.role==='citizen'&&['private','boda','truck'].includes(button.dataset.mode)){state.citizenMode=button.dataset.mode;return navigate();}return;}
+  if(kind==='find-nearby'){if(discovery){$('#fuelDiscovery').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});return discovery.locate();}state.locateOnArrival=true;location.hash='stations';return;}
+  if(kind==='station-map'){const station=state.assigned.find(s=>s.id===Number(id));if(!station)return;state.discoveryPreferences={q:station.name,district:'',fuel:'petrol',sort:'name',freshness:'all',radius:'',verifiedOnly:false};state.discoveryPosition=null;state.mapStationOnArrival=station.id;location.hash='stations';return;}
+  if(kind==='account'){location.hash=workspaceFor(state.user?.role).page;return;}
+  if(kind==='close-auth'){ $('#authDialog').close();return;}
+  if(kind==='close-detail'){ $('#detailDialog').close();return;}
+  if(kind==='toggle-register'){state.authMode=state.authMode==='login'?'register':'login';renderAuth();return;}
+  if(kind==='logout'){await api('/auth/logout',{method:'POST',body:{}});state.user=null;state.ticket=null;state.assigned=[];state.discoveryPosition=null;state.position=null;state.citizenMode='private';setCsrf(null);$('#detailDialog').close();updateAccount();if(location.hash==='#overview')return navigate();location.hash='overview';return;}
+  if(kind==='refresh')return navigate();
+  if(kind==='station')return stationDetail(Number(id));
+  if(kind==='ticket'){if(authRequired())return ticketDetail(id);return;}
+  if(kind==='report-station'){state.reportStation=id;$('#detailDialog').close();if(location.hash==='#report')return navigate();location.hash='report';return;}
+  if(kind==='subscribe'){if(!authRequired())return;await api(`/stations/${id}/subscription`,{method:'PUT',body:{enabled:button.dataset.enabled==='true'}});toast('Price-change preference saved.');return stationDetail(Number(id));}
+  if(kind==='locate'||kind==='report-gps'){
+    if(!navigator.geolocation)throw new Error('Location is not supported on this device.');
+    const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,()=>reject(new Error('Location unavailable or permission denied. You can still search by area.')),{timeout:10000,maximumAge:60000}));
+    const coords={latitude:pos.coords.latitude,longitude:pos.coords.longitude};
+    if(kind==='locate'){state.position=coords;state.offset=0;return navigate();}
+    $('#reportForm').dataset.latitude=coords.latitude;$('#reportForm').dataset.longitude=coords.longitude;$('#gpsStatus').textContent='GPS attached. Shared only with authorized reviewers.';return;
   }
-});
-
-document.addEventListener('click', e => {
-  const tab = e.target.closest('.admin-sub-tab');
-  if (tab) {
-    const parent = tab.closest('[id]');
-    if (!parent) return;
-    const container = parent.id;
-    tab.closest('.admin-sub-tabs').querySelectorAll('.admin-sub-tab').forEach(t=>t.classList.remove('active'));
-    tab.classList.add('active');
-    if (container==='adminPane-stations') {
-      document.getElementById('kycPipeline').style.display = tab.dataset.stationTab==='kyc' ? 'block' : 'none';
-      document.getElementById('whitelistContainer').style.display = tab.dataset.stationTab==='whitelist' ? 'block' : 'none';
-      if (tab.dataset.stationTab==='whitelist') renderWhitelist();
-    }
-    if (container==='adminPane-config') {
-      document.getElementById('configHierarchy').style.display = tab.dataset.configTab==='hierarchy' ? 'block' : 'none';
-      document.getElementById('configBroadcast').style.display = tab.dataset.configTab==='broadcast' ? 'block' : 'none';
-      renderBroadcasts();
-    }
+  if(kind==='clear-location'){state.position=null;state.offset=0;return navigate();}
+  if(kind==='stations-page'){state.offset=Number(button.dataset.offset);return navigate();}
+  if(kind==='station-request-page'){state.stationRequestOffset=Number(button.dataset.offset);return navigate();}
+  if(kind==='station-request-duplicates'){
+    const form=$('#stationRequestForm');
+    const result=await api('/station-requests/duplicates',{method:'POST',body:{stationName:form.elements.stationName.value,latitude:Number(form.elements.latitude.value),longitude:Number(form.elements.longitude.value)}});
+    $('#stationRequestDuplicates').innerHTML=stationDuplicateLinks(result.items);return;
   }
-});
-
-/* ─── ADMIN LOGIN: implemented in production.js using server-issued JWTs ─── */
-
-/* ─── SLA TIMERS ─── */
-function renderSLATimers() {
-  const container = document.getElementById('slatTimerContainer');
-  if (!container) return;
-  const tickets = (DB.c2gTickets || []).filter(t => t.status === 'open' || t.status === 'investigating');
-  if (tickets.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-dim);font-size:0.82rem;text-align:center;padding:12px;">No active SLA timers.</div>';
+  if(kind==='activity-page'){state.activityOffset=Number(button.dataset.offset);return navigate();}
+  if(kind==='admin-page'){state.adminOffset=Number(button.dataset.offset);return navigate();}
+  if(kind==='room'){state.room=Number(id);return navigate();}
+  if(kind==='admin-tab'){state.adminTab=button.dataset.tab;if(button.dataset.assignment)state.caseAssignment=button.dataset.assignment;state.adminOffset=0;await rememberSetting('admin',{lastAdminTab:state.adminTab});return navigate();}
+  if(kind==='carousel-prev'){state.carouselIndex=(state.carouselIndex||0)-1;renderCarousel();return;}
+  if(kind==='carousel-next'){state.carouselIndex=(state.carouselIndex||0)+1;renderCarousel();return;}
+  if(kind==='carousel-dot'){state.carouselIndex=Number(button.dataset.index);renderCarousel();return;}
+  if(kind==='open-lightbox'){const media=(await api('/media')).items??[];const m=media.find(x=>x.id===button.dataset.media);if(!m)return;$('#lightboxTitle').textContent=m.title;$('#lightboxContent').innerHTML=imageCard({...m,thumbnail_url:null});const image=$('#lightboxContent img'),trigger=$('#lightboxContent .media-image-button');if(image)trigger.replaceWith(image);else trigger.remove();$('#mediaLightbox').showModal();return;}
+  if(kind==='close-lightbox'){$('#mediaLightbox').close();return;}
+  if(kind==='open-video'){const videos=(await api('/videos')).items??[];const v=videos.find(x=>x.id===button.dataset.video);if(!v)return;$('#lightboxTitle').textContent=v.title;$('#lightboxContent').innerHTML=videoPlayer(v.video_url,v.title,v.thumbnail_url)+`<p>${esc(v.description)}</p><p class="small">${esc(v.source||'Source not recorded')} · ${esc(v.license)} · ${esc(v.duration)}</p>`;$('#mediaLightbox').showModal();return;}
+  if(kind==='read-notifications'){const shown=button.closest('#detailDialog')?state.notifications.slice(0,10):state.notifications;await api('/me/notifications/read',{method:'POST',body:{ids:shown.filter(n=>!n.read_at).map(n=>n.id)}});await refreshNotifications();if($('#detailDialog').open)$('#detailDialog').close();return navigate();}
+  if(['vote','hide-message'].includes(kind)){if(!authRequired())return;await api(`/messages/${id}${kind==='vote'?'/vote':''}`,{method:kind==='vote'?'PUT':'DELETE',body:{}});return navigate();}
+  if(kind==='revoke-token'){await api(`/tokens/${id}`,{method:'DELETE'});toast('Credential revoked.');return navigate();}
+  if(kind==='revoke-assignment'){if(!confirm('Revoke this station assignment and its integration credentials?'))return;await api(`/admin/stations/${id}/staff/${button.dataset.user}`,{method:'DELETE'});toast('Station access revoked.');return navigate();}
+  if(kind==='assign-role'){
+    const select=button.parentElement.querySelector('select'),role=select?.value,name=button.dataset.name||'this account';
+    if(!role||role===button.dataset.current)return;
+    if(!confirm(`Assign the ${role} role to ${name}? Their active sessions and station integrations will be revoked.`))return;
+    const reason=prompt(`Record the authorization and evidence for assigning the ${role} role to ${name}:`);if(!reason)return;
+    await api(`/admin/users/${id}`,{method:'PATCH',body:{role,reason}});toast('Account role updated and recorded.');return navigate();
+  }
+  if(['review-report','review-application','answer-question','verify-user','disable-user','deactivate-station'].includes(kind)){
+    const reason=prompt(kind==='answer-question'?'Enter the platform response:':'Record the evidence checked and reason for this decision:');if(!reason)return;
+    if(kind==='review-report')await api(`/admin/reports/${id}`,{method:'PATCH',body:{status:button.dataset.status,reason}});
+    if(kind==='review-application')await api(`/applications/${id}`,{method:'PATCH',body:{status:button.dataset.status,reason}});
+    if(kind==='answer-question')await api(`/questions/${id}`,{method:'PATCH',body:{answer:reason}});
+    if(kind==='verify-user'||kind==='disable-user')await api(`/admin/users/${id}`,{method:'PATCH',body:{[kind==='verify-user'?'identityVerified':'disabled']:button.dataset.value==='true',reason}});
+    if(kind==='deactivate-station')await api(`/admin/stations/${id}`,{method:'PATCH',body:{active:button.dataset.active==='true',reason}});
+    toast('Decision saved and recorded.');return navigate();
+  }
+  if(kind==='deletion-review'){
+    const request=(await api(`/admin/deletion-requests/${id}`)).request;
+    if(!request)return;
+    $('#detailTitle').textContent='Deletion request review';
+    $('#detailContent').innerHTML=`<p><strong>${esc(request.display_name)}</strong> · ${esc(request.email)} · ${badge(request.role)}</p><p class="small">Submitted ${date(request.created_at)} · ${badge(request.status.replaceAll('_',' '),request.status)}</p><p class="notice-text">${esc(request.reason)}</p>${request.user_response?`<p class="small"><strong>Account response:</strong> ${esc(request.user_response)}</p>`:''}${request.review_note?`<p class="small"><strong>Previous note:</strong> ${esc(request.review_note)}</p>`:''}<form id="deletionReviewForm"><p class="small">Every decision requires a recorded reason of at least 10 characters. Approving authorizes the separate, authorized deletion procedure; it never erases accounts or evidence. Investigation records, financial evidence and legally required data are retained under the approved retention policy.</p>${textarea('Recorded reason','note',{min:10,max:1000})}<div class="actions"><button class="small" data-action="deletion-decision" data-decision="request_info" data-id="${id}">Request information</button><button class="primary" data-action="deletion-decision" data-decision="approve" data-id="${id}">Approve</button><button class="danger" data-action="deletion-decision" data-decision="reject" data-id="${id}">Reject</button></div></form>`;
+    if(!$('#detailDialog').open)$('#detailDialog').showModal();
     return;
   }
-  container.innerHTML = tickets.map(t => {
-    const elapsed = Date.now() - new Date(t.createdAt).getTime();
-    const remaining = Math.max(0, 86400000 - elapsed);
-    const hours = Math.floor(remaining / 3600000);
-    const minutes = Math.floor((remaining % 3600000) / 60000);
-    const pct = (elapsed / 86400000) * 100;
-    const urgent = remaining < 14400000;
-    const warning = remaining < 28800000;
-    const cls = urgent ? 'sla-urgent' : warning ? 'sla-warning' : '';
-    return `<div class="sla-card ${cls}">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-weight:600;font-size:0.82rem;">Ticket #${t.id}</span>
-        <span style="font-size:0.75rem;color:var(--text-dim);">${escapeMafutaHtml(t.stationName)}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-        <div class="sla-timer" style="font-size:1.4rem;font-weight:800;font-family:var(--font-mono);">${hours}h ${minutes}m</div>
-        <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-          <div style="height:100%;width:${pct.toFixed(0)}%;background:${urgent?'#ef4444':warning?'#f59e0b':'#76FF03'};border-radius:3px;transition:width 1s;"></div>
-        </div>
-      </div>
-      <div style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;">Status: ${t.status} · Created ${new Date(t.createdAt).toLocaleDateString()}</div>
-      <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
-        ${t.status==='open' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'investigating')" style="font-size:0.6rem;">🔍 Start Investigation</button>` : ''}
-        ${t.status==='investigating' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'dispatched')" style="font-size:0.6rem;">🚔 Dispatch Enforcement</button>` : ''}
-        ${t.status==='dispatched' ? `<button class="btn-tool btn-tool-primary btn-tool-sm" onclick="progressTicket(${t.id},'resolved')" style="font-size:0.6rem;">✅ Resolved</button> <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'penalty_issued')" style="font-size:0.6rem;border-color:rgba(239,68,68,0.3);color:#fca5a5;">💰 Penalty Issued</button>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+  if(kind==='deletion-decision'){
+    const note=$('#deletionReviewForm [name=note]')?.value.trim()??'';
+    if(note.length<10)throw new Error('Record a reason of at least 10 characters for this decision.');
+    await api(`/admin/deletion-requests/${button.dataset.id}`,{method:'PATCH',body:{action:button.dataset.decision,note}});
+    $('#detailDialog').close();toast('Decision recorded. The member was notified.');return navigate();
+  }
+  if(kind==='export-dashboard'){csv([await api('/admin/dashboard')],'operations-kpis');return;}
+  if(kind==='export-audit'){csv((await api(`/admin/audit?limit=50&offset=${state.adminOffset}`)).items,'audit');return;}
+  if(kind==='export-price-history'){const d=await api('/admin/dashboard');csv(d.trend.filter(r=>!state.analyticsFuel||state.analyticsFuel==='all'||r.fuel===state.analyticsFuel),'accepted-price-history');return;}
+  if(kind==='profile-save'){
+    const form=$('#profileForm');const data=Object.fromEntries(new FormData(form));
+    await api('/me/profile',{method:'PATCH',body:{displayName:data.displayName??undefined,preferredName:data.preferredName??undefined,phone:data.phone??undefined,district:data.district??undefined}});
+    $('#profileSaveStatus').textContent='Saved.';setTimeout(()=>$('#profileSaveStatus').textContent='',3000);return navigate();
+  }
+  if(kind==='profile-email-save'){
+    const form=$('#profileEmailForm');const data=Object.fromEntries(new FormData(form));
+    if(!data.email||!data.emailPassword)throw new Error('Enter your new email and current password.');
+    const result=await api('/me/email/change-request',{method:'POST',body:{newEmail:data.email,currentPassword:data.emailPassword}});
+    toast(result?.message||'A verification link was sent to the new address. Your current address stays active until you confirm.');
+    return navigate();
+  }
+  if(kind==='profile-avatar'){
+    const input=document.getElementById('avatarFile');const file=input?.files?.[0];if(!file)throw new Error('Choose an image first.');
+    if(file.size>2097152)throw new Error('Image must be no larger than 2 MiB.');
+    const ext=file.name.slice(file.name.lastIndexOf('.')).toLowerCase();if(!['.jpg','.jpeg','.png','.webp'].includes(ext))throw new Error('Only JPEG, PNG or WebP images are accepted.');
+    const ab=await file.arrayBuffer();await api('/me/avatar',{method:'PUT',headers:{'x-file-name':file.name,'content-type':file.type},raw:ab});
+    input.value='';document.getElementById('avatarPreview').style.display='none';
+    $('#avatarStatus').textContent='Profile picture updated.';setTimeout(()=>$('#avatarStatus').textContent='',3000);return navigate();
+  }
+  if(kind==='profile-avatar-remove'){await api('/me/avatar',{method:'DELETE'});document.getElementById('avatarPreview').style.display='none';$('#avatarStatus').textContent='Profile picture removed.';setTimeout(()=>$('#avatarStatus').textContent='',3000);return navigate();}
+  if(kind==='unsubscribe'){await api(`/stations/${id}/subscription`,{method:'PUT',body:{enabled:false}});toast('Station removed from saved stations.');return navigate();}
+  if(kind==='preferences-save'){
+    const form=$('#preferencesForm');const data=Object.fromEntries(new FormData(form));
+    const notifications={priceChanges:!!form.priceChanges.checked,reportUpdates:!!form.reportUpdates.checked,complaintUpdates:!!form.complaintUpdates.checked,advisories:!!form.advisories.checked};
+    const privacy={publicDisplayName:!!form.publicDisplayName.checked};
+    await api('/me/preferences',{method:'PATCH',body:{fuelType:data.fuelType||undefined,vehicleType:data.vehicleType||undefined,preferredDistrict:data.preferredDistrict?.trim()||undefined,notifications,privacy}});
+    await loadPreferences();toast('Preferences saved.');return navigate();
+  }
+  if(kind==='role-settings-save'){
+    const roleSettings=Object.fromEntries([...$('#roleSettingsForm').querySelectorAll('input[type=checkbox]')].map(input=>[input.name,input.checked]));
+    await api('/me/preferences',{method:'PATCH',body:{roleSettings}});
+    await loadPreferences();$('#roleSettingsStatus').textContent='Saved.';return;
+  }
+  if(kind==='password-save'){
+    const form=$('#profilePasswordForm');const data=Object.fromEntries(new FormData(form));
+    if(!data.currentPassword||!data.newPassword)throw new Error('Enter your current and new password.');
+    await api('/auth/password',{method:'POST',body:{currentPassword:data.currentPassword,newPassword:data.newPassword}});
+    state.user=null;updateAccount();toast('Password changed. Sign in again.');location.hash='overview';return navigate();
+  }
+  if(kind==='deletion-request'){
+    const form=$('#deletionForm');const data=Object.fromEntries(new FormData(form));
+    if(!data.reason||!data.delPassword)throw new Error('Enter a reason and your current password.');
+    await api('/me/deletion-request',{method:'POST',body:{reason:data.reason,password:data.delPassword}});
+    toast('Deletion request submitted for administrator review.');return navigate();
+  }
 }
-setInterval(renderSLATimers, 60000);
-
-/* ─── DASHBOARD ─── */
-function renderAdminDash() {
-  if(activePane!=='admin' || adminActiveTab!=='dashboard') return;
-  const total=(DB.reports||[]).length;
-  const verified=(DB.reports||[]).filter(r=>r.status==='verified').length;
-  const rejected=(DB.reports||[]).filter(r=>r.status==='rejected').length;
-  const activeAPI = (DB.admin.apiTokens||[]).filter(t=>t.status==='active').length;
-  const flagged = (DB.admin.fraudQueue||[]).filter(f=>f.status==='pending').length;
-  document.getElementById('adminTotalReports').textContent=total;
-  document.getElementById('adminVerified').textContent=verified;
-  document.getElementById('adminFraud').textContent=flagged;
-  document.getElementById('adminOperators').textContent=activeAPI;
-  const dau = DB.totalReports||0;
-  document.getElementById('adminDAU').textContent=dau > 0 ? Math.max(150, dau * 3 + 120) : 0;
-  document.getElementById('adminRejected').textContent=rejected;
-
-  // Regions
-  const regions={};
-  STATIONS_DATA.filter(s=>s.petrol).forEach(s=>{
-    if(!regions[s.region]) regions[s.region]={prices:[],diesel:[]};
-    regions[s.region].prices.push(s.petrol);
-    if(s.diesel) regions[s.region].diesel.push(s.diesel);
-  });
-  const regHtml=Object.entries(regions).map(([name,data])=>{
-    const avg=(data.prices.reduce((a,b)=>a+b,0)/data.prices.length).toFixed(0);
-    const min=Math.min(...data.prices);
-    const max=Math.max(...data.prices);
-    return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
-      <strong>${name}</strong>
-      <div><span class="badge badge-green">UGX ${Number(avg).toLocaleString()}</span> <span style="color:var(--text-muted);font-size:0.7rem;">(${Number(min).toLocaleString()}–${Number(max).toLocaleString()})</span></div>
-    </div>`;
-  }).join('');
-  const regEl = document.getElementById('adminRegions');
-  if (regEl) regEl.innerHTML=regHtml||'<div style="color:var(--text-muted)">No data</div>';
-
-  // Chart — only if dashboard is visible
-  const dashEl = document.getElementById('adminDash');
-  if(typeof Chart!=='undefined' && dashEl && dashEl.style.display!=='none'){
-    const ctx=document.getElementById('priceChart');
-    if(ctx){
-      const last30Days=[...Array(30)].map((_,i)=>{
-        const d=new Date(); d.setDate(d.getDate()-29+i);
-        return {date:d.toLocaleDateString('en-UG',{month:'short',day:'numeric'}),
-                avg:5300+Math.random()*300};
-      });
-      if(adminChart) adminChart.destroy();
-      adminChart=new Chart(ctx,{
-        type:'line',
-        data:{
-          labels:last30Days.map(d=>d.date),
-          datasets:[{
-            label:'Avg Petrol Price (UGX)',
-            data:last30Days.map(d=>Math.round(d.avg)),
-            borderColor:'#76FF03',
-            backgroundColor:'rgba(118,255,3,0.08)',
-            fill:true,
-            tension:0.3,
-            pointRadius:2,
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          plugins:{legend:{display:false}},
-          scales:{y:{beginAtZero:false,ticks:{callback:v=>'UGX '+v.toLocaleString()}}}
-        }
-      });
+async function submit(form){
+  const data=Object.fromEntries(new FormData(form));const number=name=>Number(data[name]);
+  if(form.id==='authForm'){
+    const body={email:data.email,password:data.password};if(state.authMode==='register'){body.displayName=data.displayName;body.consent=data.consent==='on';}
+    const session=await api(`/auth/${state.authMode==='register'?'register':'login'}`,{method:'POST',body});state.user=session.user;setCsrf(session.csrfToken);await loadPreferences().catch(()=>{});updateAccount();applySavedWorkspacePreferences();refreshNotifications().catch(()=>{});$('#authDialog').close();form.reset();toast(`Welcome, ${state.user.display_name}.`);
+    if(['pending','awaiting'].includes(state.emailVerify?.status)){const target=`#email-verify?token=${state.emailVerify.token}`;if(location.hash===target)return navigate();location.hash=target;return;}
+    const destination=workspaceFor(state.user.role).page;if(location.hash===`#${destination}`)return navigate();location.hash=destination;return;
+  }
+  if(form.id==='homeSearch'){state.filters={...state.filters,q:data.q,district:data.district,fuel:data.fuel,sort:'price'};state.position=null;state.offset=0;location.hash='prices';return;}
+  if(form.id==='stationFilter'){state.filters={q:data.q,district:data.district,fuel:data.fuel,sort:data.sort,radius:data.radius};state.offset=0;return navigate();}
+  if(form.id==='intelligenceFilter'){state.analyticsFuel=data.fuelView;await rememberSetting('analyst',{lastFuelView:data.fuelView});return navigate();}
+  if(form.id==='caseQueueFilter'){state.caseStatus=data.caseStatus;state.caseAssignment=data.caseAssignment;state.adminOffset=0;await rememberSetting('inspector',{lastCaseStatus:data.caseStatus,lastCaseAssignment:data.caseAssignment});return navigate();}
+  if(form.id==='tripForm'){
+    const result=await api('/trip',{method:'POST',body:{distanceKm:number('distanceKm'),kmPerLitre:number('kmPerLitre'),fuel:data.fuel}});
+    $('#tripResult').innerHTML=`<div class="eyebrow">INDICATIVE TRIP COST</div><div class="result-value">${money(result.cost)}</div><p>${result.distanceKm.toFixed(1)} km · ${result.litres.toFixed(1)} litres of ${esc(data.fuel)}</p><p>Fresh average: ${money(result.averagePrice)} per litre</p><p class="small">${esc(result.method)}. ${result.cost==null?'No fresh operational prices are available for this fuel.':'Allow for traffic, detours and your actual consumption.'}</p>`;return;
+  }
+  if(!authRequired())return;
+  if(form.id==='stationRequestForm'){
+    const files=[...form.elements.evidence.files];validateFiles(files);
+    const body={...data,latitude:number('latitude'),longitude:number('longitude')};delete body.evidence;
+    // Revalidate immutable submission details on every retry; never ignore edits.
+    const request=await api('/station-requests',{method:'POST',headers:{'idempotency-key':form.dataset.key},body});
+    form.dataset.createdId=request.id;
+    try{await uploadFiles('station-requests',request.id,files);}catch(error){throw new Error(`Request saved, but documents were not all confirmed. Retry with the same details or refresh this page to upload to your saved request. ${error.message}`,{cause:error});}
+    toast('New station request saved for verification. No station or permissions have been published.');return navigate();
+  }
+  if(form.classList.contains('stationRequestEvidence')){
+    const files=[...form.elements.evidence.files];if(!files.length)throw new Error('Choose supporting documents.');validateFiles(files);
+    await uploadFiles('station-requests',form.dataset.id,files);toast('Private station documents stored. Awaiting verification.');return navigate();
+  }
+  if(form.classList.contains('stationRequestReview')){
+    const body={status:data.status,reason:data.reason};if(data.stationId&&data.status==='approved')body.stationId=number('stationId');
+    await api(`/admin/station-requests/${form.dataset.id}`,{method:'PATCH',body});toast('New station decision recorded and applicant notified.');return navigate();
+  }
+  if(form.id==='reportForm'){
+    const body={stationId:number('stationId'),fuel:data.fuel,price:number('price'),note:data.note};if(form.dataset.latitude){body.latitude=Number(form.dataset.latitude);body.longitude=Number(form.dataset.longitude);}
+    const report=await api('/reports',{method:'POST',headers:{'idempotency-key':form.dataset.key},body});toast(`Observation received: ${report.status}. Track it in My activity.`);form.reset();form.dataset.key=crypto.randomUUID();delete form.dataset.latitude;delete form.dataset.longitude;$('#gpsStatus').textContent='Location not shared';return;
+  }
+  if(form.id==='complaintForm'||form.id==='applicationForm'){
+    const files=[...form.elements.evidence.files];validateFiles(files);const kind=form.id==='complaintForm'?'tickets':'applications';
+    if(!form.dataset.createdId){const body=kind==='tickets'?{stationId:number('stationId'),category:data.category,vehicleType:data.vehicleType,incidentDate:data.incidentDate,description:data.description}:{stationId:number('stationId'),licenseReference:data.licenseReference};
+      const result=await api(`/${kind}`,{method:'POST',headers:{'idempotency-key':form.dataset.key},body});form.dataset.createdId=result.id;toast(kind==='tickets'?`Case ${result.reference} created. Uploading any selected evidence…`:'Application created. Uploading any selected evidence…');}
+    try{await uploadFiles(kind,form.dataset.createdId,files);}catch(error){throw new Error(`The ${kind==='tickets'?'case':'application'} is saved, but evidence upload was not completed: ${error.message} Open the saved record to check attachments before retrying.`,{cause:error});}
+    form.reset();delete form.dataset.createdId;toast('Submission saved. You can track it below.');return navigate();
+  }
+  if(form.id==='ticketEvidence'||form.classList.contains('applicationEvidence')){const files=[...form.elements.evidence.files];if(!files.length)throw new Error('Choose at least one file.');validateFiles(files);const kind=form.id==='ticketEvidence'?'tickets':'applications';await uploadFiles(kind,form.dataset.id,files);toast('Evidence stored securely.');return kind==='tickets'?ticketDetail(form.dataset.id,{refresh:true}):navigate();}
+  if(form.id==='reviewForm'){await api(`/stations/${form.dataset.id}/reviews`,{method:'POST',body:{rating:number('rating'),body:data.body}});toast('Review saved.');return stationDetail(Number(form.dataset.id));}
+  if(form.id==='ticketMessage'){await api(`/tickets/${form.dataset.id}/messages`,{method:'POST',body:{body:data.body}});return ticketDetail(form.dataset.id,{refresh:true});}
+  if(form.id==='ticketAction'){await api(`/tickets/${form.dataset.id}`,{method:'PATCH',body:{status:data.status,assignedTo:data.assignedTo,reason:data.reason,version:Number(form.dataset.version)}});toast('Case decision saved.');return ticketDetail(form.dataset.id,{refresh:true});}
+  if(form.id==='operatorPrice'){
+    const station=state.assigned.find(s=>s.id===number('stationId'));const current=station?.prices.find(p=>p.fuel===data.fuel);
+    await api(`/stations/${number('stationId')}/prices`,{method:'PUT',body:{fuel:data.fuel,price:number('price'),expectedUpdatedAt:current?.updated_at??null}});toast('Pump price published and followers notified.');return navigate();
+  }
+  if(form.id==='tokenForm'){const result=await api('/tokens',{method:'POST',body:{stationId:number('stationId'),name:data.name}});$('#tokenOnce').innerHTML=`<div class="token-once"><strong>Copy this credential now. It will not be displayed again.</strong><br><code>${esc(result.token)}</code><p class="small">Scoped to station #${number('stationId')}. Send as Authorization: Bearer &lt;credential&gt; to PUT /api/v1/stations/${number('stationId')}/prices.</p></div>`;toast('Credential created. Copy it before navigating away.');return;}
+  if(form.id==='messageForm'){await api(`/rooms/${state.room}/messages`,{method:'POST',body:{body:data.body}});return navigate();}
+  if(form.classList.contains('questionForm')){await api(`/town-halls/${form.dataset.id}/questions`,{method:'POST',body:{body:data.body}});toast('Question submitted.');return navigate();}
+  if(form.id==='deletionResponseForm'){
+    if((data.response??'').trim().length<10)throw new Error('Provide at least 10 characters of additional information.');
+    await api('/me/deletion-request',{method:'PATCH',body:{response:data.response}});
+    toast('Additional information sent. Your request is back in the administrator review queue.');return navigate();
+  }
+  if(form.id==='passwordForm'){await api('/auth/password',{method:'POST',body:{currentPassword:data.currentPassword,newPassword:data.newPassword}});state.user=null;setCsrf(null);updateAccount();toast('Password updated. Sign in again; previous sessions and credentials are revoked.');return navigate();}
+  if(form.id==='adminPasswordReset'){
+    if(data.newPassword!==data.confirmPassword)throw new Error('The temporary passwords do not match.');
+    await api(`/admin/users/${data.userId}/password`,{method:'POST',body:{newPassword:data.newPassword,administratorPassword:data.administratorPassword,reason:data.reason}});
+    form.reset();toast('Password reset. Existing sessions and credentials were revoked; deliver the temporary password securely.');return navigate();
+  }
+  if(form.id==='staffProvision'){
+    if(data.password!==data.confirmPassword)throw new Error('The temporary passwords do not match.');
+    if(data.identityVerified!=='on')throw new Error('Confirm that identity and appointment were verified.');
+    const body={...data};delete body.confirmPassword;body.identityVerified=true;
+    await api('/admin/staff',{method:'POST',body});form.reset();toast('Staff account created. No email was sent; deliver the temporary password through a secure channel.');return navigate();
+  }
+  if(form.id==='stationAssign'){await api(`/admin/stations/${number('stationId')}/staff`,{method:'POST',body:{userId:data.userId,reason:data.reason}});toast('Station assignment saved and audited.');return navigate();}
+  const routes={operatorBrand:['/admin/operators','POST'],roomCreate:['/admin/rooms','POST'],stationCreate:['/admin/stations','POST'],advisoryForm:['/advisories','POST'],hallForm:['/town-halls','POST'],capForm:['/admin/caps','PUT']};
+  if(routes[form.id]){
+    if(form.id==='stationCreate')for(const name of ['operatorId','latitude','longitude'])data[name]=number(name);
+    if(form.id==='capForm'){data.price=number('price');data.effectiveFrom=new Date(data.effectiveFrom).toISOString();data.effectiveUntil=new Date(data.effectiveUntil).toISOString();}
+    if(form.id==='hallForm')data.startsAt=new Date(data.startsAt).toISOString();
+    const [path,method]=routes[form.id];await api(path,{method,body:data});toast('Record saved and audited.');return navigate();
+  }
+}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-action]');if(!button)return;
+  if(button.tagName==='BUTTON'||button.dataset.action==='skip'||button.dataset.action==='open-info')event.preventDefault();
+  button.disabled=true;try{await action(button);}catch(error){showError(error);toast(error.message);}finally{button.disabled=false;}
+});
+document.addEventListener('click',async event=>{
+  const link=event.target.closest('#infoContent a[href^="#"]');if(!link)return;
+  event.preventDefault();const kind=link.getAttribute('href').slice(1);
+  if(infoPages.has(kind)){await openInfo(kind);return;}
+  $('#infoDialog').close();infoCurrent=null;infoStack=[];location.hash=kind;
+});
+document.addEventListener('submit',async event=>{
+  const form=event.target;event.preventDefault();if(form.dataset.busy)return;form.dataset.busy='true';
+  const errorElement=form.id==='authForm'?$('#authError'):form.querySelector('.form-error');if(errorElement)errorElement.textContent='';
+  const button=form.querySelector('button[type=submit]');const text=button?.textContent;if(button){button.disabled=true;button.textContent='Saving…';}
+  try{await submit(form);}catch(error){if(errorElement)errorElement.textContent=error.message;else showError(error);if(error.status===401&&!$('#authDialog').open){state.user=null;updateAccount();}}
+  finally{delete form.dataset.busy;if(button){button.disabled=false;button.textContent=text;}}
+});
+document.addEventListener('change',event=>{
+  if(event.target.id==='avatarFile')avatarPreview(event.target);
+  if(event.target.matches('#operatorPrice [name=stationId]'))rememberSetting('operator',{lastStationId:Number(event.target.value)}).catch(showError);
+  if(event.target.closest('#operatorPrice')){const form=$('#operatorPrice');const station=state.assigned.find(s=>s.id===Number(form.elements.stationId.value));state.operatorStationId=station?.id;const p=station?.prices.find(p=>p.fuel===form.elements.fuel.value);$('#currentPrice').textContent=p?`Current ${p.fuel}: ${money(p.price)} · ${p.source} · ${date(p.updated_at)}`:'No current published price for this fuel.';if($('#operatorStationOverview'))$('#operatorStationOverview').innerHTML=operatorProfile(station);}
+});
+window.addEventListener('hashchange',()=>{if($('#authDialog').open)$('#authDialog').close();if($('#detailDialog').open)$('#detailDialog').close();navigate();});
+document.addEventListener('click',event=>{const link=event.target.closest('#navigation a[href^="#"]');if(!link)return;state.sidebarOpen=false;syncWorkspaceShell();if(location.hash===link.getAttribute('href'))navigate();});
+window.addEventListener('keydown',event=>{if(event.key!=='Escape')return;if($('#primaryNavigation').classList.contains('is-open')){closeMenu();$('#menuToggle').focus();}if(state.sidebarOpen){state.sidebarOpen=false;syncWorkspaceShell();$('#sidebarToggle').focus();}});
+matchMedia('(max-width: 900px)').addEventListener('change',()=>{state.sidebarOpen=false;syncWorkspaceShell();});
+window.addEventListener('offline',()=>{$('#connection').textContent='Offline';showError(new Error('You are offline. Current records and submissions need a connection. Existing form entries are kept on this screen.'));});
+window.addEventListener('online',()=>{$('#connection').textContent='Connected · refresh for current records';toast('Connection restored. Refresh data or retry your submission.');});
+const contentChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('mafutawatch-public-content'):null;
+let refreshingContent=false;
+function announceContentUpdate(){contentChannel?.postMessage('updated');}
+async function refreshPublicContent(){
+  if(refreshingContent||document.hidden||!['overview','news','gallery','videos'].includes(state.page)||$('#view').getAttribute('aria-busy')==='true')return;
+  const version=routeVersion,page=state.page;refreshingContent=true;
+  try{
+    if(page==='overview'){
+      const [media,news,videos]=await Promise.all([api('/media'),api('/news'),api('/videos')]);
+      if(version!==routeVersion)return;
+      const carousel=$('.photo-carousel');if(carousel){carousel.outerHTML=photoCarousel(media.items);renderCarousel();}
+      const newsSlot=document.querySelector('[data-overview="news"]'),videosSlot=document.querySelector('[data-overview="videos"]');
+      if(newsSlot)newsSlot.innerHTML=homepageNews(news.items??[]);
+      if(videosSlot)videosSlot.innerHTML=homepageVideos(videos.items??[]);
+    }else{
+      const [endpoint,render,emptyText]={news:['/news',newsCard,'No news articles published yet.'],gallery:['/media',imageCard,'No media gallery entries yet.'],videos:['/videos',videoCard,'No videos published yet.']}[page];
+      const result=await api(endpoint);if(version!==routeVersion)return;
+      if($('#publicMediaContent'))$('#publicMediaContent').innerHTML=result.items.map(render).join('')||empty(emptyText);
     }
-  }
-  renderSLATimers();
+  }catch(_error){/* Keep the last confirmed content when a background refresh fails. */}
+  finally{refreshingContent=false;}
 }
-
-/* ─── FRAUD QUEUE ─── */
-function renderFraudQueue() {
-  const queue = DB.admin.fraudQueue || [];
-  const pending = queue.filter(f=>f.status==='pending');
-  const body = document.getElementById('fraudTableBody');
-  const count = document.getElementById('fraudQueueCount');
-  const scan = document.getElementById('fraudLastScan');
-  if (count) count.textContent = pending.length + ' flagged';
-  if (scan) scan.textContent = new Date().toLocaleTimeString();
-
-  if (!body) return;
-  if (pending.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">✅ No pending flags. Moving Median Engine reports clean data.</td></tr>';
-    return;
+contentChannel?.addEventListener('message',refreshPublicContent);
+setInterval(refreshPublicContent,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPublicContent();});
+document.addEventListener('error',event=>{
+  const target=event.target;
+  if(!(target instanceof HTMLElement)||target.closest('#mediaEditor'))return;
+  if(target instanceof HTMLImageElement&&target.isConnected&&target.getAttribute('src')){
+    const avatar=target.classList.contains('avatar');
+    const fallback=document.createElement('span');
+    fallback.className=avatar?'avatar placeholder':'media-fallback';
+    fallback.setAttribute('role','img');
+    fallback.setAttribute('aria-label',avatar?'Profile picture unavailable':target.alt||'Image unavailable');
+    fallback.textContent=avatar?'?':'Image unavailable';
+    target.replaceWith(fallback);
+  }else if(target instanceof HTMLVideoElement&&target.isConnected){
+    const fallback=document.createElement('span');
+    fallback.className='media-fallback media-fallback-video';fallback.setAttribute('role','img');fallback.setAttribute('aria-label','Video unavailable');fallback.textContent='This video could not be loaded.';
+    target.replaceWith(fallback);
   }
-  body.innerHTML = pending.slice(0,20).map(f => {
-    const confCls = f.confidence==='high'?'conf-high':f.confidence==='med'?'conf-med':'conf-low';
-    const devCls = f.deviationPct >= 20 ? 'dev-up' : 'dev-down';
-    return `<tr>
-      <td style="font-size:0.65rem;color:var(--text-dim);">${new Date(f.timestamp).toLocaleTimeString()}</td>
-      <td><strong>${f.stationName}</strong><br><span style="font-size:0.65rem;color:var(--text-dim);">${f.location}</span></td>
-      <td style="font-size:0.7rem;font-family:var(--font-mono);color:var(--text-dim);">${f.userId}</td>
-      <td class="price-cell" style="color:#fca5a5;">UGX ${f.reportedPrice.toLocaleString()}</td>
-      <td class="price-cell" style="color:var(--neon);">UGX ${f.currentPrice.toLocaleString()}</td>
-      <td class="price-cell ${devCls}">${f.deviationPct.toFixed(1)}%</td>
-      <td><span class="${confCls}" style="font-weight:600;font-size:0.7rem;">${f.confidence.toUpperCase()}</span></td>
-      <td><div class="fraud-actions">
-        <button class="btn-fraud-approve" onclick="fraudApprove(${f.id})">✓ Approve</button>
-        <button class="btn-fraud-dismiss" onclick="fraudDismiss(${f.id})">✕ Dismiss</button>
-        <button class="btn-fraud-throttle" onclick="fraudThrottle(${f.id})">⊘ Throttle</button>
-      </div></td>
-    </tr>`;
-  }).join('');
+},true);
+$('#mediaLightbox').addEventListener('close',()=>{$('#lightboxContent').replaceChildren();});
+async function initialize(){
+  $('#copyrightYear').textContent=new Date().getFullYear();
+  const sessionReady=api('/auth/session').then(session=>{state.user=session.user;setCsrf(session.csrfToken);}).catch(error=>{state.bootError=error;showError(error);});
+  decorateWorkspaceNav();
+  const deferred=location.hash===''||location.hash==='#overview';
+  if(deferred){
+    const firstPaint=navigate();
+    await sessionReady;await loadPreferences().catch(()=>{});updateAccount();
+    await firstPaint;
+    if(state.page!=='overview')await navigate();
+  }else{
+    await sessionReady;await loadPreferences().catch(()=>{});updateAccount();
+    await navigate();
+  }
+  refreshNotifications().catch(()=>{});
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
 }
-
-function fraudApprove(id) {
-  const f = (DB.admin.fraudQueue||[]).find(x=>x.id===id);
-  if (!f) return;
-  f.status = 'approved';
-  const s = getStation(f.stationId);
-  if (s) { s[f.fuel||'petrol'] = f.reportedPrice; s.lastUpdated = new Date().toISOString(); }
-  if (!DB.admin.auditLog) DB.admin.auditLog = [];
-  DB.admin.auditLog.push({
-    id:Date.now(), timestamp:new Date().toISOString(), stationId:f.stationId,
-    stationName:f.stationName, modifiedBy:'Admin:memd_user',
-    previousPrice:f.currentPrice, newPrice:f.reportedPrice, fuel:f.fuel||'petrol',
-    channel:'admin', action:'price_update',
-  });
-  saveDB();
-  renderFraudQueue();
-  renderMapMarkers();
-  showToast('✅ Approved & synced: UGX '+f.reportedPrice.toLocaleString()+' pushed to public view.');
-}
-
-function fraudDismiss(id) {
-  const f = (DB.admin.fraudQueue||[]).find(x=>x.id===id);
-  if (!f) return;
-  f.status = 'dismissed';
-  if (!DB.reports) DB.reports = [];
-  DB.reports.push({
-    id:Date.now(), stationId:f.stationId, stationName:f.stationName, fuel:f.fuel||'petrol',
-    price:f.reportedPrice, location:f.location, timestamp:new Date().toISOString(),
-    status:'rejected', rejectionReason:'Admin dismissed — flagged by Moving Median Engine.',
-  });
-  if (!DB.admin.auditLog) DB.admin.auditLog = [];
-  DB.admin.auditLog.push({
-    id:Date.now(), timestamp:new Date().toISOString(), stationId:f.stationId,
-    stationName:f.stationName, modifiedBy:'Admin:memd_user',
-    previousPrice:f.currentPrice, newPrice:f.reportedPrice, fuel:f.fuel||'petrol',
-    channel:'admin', action:'fraud_dismiss',
-  });
-  saveDB();
-  renderFraudQueue();
-  showToast('✕ Dismissed & logged. Reporter flagged.');
-}
-
-function fraudThrottle(id) {
-  const f = (DB.admin.fraudQueue||[]).find(x=>x.id===id);
-  if (!f) return;
-  f.status = 'throttled';
-  if (!DB.blacklist) DB.blacklist = [];
-  DB.blacklist.push({ userId:f.userId, phone:f.userId, reason:'Fraud throttle — deviated '+f.deviationPct.toFixed(0)+'% from baseline', date:new Date().toISOString() });
-  if (!DB.admin.auditLog) DB.admin.auditLog = [];
-  DB.admin.auditLog.push({
-    id:Date.now(), timestamp:new Date().toISOString(), stationId:f.stationId,
-    stationName:f.stationName, modifiedBy:'Admin:memd_user',
-    previousPrice:f.currentPrice, newPrice:f.reportedPrice, fuel:f.fuel||'petrol',
-    channel:'admin', action:'fraud_dismiss',
-  });
-  saveDB();
-  renderFraudQueue();
-  showToast('⊘ Account throttled: '+f.userId+' blacklisted from submitting data.');
-}
-
-/* ─── KYC PIPELINE ─── */
-function renderKYCPipeline() {
-  const apps = DB.admin.kycApplications || [];
-  const pending = apps.filter(a=>a.status==='pending');
-  const cnt = document.getElementById('kycPendingCount');
-  if (cnt) cnt.textContent = pending.length + ' pending';
-
-  const list = document.getElementById('kycCardList');
-  if (!list) return;
-  if (pending.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">✅ All applications processed. No pending KYC reviews.</div>';
-    return;
-  }
-  list.innerHTML = pending.map(a => `
-    <div class="kyc-card">
-      <div class="kyc-avatar">🏪</div>
-      <div class="kyc-info">
-        <div class="name">${a.name}</div>
-        <div class="meta">${a.operator} · ${a.phone} · ${a.district}, ${a.region}</div>
-        <div class="docs">${a.docs.map(d => '<span class="tag">📄 '+d+'</span>').join('')}</div>
-      </div>
-      <div class="kyc-actions">
-        <button class="btn-tool btn-tool-primary btn-tool-sm" onclick="authorizeOperator(${a.id})">✓ Authorize</button>
-        <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="rejectOperator(${a.id})" style="border-color:rgba(239,68,68,0.3);color:#fca5a5;">✕ Reject</button>
-      </div>
-      <div class="kyc-date">${new Date(a.submitted).toLocaleDateString()}</div>
-    </div>
-  `).join('');
-}
-
-function authorizeOperator(id) {
-  const a = (DB.admin.kycApplications||[]).find(x=>x.id===id);
-  if (!a) return;
-  a.status = 'approved';
-  if (!DB.admin.apiTokens) DB.admin.apiTokens = [];
-  const tokenStr = 'mfw_v2_'+a.name.toLowerCase().replace(/[^a-z0-9]/g,'_')+'_'+Math.random().toString(36).substr(2,16);
-  DB.admin.apiTokens.push({
-    id:Date.now(), name:a.name+' — Operator Token', token:tokenStr,
-    operator:a.name, created:new Date().toISOString(), lastUsed:null,
-    status:'active', rateLimit:'500 req/min',
-  });
-  if (!DB.admin.auditLog) DB.admin.auditLog = [];
-  DB.admin.auditLog.push({
-    id:Date.now(), timestamp:new Date().toISOString(), stationId:a.id,
-    stationName:a.name, modifiedBy:'Admin:memd_user',
-    previousPrice:0, newPrice:0, fuel:'petrol', channel:'admin', action:'operator_auth',
-  });
-  saveDB();
-  renderKYCPipeline();
-  showToast('✅ '+a.name+' authorized as Base Station Operator. Token generated.');
-}
-
-function rejectOperator(id) {
-  const a = (DB.admin.kycApplications||[]).find(x=>x.id===id);
-  if (!a) return;
-  a.status = 'rejected';
-  saveDB();
-  renderKYCPipeline();
-  showToast('✕ '+a.name+' application rejected.');
-}
-
-/* ─── WHITELIST ─── */
-function renderWhitelist() {
-  const apps = (DB.admin.kycApplications||[]).filter(a=>a.status==='approved');
-  const container = document.getElementById('whitelistTableBody');
-  if (!container) return;
-  const search = (document.getElementById('whitelistSearch')?.value||'').toLowerCase();
-  const filtered = search ? apps.filter(a=>a.name.toLowerCase().includes(search)||a.district.toLowerCase().includes(search)) : apps;
-  if (filtered.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.8rem;">No whitelisted operators found.</div>';
-    return;
-  }
-  container.innerHTML = filtered.map(a => `
-    <div class="whitelist-row">
-      <div><strong style="font-size:0.85rem;">${a.name}</strong><br><span style="font-size:0.7rem;color:var(--text-dim);">${a.operator} · ${a.district}, ${a.region}</span></div>
-      <div><span class="badge badge-green">Active</span></div>
-    </div>
-  `).join('');
-}
-
-document.addEventListener('input', e=>{ if (e.target.id==='whitelistSearch') renderWhitelist(); });
-
-/* ─── AUDIT TRAIL ─── */
-function renderAuditTrail() {
-  const log = DB.admin.auditLog || [];
-  const channel = document.getElementById('auditChannelFilter')?.value || 'all';
-  const type = document.getElementById('auditTypeFilter')?.value || 'all';
-  const body = document.getElementById('auditLedgerBody');
-  if (!body) return;
-
-  let filtered = [...log].reverse();
-  if (channel !== 'all') filtered = filtered.filter(e=>e.channel===channel);
-  if (type !== 'all') filtered = filtered.filter(e=>e.action===type);
-
-  if (filtered.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">No audit entries match filters.</td></tr>';
-    return;
-  }
-  body.innerHTML = filtered.slice(0,30).map(e => {
-    const chMap = {web:'🌐 Web',ussd:'📱 USSD',wa:'💬 WA',api:'🔌 API',operator:'🏪 Operator',admin:'🏛️ Admin'};
-    return `<tr>
-      <td style="font-size:0.65rem;color:var(--text-dim);white-space:nowrap;">${new Date(e.timestamp).toLocaleString()}</td>
-      <td style="font-weight:600;">${e.stationName||'—'}<br><span style="font-size:0.6rem;color:var(--text-dim);">ID: ${e.stationId||'—'}</span></td>
-      <td style="font-size:0.72rem;color:var(--text-muted);">${e.modifiedBy||'—'}</td>
-      <td style="font-family:var(--font-mono);font-size:0.7rem;">${e.previousPrice? 'UGX '+e.previousPrice.toLocaleString() : '—'}</td>
-      <td style="font-family:var(--font-mono);font-size:0.7rem;color:var(--neon);">${e.newPrice? 'UGX '+e.newPrice.toLocaleString() : '—'}</td>
-      <td style="font-size:0.65rem;color:var(--text-dim);">${chMap[e.channel]||e.channel}</td>
-    </tr>`;
-  }).join('');
-}
-
-document.addEventListener('change', e=>{
-  if (e.target.id==='auditChannelFilter' || e.target.id==='auditTypeFilter') renderAuditTrail();
-});
-document.addEventListener('click', e=>{ if (e.target.id==='auditRefreshBtn') { renderAuditTrail(); showToast('🔄 Ledger refreshed.'); }});
-
-/* ─── HIERARCHY TREE ─── */
-function renderHierarchyTree() {
-  const tree = DB.admin.hierarchy || [];
-  const container = document.getElementById('hierarchyTree');
-  if (!container) return;
-  container.innerHTML = tree.map(region => renderHierarchyNode(region, 0)).join('');
-}
-
-function renderHierarchyNode(node, depth) {
-  if (node.type==='area') {
-    return `<div class="hierarchy-leaf">
-      <span>📍 ${node.name}</span>
-      <div class="actions">
-        <span style="font-size:0.6rem;color:var(--text-dim);margin-right:6px;">${(node.stations||[]).length} stations</span>
-        <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="deleteHierarchyNode(${node.id})" style="font-size:0.55rem;padding:1px 4px;color:#fca5a5;">✕</button>
-      </div>
-    </div>`;
-  }
-  const children = node.children || [];
-  const icon = node.type==='region'?'🏙️':node.type==='district'?'📍':'';
-  const childType = node.type==='region'?'district':node.type==='district'?'area':'station';
-  return `<div class="hierarchy-node">
-    <div class="hierarchy-node-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.toggle').classList.toggle('open')">
-      <span>${icon} ${node.name} <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;">(${node.type})</span></span>
-      <span class="toggle">▶</span>
-    </div>
-    <div class="hierarchy-children">
-      ${children.map(c => renderHierarchyNode(c, depth+1)).join('')}
-      ${node.type!=='area' ? `<div style="padding:4px 12px;display:flex;gap:4px;"><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="addSubNode(${node.id},'${childType}')" style="font-size:0.65rem;">+ Add ${childType.charAt(0).toUpperCase()+childType.slice(1)}</button><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="deleteHierarchyNode(${node.id})" style="font-size:0.55rem;padding:1px 6px;color:#fca5a5;">✕ Delete</button></div>` : ''}
-    </div>
-  </div>`;
-}
-
-document.addEventListener('click', e => {
-  if (e.target.id==='addRegionBtn') {
-    const name = prompt('Enter new region name:');
-    if (name && name.trim()) {
-      if (!DB.admin.hierarchy) DB.admin.hierarchy = [];
-      DB.admin.hierarchy.push({ id:Date.now(), name:name.trim(), type:'region', children:[] });
-      saveDB();
-      renderHierarchyTree();
-      showToast('✅ Region "'+name.trim()+'" added. USSD & WhatsApp menus will auto-update.');
-    }
-  }
-});
-
-/* ─── ENHANCED BROADCAST ─── */
-document.addEventListener('click', e => {
-  if(e.target.id==='sendBroadcastBtn'){
-    const title=document.getElementById('broadcastTitle')?.value?.trim();
-    const msg=document.getElementById('broadcastMsg')?.value?.trim();
-    const targets = [];
-    if (document.getElementById('targetWeb')?.checked) targets.push('Web');
-    if (document.getElementById('targetWA')?.checked) targets.push('WhatsApp');
-    if (document.getElementById('targetUSSD')?.checked) targets.push('USSD');
-    const districts = document.getElementById('broadcastDistricts')?.value?.trim() || 'All Districts';
-    if(!title||!msg) return showToast('Please enter both title and message.');
-    if(!DB.broadcasts) DB.broadcasts=[];
-    DB.broadcasts.push({
-      id:Date.now(), title, message:msg, date:new Date().toISOString(),
-      targets: targets.join(', '), districts,
-    });
-    saveDB();
-    if (!DB.admin.auditLog) DB.admin.auditLog = [];
-    DB.admin.auditLog.push({
-      id:Date.now(), timestamp:new Date().toISOString(), stationId:0,
-      stationName:'SYSTEM', modifiedBy:'Admin:memd_user',
-      previousPrice:0, newPrice:0, fuel:'petrol', channel:'admin', action:'broadcast',
-    });
-    showToast('📢 Emergency broadcast sent to '+targets.join(', ')+' ('+districts+')');
-    document.getElementById('broadcastTitle').value='';
-    document.getElementById('broadcastMsg').value='';
-    renderBroadcasts();
-  }
-});
-
-function renderBroadcasts() {
-  const container=document.getElementById('broadcastList');
-  if(!container) return;
-  const bcs=DB.broadcasts||[];
-  if(bcs.length===0){
-    container.innerHTML='<div style="color:var(--text-dim);font-size:0.8rem;text-align:center;padding:12px;">No broadcasts yet.</div>';
-    return;
-  }
-  container.innerHTML=bcs.slice(-5).reverse().map(b=>`
-    <div style="padding:8px 0;border-bottom:1px solid var(--green-border);font-size:0.78rem;">
-      <div style="display:flex;justify-content:space-between;">
-        <strong>📢 ${b.title}</strong>
-        <span style="font-size:0.6rem;color:var(--text-dim);">${new Date(b.date).toLocaleDateString()}</span>
-      </div>
-      <div style="color:var(--text-muted);margin:2px 0;">${b.message}</div>
-      <div style="font-size:0.6rem;color:var(--text-dim);">🎯 ${b.targets||'All channels'} · 📍 ${b.districts||'All districts'}</div>
-    </div>
-  `).join('');
-}
-
-/* ─── API CONSOLE ─── */
-function renderAPITokens() {
-  const tokens = DB.admin.apiTokens || [];
-  const container = document.getElementById('apiTokenList');
-  if (!container) return;
-  if (tokens.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">No API tokens generated. Click "Generate New Token" to create one.</div>';
-    return;
-  }
-  container.innerHTML = tokens.map(t => `
-    <div class="api-token-card">
-      <div class="token-status ${t.status}"></div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:600;font-size:0.85rem;">${t.name}</div>
-        <div class="token-key">${t.token}</div>
-        <div style="font-size:0.65rem;color:var(--text-dim);margin-top:2px;">
-          Created: ${new Date(t.created).toLocaleDateString()} · 
-          ${t.lastUsed ? 'Last used: '+new Date(t.lastUsed).toLocaleString() : 'Never used'} · 
-          ${t.rateLimit||'—'}
-        </div>
-      </div>
-      <div class="token-actions">
-        <span class="badge ${t.status==='active'?'badge-green':'badge-red'}">${t.status}</span>
-        ${t.status==='active' ? 
-          `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="cycleToken(${t.id})" style="font-size:0.6rem;">🔄 Cycle</button>
-           <button class="btn-tool btn-tool-outline btn-tool-sm" onclick="revokeToken(${t.id})" style="font-size:0.6rem;border-color:rgba(239,68,68,0.3);color:#fca5a5;">✕ Revoke</button>` :
-          `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="reactivateToken(${t.id})" style="font-size:0.6rem;">↻ Reactivate</button>`}
-      </div>
-    </div>
-  `).join('');
-}
-
-// Demo API token issuance removed; use a server-side token vault in a later release.
-function cycleToken(){ showToast('API token management is unavailable in the prototype.'); }
-function revokeToken(){ showToast('API token management is unavailable in the prototype.'); }
-function reactivateToken(){ showToast('API token management is unavailable in the prototype.'); }
-let operatorLoggedIn=false;
-// Operator OTP demo removed. Operator identity must be verified server-side.
-document.addEventListener('click',e=>{
-  if(e.target.id==='opUpdatePriceBtn'){
-    if (!operatorLoggedIn) return showToast('Operator updates require secure server authentication (not enabled yet).');
-    const stationId=parseInt(document.getElementById('opStation')?.value);
-    const fuel=document.getElementById('opFuel')?.value;
-    const price=parseFloat(document.getElementById('opPrice')?.value);
-    if(!stationId||!price||price<2000||price>10000) return showToast('Enter valid price.');
-    const s=getStation(stationId); if(!s){return showToast('Station not found.');}
-
-    // Log the update
-    const oldPrice=s[fuel]||0;
-    s[fuel]=price;
-    s.lastUpdated=new Date().toISOString();
-    if(!DB.priceHistory) DB.priceHistory=[];
-    DB.priceHistory.push({stationId,fuel,price,date:new Date().toISOString(),source:'operator'});
-
-    // Notify subscribers
-    const subs=DB.subscriptions||[];
-    const stationSubs=subs.filter(sub=>sub.stationId===stationId);
-    if(stationSubs.length>0){
-      if(!DB.notifications) DB.notifications=[];
-      const change=price-oldPrice;
-      stationSubs.forEach(()=>{
-        DB.notifications.push({
-          id:Date.now()+Math.random(),
-          type:change>0?'price_hike':'price_drop',
-          stationId, stationName:s.name,
-          message:`${change>0?'📈 Price Up':'📉 Price Down'} at ${s.name}: UGX ${price.toLocaleString()}/L`,
-          oldPrice, newPrice:price, change,
-          read:false, date:new Date().toISOString(),
-        });
-      });
-      renderNotifications();
-    }
-
-    saveDB();
-    renderMapMarkers();
-    renderStationList();
-    renderOperatorDash();
-    showToast(`✅ Price updated: UGX ${price.toLocaleString()}/L`);
-    document.getElementById('opPrice').value='';
-  }
-});
-
-function renderOperatorDash() {
-  if(!operatorLoggedIn) return;
-  const stationId=parseInt(document.getElementById('opStation')?.value);
-  const s=getStation(stationId);
-  if(s){
-    document.getElementById('opCurrentPetrol').textContent=s.petrol?`UGX ${s.petrol.toLocaleString()}`:'—';
-    document.getElementById('opCurrentDiesel').textContent=s.diesel?`UGX ${s.diesel.toLocaleString()}`:'—';
-    document.getElementById('opLastUpdate').textContent=s.lastUpdated?new Date(s.lastUpdated).toLocaleString():'Never';
-  }
-
-  // Reports about this station
-  const reports=(DB.reports||[]).filter(r=>r.stationId===stationId);
-  const container=document.getElementById('opReports');
-  if(container){
-    if(reports.length===0) container.innerHTML='<div style="color:var(--text-muted);font-size:0.8rem;">No crowd reports for this station.</div>';
-    else container.innerHTML=reports.slice(-5).reverse().map(r=>`
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
-        <span>${r.fuel} · UGX ${r.price.toLocaleString()}</span>
-        <span class="badge badge-${r.status==='verified'?'green':r.status==='rejected'?'red':'yellow'}">${r.status}</span>
-      </div>
-    `).join('');
-  }
-
-  // Price consistency alert
-  const freqAlert=document.getElementById('opConsistencyAlert');
-  if(freqAlert&&s){
-    const officialP=(s.petrol||0);
-    const crowdReports=(DB.reports||[]).filter(r=>r.stationId===stationId&&r.fuel==='petrol'&&r.status==='verified');
-    if(crowdReports.length>0){
-      const crowdAvg=crowdReports.reduce((a,b)=>a+b.price,0)/crowdReports.length;
-      const dev=Math.abs(officialP-crowdAvg)/officialP*100;
-      if(dev>10){
-        freqAlert.innerHTML=`<div class="fraud-alert"><div class="icon">⚠️</div><div class="msg"><strong>Price Mismatch Detected</strong>Official price (UGX ${officialP.toLocaleString()}) differs ${dev.toFixed(0)}% from crowd average (UGX ${Math.round(crowdAvg).toLocaleString()}).</div></div>`;
-        freqAlert.style.display='block';
-      } else {
-        freqAlert.style.display='none';
-      }
-    } else {
-      freqAlert.style.display='none';
-    }
-  }
-}
-
-document.addEventListener('change',e=>{
-  if(e.target.id==='opStation') renderOperatorDash();
-});
-
-/* ─── REVIEW STAR RATING ─── */
-document.addEventListener('click',e=>{
-  const star=e.target.closest('.star-rating .star');
-  if(star){
-    const val=parseInt(star.dataset.val);
-    const container=star.closest('.star-rating');
-    container.querySelectorAll('.star').forEach((s,i)=>{
-      s.classList.toggle('active',i<val);
-    });
-    container.dataset.rating=val;
-  }
-});
-
-/* ─── REGION CARDS (Live Analytics) ─── */
-function renderRegionCards() {
-  const container=document.getElementById('regionCards');
-  if(!container) return;
-  const regions={};
-  STATIONS_DATA.filter(s=>s.petrol).forEach(s=>{
-    if(!regions[s.region]) regions[s.region]={prices:[],diesel:[],stations:new Set()};
-    regions[s.region].prices.push(s.petrol);
-    if(s.diesel) regions[s.region].diesel.push(s.diesel);
-    regions[s.region].stations.add(s.name);
-  });
-  const regionOrder=['Central','Western','Eastern','Northern'];
-  container.innerHTML=regionOrder.filter(r=>regions[r]).map(r=>{
-    const d=regions[r];
-    const avg=Math.round(d.prices.reduce((a,b)=>a+b,0)/d.prices.length);
-    const min=Math.min(...d.prices);
-    const max=Math.max(...d.prices);
-    const icons={Central:'🏙️',Western:'🏔️',Eastern:'🌅',Northern:'🌿'};
-    return `<div class="value-card">
-      <div class="icon-circle">${icons[r]||'📍'}</div>
-      <h3>${r} Region</h3>
-      <div style="font-size:2rem;font-weight:900;color:var(--neon);margin:8px 0;">UGX ${avg.toLocaleString()}</div>
-      <div style="font-size:0.8rem;color:var(--text-muted);">Average Petrol Price</div>
-      <div style="margin-top:8px;font-size:0.75rem;color:var(--text-dim);">Range: UGX ${min.toLocaleString()} – ${max.toLocaleString()}</div>
-      <div style="margin-top:4px;font-size:0.7rem;color:var(--text-dim);">${d.stations.size} stations monitored</div>
-    </div>`;
-  }).join('');
-}
-
-/* ─── ANALYTICS MINI MAP ─── */
-let analyticsMap=null;
-function initAnalyticsMap() {
-  const el=document.getElementById('analyticsMiniMap');
-  if(!el||analyticsMap) return;
-  analyticsMap=L.map('analyticsMiniMap',{
-    center:[0.5,32.5],zoom:7,zoomControl:false,
-    attributionControl:false,scrollWheelZoom:false,dragging:false,
-  });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    maxZoom:19,
-  }).addTo(analyticsMap);
-  STATIONS_DATA.forEach(s=>{
-    L.circleMarker([s.lat,s.lng],{
-      radius:4,color:'#76FF03',fillColor:'#76FF03',fillOpacity:0.6,weight:1,
-    }).addTo(analyticsMap);
-  });
-}
-
-/* ─── HERO COUNT ─── */
-function updateHeroCount() {
-  const el=document.getElementById('heroVerifiedCount');
-  if(!el) return;
-  const base=1200;
-  const verified=(DB.verifiedCount||0);
-  el.textContent=`${(base+verified).toLocaleString()}+`;
-  const sc=document.getElementById('heroStationsCount');
-  if(sc) sc.textContent=STATIONS_DATA.length;
-
-  // Update metrics with live data
-  const peerCount = (DB.peerScore || 0) + 12400;
-  const metricPeer = document.getElementById('metricPeerAlerts');
-  if (metricPeer) {
-    if (peerCount >= 1000) metricPeer.innerHTML = (peerCount/1000).toFixed(1) + '<span class="neon">k+</span>';
-    else metricPeer.textContent = peerCount + '<span class="neon">+</span>';
-  }
-  const invCount = (DB.c2gTickets||[]).filter(t => t.status === 'investigating' || t.status === 'resolved').length + 420;
-  const metricInv = document.getElementById('metricInvestigations');
-  if (metricInv) metricInv.innerHTML = invCount + '<span class="neon">+</span>';
-}
-
-/* ─── SEED NEW DATA ─── */
-function seedNewData() {
-  // P2P Rooms
-  if (DB.p2pRooms.length === 0) {
-    DB.p2pRooms = [
-      { id:1, name:'Masaka Road Transporters', icon:'🚦', corridor:'Masaka-Kampala Hwy',
-        members:24, active:8, lat:0.220, lng:32.380 },
-      { id:2, name:'Kampala Northern Bypass', icon:'🚛', corridor:'Northern Bypass',
-        members:31, active:12, lat:0.350, lng:32.560 },
-      { id:3, name:'Jinja- Kampala Corridor', icon:'🚌', corridor:'Jinja Rd',
-        members:19, active:5, lat:0.430, lng:32.810 },
-      { id:4, name:'Gulu Highway Riders', icon:'🛵', corridor:'Gulu-Kampala Hwy',
-        members:16, active:7, lat:2.770, lng:32.300 },
-      { id:5, name:'Eastern Route — Mbale Line', icon:'🚚', corridor:'Mbale-Kampala',
-        members:22, active:9, lat:1.080, lng:34.180 },
-      { id:6, name:'Mbarara —Kasese Route', icon:'🚐', corridor:'Mbarara-Kasese',
-        members:14, active:4, lat:-0.420, lng:29.780 },
-      { id:7, name:'Fort Portal Transport Hub', icon:'🚍', corridor:'Fort Portal-Kampala',
-        members:11, active:3, lat:0.660, lng:30.270 },
-      { id:8, name:'Entebbe Express Link', icon:'🚗', corridor:'Entebbe-Kampala Expwy',
-        members:18, active:6, lat:0.060, lng:32.460 },
-    ];
-    // Seed messages for each room
-    DB.p2pMessages = {};
-    DB.p2pRooms.forEach(room => {
-      const msgs = [];
-      const authors = ['Sarah N.','Peter K.','John M.','Grace A.','Robert S.','Faith O.','David W.','Alice T.'];
-      const msgsPerRoom = 3 + Math.floor(Math.random() * 4);
-      for (let i=0; i<msgsPerRoom; i++) {
-        const isTrusted = Math.random() > 0.5;
-        const texts = [
-          'Fuel at Shell near the stage is UGX 5,350 today. No queue!',
-          '⚠️ Accident on the bypass near the clock tower. Take Kyambogo route instead.',
-          'Just filled up at Total — diesel is UGX 5,460. Cheapest on this corridor.',
-          'Anyone know if Kobil on Bombo Rd has petrol? Need to fill up.',
-          'Traffic is heavy heading into town. Expect 20 min delay.',
-          'Bulk buyers — we have 5 people pooling at Shell Jinja. Need 2 more!',
-          'Station near the market has diesel at UGX 5,520. Long lines though.',
-          'Police checkpoint on Masaka Rd near Mpigi. Drive safe.',
-          '⭐⭐⭐ Shell fuel quality is good here. No adulteration issues.',
-          'Price drop at Total Ntinda — now UGX 5,280 for petrol! Verified.',
-          '🚨 Kobil is refusing to adjust prices despite Ministry directive. Report filed.',
-          'Good news — Shell Mukono just reduced petrol to UGX 5,310.',
-        ];
-        const text = texts[Math.floor(Math.random() * texts.length)];
-        const author = authors[Math.floor(Math.random() * authors.length)];
-        msgs.push({
-          id: Date.now() - (msgsPerRoom - i) * 60000 + room.id * 1000,
-          roomId: room.id, author, text,
-          timestamp: new Date(Date.now() - (msgsPerRoom - i) * 60000).toISOString(),
-          upvotes: Math.floor(Math.random() * 8), trusted: isTrusted,
-        });
-      }
-      DB.p2pMessages[room.id] = msgs;
-    });
-  }
-
-  // C2G Tickets
-  if (DB.c2gTickets.length === 0) {
-    DB.c2gTickets = [
-      { id:'C2G-2025-0042', category:'tampering', stationId:17, stationName:'Kobil Bombo Road',
-        date:'2025-05-20', phone:'+256712345678',
-        description:'Pump display showed 5L but only 4.3L dispensed. Request investigation.',
-        status:'investigating', createdAt:new Date(Date.now()-86400000*3).toISOString(),
-        chat:[
-          { from:'gov', text:'Thank you for your report. Case assigned to Inspector Mwesigwa.', time:new Date(Date.now()-86400000*2).toISOString() },
-          { from:'gov', text:'We need a photo of the pump display. Can you provide one?', time:new Date(Date.now()-86400000*1).toISOString() },
-        ]},
-      { id:'C2G-2025-0041', category:'overpricing', stationId:5, stationName:'Total Ntinda',
-        date:'2025-05-18', phone:'+256776543210',
-        description:'Station is selling petrol at UGX 5,550 despite Ministry cap of UGX 5,400.',
-        status:'resolved', createdAt:new Date(Date.now()-86400000*7).toISOString(),
-        chat:[
-          { from:'gov', text:'Report received. We have contacted the station operator.', time:new Date(Date.now()-86400000*6).toISOString() },
-          { from:'gov', text:'Station has complied with the directive. Price adjusted to UGX 5,350. Thank you for your vigilance.', time:new Date(Date.now()-86400000*4).toISOString() },
-        ]},
-      { id:'C2G-2025-0040', category:'adulterated', stationId:47, stationName:'Shell Arua',
-        date:'2025-05-15', phone:'+256701234567',
-        description:'Several vehicles broke down after refueling. Suspect water in diesel.',
-        status:'open', createdAt:new Date(Date.now()-86400000*10).toISOString(),
-        chat:[]},
-    ];
-  }
-
-  // G2C Posts
-  if (DB.g2cPosts.length === 0) {
-    DB.g2cPosts = [
-      { id:1, title:'New National Fuel Price Cap Effective June 1', source:'Ministry of Energy & Mineral Development',
-        body:'The Ministry of Energy and Mineral Development (MEMD) announces a reviewed fuel price cap effective 1st June 2025. Petrol retail price shall not exceed UGX 5,400 per liter, and diesel UGX 5,480 per liter across all licensed stations nationwide. Fuel stations found in violation will face immediate suspension of their operating license.',
-        date:new Date(Date.now()-86400000*2).toISOString(), type:'directive' },
-      { id:2, title:'Quality Assurance: Nationwide Fuel Sampling Exercise', source:'Uganda National Bureau of Standards (UNBS)',
-        body:'UNBS in collaboration with MEMD has commenced a nationwide fuel quality sampling exercise. All licensed stations are required to submit samples for testing. Preliminary results from Kampala and Wakiso districts show 94% compliance with set standards.',
-        date:new Date(Date.now()-86400000*5).toISOString(), type:'update' },
-      { id:3, title:'⚠️ Public Warning: Adulterated Fuel in Circulation', source:'Ministry of Energy & Mineral Development',
-        body:'MEMD warns the public about substandard fuel being sold along the Kampala-Masaka corridor. Official testing revealed elevated sulfur content in diesel samples collected in the Mpigi area. Citizens are advised to report any suspected adulteration via the C2G ticketing system.',
-        date:new Date(Date.now()-86400000*8).toISOString(), type:'alert' },
-      { id:4, title:'Monthly Town Hall: Fuel Pricing & Consumer Protection', source:'Minister of State for Energy',
-        body:'Join us for the monthly "Fuel Market Dialogue" AMA session on 15th June 2025 at 10:00 AM EAT. The Minister will address citizen concerns on fuel pricing, pump calibration enforcement, and the new Petroleum Supply Act amendments. Submit your questions in advance via the AMA section below.',
-        date:new Date(Date.now()-86400000*10).toISOString(), type:'townhall' },
-      { id:5, title:'Operators: New KYC Requirements Coming July 2025', source:'Ministry of Energy & Mineral Development',
-        body:'All fuel station operators must complete enhanced KYC registration by July 1, 2025 to continue API integration with the national fuel pricing system. Non-compliant stations will be delisted from MafutaWatch Uganda and associated USSD and WhatsApp services.',
-        date:new Date(Date.now()-86400000*14).toISOString(), type:'notice' },
-    ];
-  }
-
-  // G2C AMA sessions
-  if (DB.g2cAma.length === 0) {
-    DB.g2cAma = [
-      { id:1, title:'Fuel Market Dialogue — Monthly AMA', host:'Minister of State for Energy',
-        date:'2025-06-15T10:00:00', description:'Open Q&A on fuel pricing, pump calibration, and consumer rights.',
-        questions:[
-          { name:'Sarah N.', text:'Will the price cap apply to all stations including remote areas?', votes:12 },
-          { name:'Peter K.', text:'How do we verify pump calibration is accurate?', votes:8 },
-        ]},
-      { id:2, title:'Petroleum Supply Act — Public Consultation', host:'Permanent Secretary, MEMD',
-        date:'2025-06-22T14:00:00', description:'Discussion of the new Petroleum Supply Act amendments and their impact on transporters.',
-        questions:[
-          { name:'Grace A.', text:'How will the new Act affect fuel transportation licensing?', votes:5 },
-        ]},
-    ];
-  }
-
-  saveDB();
-}
-
-/* ─── COMMUNITY BROADCAST SYSTEM ─── */
-function submitBroadcast() {
-  const input = document.getElementById('broadcastInput');
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text || text.length < 5) return showToast('Please enter at least 5 characters.');
-  if (!DB.broadcasts) DB.broadcasts = [];
-  DB.broadcasts.push({
-    id: Date.now(), text,
-    timestamp: new Date().toISOString(),
-    verified: (DB.trustScore || 0) >= 20,
-    upvotes: 0,
-  });
-  DB.peerScore = (DB.peerScore || 0) + 1;
-  saveDB();
-  input.value = '';
-  document.getElementById('charCount').textContent = '0/140';
-  showToast('📢 Broadcast sent! It will appear in the community feed.');
-  updateBroadcastTicker();
-  updateHubCounts();
-}
-
-function updateBroadcastTicker() {
-  const ticker = document.getElementById('feedTicker');
-  if (!ticker) return;
-  const bcs = DB.broadcasts || [];
-  const recent = bcs.slice(-8).reverse();
-  const items = recent.map(b => {
-    const time = new Date(b.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    const prefix = b.verified ? '✅ <strong>Verified:</strong>' : '📢 <strong>Broadcast:</strong>';
-    return `<div class="ticker-item">${prefix} ${escapeMafutaHtml(b.text)} <span style="font-size:0.6rem;color:var(--text-dim);">· ${time}</span></div>`;
-  }).join('');
-  ticker.innerHTML = items || '<div class="ticker-item" style="color:var(--text-dim);">No broadcasts yet. Be the first to share!</div>';
-}
-
-document.addEventListener('input', e => {
-  if (e.target.id === 'broadcastInput') {
-    const count = e.target.value.length;
-    document.getElementById('charCount').textContent = count + '/140';
-  }
-});
-
-document.addEventListener('click', e => {
-  if (e.target.id === 'sendBroadcastBtnHero') submitBroadcast();
-});
-
-// Auto-generate sample broadcasts periodically
-function simulateBroadcasts() {
-  if (!DB.broadcasts) DB.broadcasts = [];
-  if (DB.broadcasts.length > 50) return; // Don't grow too large
-  const samples = [
-    '⚠️ Boda Stage Alert: Heavy traffic heading into downtown Mbarara due to truck breakdown. Shell Mbarara has zero lines right now.',
-    '📢 Fuel price drop at Total Ntinda — now UGX 5,280 for petrol!',
-    '📍 Route Update: Shell Entebbe Airport has shortest queue times (avg 4 min).',
-    '🚨 Consumer Alert: Kobil Bombo Road pump #3 displaying incorrect amounts. Report filed.',
-    '✅ Diesel at UGX 5,450 at Shell Jinja Main — consensus confirmed by 5 riders.',
-    '💡 Tip: Shell Mukono has both fuels and zero queue this morning.',
-    '⚠️ Heavy rain on Kampala-Entebbe road. Drive carefully.',
-    '📢 Stabex Mukono just reduced petrol to UGX 5,310!',
-    '📍 Total Fort Portal has diesel available — few stations in the area have supply.',
-    '👥 Looking for 3 more riders to pool fuel at Total Mbarara. DM to join.',
-  ];
-  const pick = samples[Math.floor(Math.random() * samples.length)];
-  DB.broadcasts.push({
-    id: Date.now(), text: pick,
-    timestamp: new Date().toISOString(),
-    verified: Math.random() > 0.5,
-    upvotes: 0,
-  });
-  saveDB();
-  updateBroadcastTicker();
-  updateHubCounts();
-}
-
-/* ─── P2P CHAT ROOMS ─── */
-function renderP2PRooms() {
-  const container = document.getElementById('p2pRoomList');
-  if (!container) return;
-  const rooms = DB.p2pRooms || [];
-  container.innerHTML = rooms.map(r => {
-    const msgs = (DB.p2pMessages[r.id] || []);
-    const lastTime = msgs.length > 0 ? new Date(msgs[msgs.length-1].timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '—';
-    return `<div class="p2p-room-card" onclick="openP2PRoom(${r.id})">
-      <div class="room-icon">${r.icon}</div>
-      <div class="room-info">
-        <div class="room-name">${r.name}</div>
-        <div class="room-meta">${r.corridor} · last active ${lastTime}</div>
-      </div>
-      <div class="room-stats">
-        <div class="room-count">${r.active}</div>
-        <div class="room-label">online</div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function openP2PRoom(roomId) {
-  const room = (DB.p2pRooms || []).find(r => r.id === roomId);
-  if (!room) return;
-  document.getElementById('p2pRoomList').style.display = 'none';
-  document.getElementById('p2pActiveRoom').style.display = 'block';
-  document.getElementById('p2pRoomTitle').textContent = room.icon + ' ' + room.name;
-  document.getElementById('p2pRoomMeta').textContent = '📍 ' + room.corridor + ' · ' + room.members + ' members · ' + room.active + ' online';
-  document.getElementById('p2pActiveRoom').dataset.roomId = roomId;
-  renderP2PMessages(roomId);
-}
-
-function renderP2PMessages(roomId) {
-  const container = document.getElementById('p2pMessages');
-  if (!container) return;
-  const msgs = (DB.p2pMessages[roomId] || []).slice(-30);
-  if (msgs.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;">No messages yet. Start the conversation!</div>';
-    return;
-  }
-  container.innerHTML = msgs.map(m => {
-    const initials = m.author.split(' ').map(n=>n[0]).join('');
-    const trustedBadge = m.trusted ? '<span class="trusted-badge">✓ Trusted Local</span>' : '';
-    const time = new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-    return `<div class="chat-msg">
-      <div class="msg-avatar">${initials}</div>
-      <div class="msg-content">
-        <div class="msg-author">${m.author} ${trustedBadge} <span class="msg-time">${time}</span></div>
-        <div class="msg-text">${escapeMafutaHtml(m.text)}</div>
-        <div class="msg-actions">
-          <button onclick="upvoteP2PMsg(${roomId},${m.id})">👍 ${m.upvotes || 0}</button>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-  container.scrollTop = container.scrollHeight;
-}
-
-function upvoteP2PMsg(roomId, msgId) {
-  const msgs = DB.p2pMessages[roomId];
-  if (!msgs) return;
-  const msg = msgs.find(m => m.id === msgId);
-  if (!msg) return;
-  msg.upvotes = (msg.upvotes || 0) + 1;
-  if (msg.upvotes >= 5) msg.trusted = true;
-  DB.peerScore = (DB.peerScore || 0) + 1;
-  if (DB.peerScore % 10 === 0) DB.trustScore = Math.min(100, (DB.trustScore || 0) + 1);
-  saveDB();
-  renderP2PMessages(roomId);
-  updateHubCounts();
-}
-
-document.addEventListener('click', e => {
-  if (e.target.id === 'p2pBackBtn') {
-    document.getElementById('p2pActiveRoom').style.display = 'none';
-    document.getElementById('p2pRoomList').style.display = 'block';
-  }
-  if (e.target.id === 'p2pSendBtn') {
-    const roomEl = document.getElementById('p2pActiveRoom');
-    const roomId = parseInt(roomEl?.dataset?.roomId);
-    if (!roomId) return;
-    const input = document.getElementById('p2pMsgInput');
-    const text = input?.value?.trim();
-    if (!text) return showToast('Please enter a message.');
-    if (!DB.p2pMessages[roomId]) DB.p2pMessages[roomId] = [];
-    const authors = ['You','Sarah N.','Peter K.','John M.','Grace A.','Robert S.','Faith O.','David W.','Alice T.'];
-    DB.p2pMessages[roomId].push({
-      id: Date.now(), roomId,
-      author: authors[Math.floor(Math.random() * authors.length)],
-      text, timestamp: new Date().toISOString(),
-      upvotes: 0, trusted: (DB.trustScore || 0) >= 50,
-    });
-    saveDB();
-    input.value = '';
-    document.getElementById('p2pCharCount').textContent = '0/280';
-    renderP2PMessages(roomId);
-  }
-});
-
-document.addEventListener('input', e => {
-  if (e.target.id === 'p2pMsgInput') {
-    document.getElementById('p2pCharCount').textContent = e.target.value.length + '/280';
-  }
-});
-
-/* ─── C2G TICKETING SYSTEM ─── */
-function initC2GForm() {
-  const sel = document.getElementById('c2gStation');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Select station...</option>';
-  getStations().forEach(s => {
-    const op = getOp(s.op);
-    sel.innerHTML += `<option value="${s.id}">${s.name} — ${op.short}, ${s.area}</option>`;
-  });
-}
-
-document.addEventListener('click', e => {
-  if (e.target.id === 'c2gSubmitBtn') submitC2GTicket();
-});
-
-function submitC2GTicket() {
-  if (window.MafutaApi?.isLive()) return showToast('Official complaint submission is not yet available.');
-  const category = document.getElementById('c2gCategory')?.value;
-  const stationId = parseInt(document.getElementById('c2gStation')?.value);
-  const date = document.getElementById('c2gDate')?.value;
-  const phone = document.getElementById('c2gPhone')?.value?.trim() || '';
-  const desc = document.getElementById('c2gDescription')?.value?.trim();
-  const vehicleType = document.getElementById('c2gVehicleType')?.value;
-
-  if (!category) return showToast('Please select a violation category.');
-  if (!stationId) return showToast('Please select a fuel station.');
-  if (!vehicleType) return showToast('Please select your vehicle type.');
-  if (!desc || desc.length < 10) return showToast('Please describe the issue in detail (min 10 chars).');
-
-  const station = getStation(stationId);
-  const ticketId = 'C2G-2025-' + String((DB.c2gTickets||[]).length + 42).padStart(4,'0');
-
-  // Read uploaded file metadata
-  const fileInput = document.getElementById('c2gFileInput');
-  const uploadedFiles = [];
-  if (fileInput && fileInput.files.length > 0) {
-    for (let f of fileInput.files) {
-      uploadedFiles.push({ name: f.name, size: f.size, type: f.type });
-    }
-  }
-
-  if (!DB.c2gTickets) DB.c2gTickets = [];
-  DB.c2gTickets.push({
-    id: ticketId, category, stationId, stationName: station?.name || 'Unknown',
-    date, phone, description: desc, status: 'open',
-    createdAt: new Date().toISOString(), chat: [],
-    vehicleType, uploadedFiles,
-  });
-
-  const catLabels = { tampering:'Pump Tampering', adulterated:'Adulterated Fuel', overpricing:'Overpricing', refusal:'Refusal to Comply', quality:'Fuel Quality', other:'Other' };
-
-  if (!DB.notifications) DB.notifications = [];
-  DB.notifications.push({
-    id: Date.now(), type: 'c2g_ticket',
-    message: `📋 Ticket ${ticketId} created: ${catLabels[category]||category} at ${station?.name||'Unknown'}`,
-    read: false, date: new Date().toISOString(),
-  });
-  renderNotifications();
-
-  DB.trustScore = Math.min(100, (DB.trustScore || 0) + 2);
-  saveDB();
-  showToast(`DEMO ONLY: Ticket ${ticketId} is local to this browser; no agency received it.`);
-
-  document.getElementById('c2gCategory').value = '';
-  document.getElementById('c2gStation').value = '';
-  document.getElementById('c2gPhone').value = '';
-  document.getElementById('c2gDescription').value = '';
-  document.getElementById('c2gDate').value = '';
-
-  renderC2GTickets();
-  updateHubCounts();
-}
-
-function renderC2GTickets() {
-  const container = document.getElementById('c2gTicketList');
-  if (!container) return;
-  const tickets = DB.c2gTickets || [];
-  if (tickets.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:0.82rem;">No tickets yet. Submit your first exploitation report above.</div>';
-    return;
-  }
-  const catLabels = { tampering:'🔧 Pump Tampering', adulterated:'⚠️ Adulterated Fuel', overpricing:'💰 Overpricing', refusal:'🚫 Refusal to Comply', quality:'🧪 Fuel Quality', other:'📝 Other' };
-  container.innerHTML = tickets.slice(-10).reverse().map(t => {
-    const statusLabels = { open:'🟢 Open', investigating:'🟡 Investigating', resolved:'🔵 Resolved', closed:'⚪ Closed' };
-    const chatHtml = t.chat && t.chat.length > 0 ? t.chat.map(c => `
-      <div class="chat-bubble ${c.from === 'gov' ? 'gov' : 'user'}">
-        <div class="bubble-author">${c.from === 'gov' ? '🏛️ Regulator' : '👤 You'}</div>
-        <div class="bubble-text">${c.text}</div>
-      </div>
-    `).join('') : '';
-    return `<div class="c2g-ticket-card">
-      <div class="ticket-header">
-        <span class="ticket-id">${t.id}</span>
-        <span class="ticket-status ${t.status}">${statusLabels[t.status] || t.status}</span>
-      </div>
-      <div class="ticket-cat">${catLabels[t.category]||t.category} · ${escapeMafutaHtml(t.stationName)}</div>
-      <div class="ticket-desc">${escapeMafutaHtml(t.description)}</div>
-      ${t.chat && t.chat.length > 0 ? `<div class="ticket-chat">${chatHtml}</div>` : ''}
-      <div style="margin-top:6px;font-size:0.65rem;color:var(--text-dim);">${new Date(t.createdAt).toLocaleDateString()}</div>
-    </div>`;
-  }).join('');
-}
-
-document.addEventListener('click', e => {
-  if (e.target.id === 'c2gTrackBtn') {
-    const input = document.getElementById('c2gTrackInput')?.value?.trim().toUpperCase();
-    if (!input) return showToast('Please enter a ticket ID.');
-    const ticket = (DB.c2gTickets || []).find(t => t.id.toUpperCase() === input);
-    const result = document.getElementById('c2gTrackResult');
-    if (!ticket) {
-      result.innerHTML = '<div class="empty-state" style="padding:16px;"><div class="icon">🔍</div><p>No ticket found with ID ' + input + '. Please check and try again.</p></div>';
-      return;
-    }
-    const catLabels = { tampering:'Pump Tampering', adulterated:'Adulterated Fuel', overpricing:'Overpricing', refusal:'Refusal to Comply', quality:'Fuel Quality', other:'Other' };
-    const statusLabels = { open:'🟢 Open — Awaiting Assignment', investigating:'🟡 Investigating — Assigned to Regulator', resolved:'🔵 Resolved — Action Taken', closed:'⚪ Closed' };
-    result.innerHTML = `<div class="ticket-track-result">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span class="track-id">${ticket.id}</span>
-        <span style="font-size:0.75rem;padding:2px 10px;border-radius:999px;background:var(--neon-dim);color:var(--neon);font-weight:600;">${statusLabels[ticket.status] || ticket.status}</span>
-      </div>
-      <div class="track-detail">
-        <div><span>Category</span><span style="font-weight:600;">${catLabels[ticket.category]||ticket.category}</span></div>
-        <div><span>Station</span><span style="font-weight:600;">${ticket.stationName}</span></div>
-        <div><span>Submitted</span><span>${new Date(ticket.createdAt).toLocaleDateString()}</span></div>
-        <div><span>Regulator Chat</span><span>${(ticket.chat||[]).length} messages</span></div>
-      </div>
-    </div>`;
-  }
-});
-
-document.addEventListener('click', e => {
-  if (e.target.id === 'c2gUploadBtn') {
-    document.getElementById('c2gFileInput').click();
-  }
-});
-
-document.addEventListener('change', e => {
-  if (e.target.id === 'c2gFileInput') {
-    const files = e.target.files;
-    const list = document.getElementById('c2gFileList');
-    if (files.length > 0) {
-      list.innerHTML = Array.from(files).map(f => {
-        const sizeKB = (f.size / 1024).toFixed(1);
-        const isImage = f.type.startsWith('image/');
-        return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">' +
-          (isImage ? '<img src="' + URL.createObjectURL(f) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;">' : '📎') +
-          '<span style="font-size:0.8rem;">' + f.name + ' <span style="color:var(--text-dim);font-size:0.65rem;">(' + sizeKB + ' KB)</span></span></div>';
-      }).join('');
-      showToast('📷 ' + files.length + ' file(s) attached.');
-    } else {
-      list.innerHTML = '';
-    }
-  }
-});
-
-// Set default date on C2G form
-document.addEventListener('DOMContentLoaded', () => {
-  const dateInput = document.getElementById('c2gDate');
-  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
-});
-
-/* ─── G2C ADVISORY ─── */
-function renderG2CPosts() {
-  const container = document.getElementById('g2cPostList');
-  if (!container) return;
-  const posts = DB.g2cPosts || [];
-  if (posts.length === 0) {
-    container.innerHTML = '<div class="empty-state"><div class="icon">🏛️</div><p>No official releases yet.</p></div>';
-    return;
-  }
-  const typeLabels = { directive:'📜 Directive', update:'📢 Update', alert:'⚠️ Alert', townhall:'🎤 Town Hall', notice:'📋 Notice' };
-  container.innerHTML = posts.slice().reverse().map(p => `
-    <div class="g2c-post">
-      <div class="post-header">
-        <div class="post-title">${typeLabels[p.type]||'📄'} ${p.title} <span class="verified-badge">✓ Verified @energy.go.ug</span></div>
-        <span style="font-size:0.65rem;color:var(--text-dim);white-space:nowrap;">${new Date(p.date).toLocaleDateString()}</span>
-      </div>
-      <div class="post-source"><span class="gov-badge"></span> ${p.source}</div>
-      <div class="post-body">${p.body}</div>
-      <div class="post-meta">🔒 Official communication — unalterable · Ministry of Energy & Mineral Development</div>
-    </div>
-  `).join('');
-}
-
-function renderG2CAMA() {
-  const container = document.getElementById('g2cAmaList');
-  if (!container) return;
-  const sessions = DB.g2cAma || [];
-  if (sessions.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-dim);font-size:0.8rem;">No upcoming AMA sessions scheduled.</div>';
-    return;
-  }
-  container.innerHTML = sessions.map(a => {
-    const d = new Date(a.date);
-    const isUpcoming = d > new Date();
-    const questionsHtml = (a.questions || []).map(q => `
-      <div style="font-size:0.75rem;padding:4px 0;border-bottom:1px solid var(--green-border);display:flex;justify-content:space-between;">
-        <span><strong>${q.name}:</strong> ${q.text}</span>
-        <span style="color:var(--neon);font-weight:600;">👍 ${q.votes}</span>
-      </div>
-    `).join('');
-    return `<div class="ama-card">
-      <div class="ama-title">${isUpcoming ? '🟢 Upcoming' : '🔵 Past'} · ${a.title}</div>
-      <div class="ama-date">🎤 ${a.host} · ${d.toLocaleDateString()} at ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
-      <div class="ama-desc">${a.description}</div>
-      <div style="margin-top:8px;">
-        <div style="font-size:0.75rem;font-weight:600;margin-bottom:4px;">Questions (${(a.questions||[]).length}):</div>
-        ${questionsHtml || '<div style="font-size:0.7rem;color:var(--text-dim);">No questions yet. Be the first to ask!</div>'}
-      </div>
-      ${isUpcoming ? `<div class="ama-ask">
-        <input type="text" placeholder="Submit your question for the Minister..." id="amaQ_${a.id}">
-        <button onclick="submitAMAQuestion(${a.id})">Ask ↗</button>
-      </div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function submitAMAQuestion(amaId) {
-  const input = document.getElementById('amaQ_' + amaId);
-  const text = input?.value?.trim();
-  if (!text) return showToast('Please enter a question.');
-  const session = (DB.g2cAma || []).find(a => a.id === amaId);
-  if (!session) return;
-  if (!session.questions) session.questions = [];
-  session.questions.push({ name: 'You', text, votes: 0 });
-  saveDB();
-  input.value = '';
-  renderG2CAMA();
-  showToast('✅ Question submitted! It will be queued for the AMA session.');
-}
-
-/* ─── HUB COUNTS ─── */
-function updateHubCounts() {
-  const p2pRooms = DB.p2pRooms || [];
-  const totalActive = p2pRooms.reduce((s, r) => s + r.active, 0);
-  const el1 = document.getElementById('hubP2PCount');
-  if (el1) el1.textContent = totalActive.toLocaleString();
-  const el1b = document.getElementById('hubP2PMsgCount');
-  if (el1b) el1b.textContent = p2pRooms.length;
-
-  const tickets = DB.c2gTickets || [];
-  const openTickets = tickets.filter(t => t.status === 'open' || t.status === 'investigating').length;
-  const resolvedTickets = tickets.filter(t => t.status === 'resolved').length;
-  const el2 = document.getElementById('hubC2GCount');
-  if (el2) el2.textContent = openTickets;
-  const el2b = document.getElementById('hubC2GResolved');
-  if (el2b) el2b.textContent = resolvedTickets;
-
-  const posts = DB.g2cPosts || [];
-  const el3 = document.getElementById('hubG2CCount');
-  if (el3) el3.textContent = posts.length;
-  const ama = DB.g2cAma || [];
-  const upcomingAMA = ama.filter(a => new Date(a.date) > new Date()).length;
-  const el4 = document.getElementById('hubG2CAMA');
-  if (el4) el4.textContent = upcomingAMA;
-}
-
-/* ─── PRICE CAP MATRIX ─── */
-function renderPriceCapMatrix() {
-  const container = document.getElementById('priceCapMatrix');
-  if (!container) return;
-  const districts = Object.keys(DISTRICT_PRICE_CAPS);
-  const avgPrices = {};
-  districts.forEach(d => {
-    const stations = STATIONS_DATA.filter(s => s.district === d);
-    if (stations.length > 0) {
-      const petrolPrices = stations.filter(s => s.petrol).map(s => s.petrol);
-      const dieselPrices = stations.filter(s => s.diesel).map(s => s.diesel);
-      avgPrices[d] = {
-        petrolAvg: petrolPrices.length ? petrolPrices.reduce((a, b) => a + b, 0) / petrolPrices.length : null,
-        dieselAvg: dieselPrices.length ? dieselPrices.reduce((a, b) => a + b, 0) / dieselPrices.length : null,
-      };
-    }
-  });
-  container.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
-    <thead><tr style="border-bottom:1px solid var(--border);">
-      <th style="text-align:left;padding:6px 8px;">District</th>
-      <th style="text-align:right;padding:6px 8px;">Petrol Cap</th>
-      <th style="text-align:right;padding:6px 8px;">Petrol Avg</th>
-      <th style="text-align:right;padding:6px 8px;">Diesel Cap</th>
-      <th style="text-align:right;padding:6px 8px;">Diesel Avg</th>
-      <th style="text-align:center;padding:6px 8px;">Status</th>
-    </tr></thead><tbody>
-    ${districts.map(d => {
-      const caps = DISTRICT_PRICE_CAPS[d];
-      const avgs = avgPrices[d] || {};
-      const petrolOk = avgs.petrolAvg !== null ? avgs.petrolAvg <= caps.petrol : true;
-      const dieselOk = avgs.dieselAvg !== null ? avgs.dieselAvg <= caps.diesel : true;
-      const status = (!petrolOk || !dieselOk) ? '⚠️ Exceeded' : '✅ Compliant';
-      const statusCls = (!petrolOk || !dieselOk) ? 'color:#fca5a5;' : 'color:#76FF03;';
-      return `<tr style="border-bottom:1px solid var(--border-dim);">
-        <td style="padding:6px 8px;font-weight:600;">${d}</td>
-        <td style="text-align:right;padding:6px 8px;">UGX ${caps.petrol.toLocaleString()}</td>
-        <td style="text-align:right;padding:6px 8px;${avgs.petrolAvg !== null ? (avgs.petrolAvg > caps.petrol ? 'color:#fca5a5;font-weight:600;' : '') : 'color:var(--text-dim);'}">${avgs.petrolAvg !== null ? 'UGX ' + Math.round(avgs.petrolAvg).toLocaleString() : '—'}</td>
-        <td style="text-align:right;padding:6px 8px;">UGX ${caps.diesel.toLocaleString()}</td>
-        <td style="text-align:right;padding:6px 8px;${avgs.dieselAvg !== null ? (avgs.dieselAvg > caps.diesel ? 'color:#fca5a5;font-weight:600;' : '') : 'color:var(--text-dim);'}">${avgs.dieselAvg !== null ? 'UGX ' + Math.round(avgs.dieselAvg).toLocaleString() : '—'}</td>
-        <td style="text-align:center;padding:6px 8px;${statusCls}font-weight:600;">${status}</td>
-      </tr>`;
-    }).join('')}
-    </tbody></table>`;
-}
-
-/* ─── Broadcast enter key ─── */
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.id === 'broadcastInput') {
-    e.preventDefault();
-    submitBroadcast();
-  }
-});
-
-/* ─── INIT ─── */
-document.addEventListener('DOMContentLoaded',()=>{
-  initMap();
-  initAnalyticsMap();
-  populateReportForm();
-
-  // Populate report station in reviews
-  const revSel=document.getElementById('reviewStation');
-  if(revSel){
-    revSel.innerHTML='<option value="">Select a station...</option>';
-    getStations().forEach(s=>{revSel.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-  }
-  // Populate operator station select
-  const opSel=document.getElementById('opStation');
-  if(opSel){
-    opSel.innerHTML='<option value="">Select your station</option>';
-    getStations().forEach(s=>{opSel.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-  }
-
-  // Populate trip planner
-  const vehSel=document.getElementById('tripVehicle');
-  if(vehSel){
-    VEHICLES.forEach(v=>{vehSel.innerHTML+=`<option value="${v.id}">${v.name} (~${v.consumption} km/L)</option>`;});
-  }
-  const locList=document.getElementById('locList');
-  if(locList){
-    LOCATIONS.forEach(l=>{locList.innerHTML+=`<option value="${l.name}">${l.area}, ${l.district}</option>`;});
-  }
-  const dests=document.getElementById('commonDests');
-  if(dests){
-    ['Kampala Post Office','Mukono Town','Jinja Town','Entebbe Airport','Ntinda','Mbarara Town','Gulu Town','Mbale Town','Masaka Town'].forEach(n=>{
-      dests.innerHTML+=`<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="document.getElementById('tripTo').value='${n}'">${n}</button>`;
-  });
-}
-
-/* ─── C2G TICKET ADMIN ─── */
-function renderC2GAdmin() {
-  const tickets = DB.c2gTickets || [];
-  const active = tickets.filter(t=>t.status!=='resolved' && t.status!=='penalty_issued');
-  const cnt = document.getElementById('c2gTicketCount');
-  if (cnt) cnt.textContent = active.length + ' active';
-  const list = document.getElementById('c2gAdminList');
-  if (!list) return;
-  if (tickets.length===0) {
-    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:0.85rem;">No C2G tickets filed.</div>';
-    return;
-  }
-  list.innerHTML = tickets.slice().reverse().map(t => {
-    const statusColors = {open:'#fcd34d',investigating:'#93c5fd',dispatched:'#fbbf24',resolved:'#76FF03',penalty_issued:'#fca5a5'};
-    const statusIcons = {open:'🟡',investigating:'🔍',dispatched:'🚔',resolved:'✅',penalty_issued:'💰'};
-    const statusColor = statusColors[t.status]||'var(--text-dim)';
-    const vehicleLabel = {truck:'🚛 Truck',boda:'🛵 Boda Boda',private:'🚗 Private'}[t.vehicleType]||'—';
-    return `<div class="kyc-card" style="margin-bottom:8px;">
-      <div class="kyc-info" style="flex:1;">
-        <div class="name" style="font-size:0.85rem;">Ticket #${t.id} — ${escapeMafutaHtml(t.stationName)} <span style="font-size:0.7rem;color:${statusColor};">${statusIcons[t.status]||''} ${t.status.replace(/_/g,' ').toUpperCase()}</span></div>
-        <div class="meta">${vehicleLabel} · ${t.fuel||'petrol'} at UGX ${(t.price||0).toLocaleString()} · ${t.location||t.district||'—'}</div>
-        <div class="meta" style="font-size:0.65rem;">Reporter: ${escapeMafutaHtml(t.phone||t.userId||'—')} · ${new Date(t.createdAt).toLocaleString()}</div>
-        ${t.description ? `<div class="docs" style="margin-top:4px;">📝 ${escapeMafutaHtml(t.description.substring(0,120))}${t.description.length>120?'…':''}</div>` : ''}
-        ${t.uploadedFiles?.length ? `<div class="docs">📎 ${t.uploadedFiles.map(f=>f.name).join(', ')}</div>` : ''}
-      </div>
-      <div class="kyc-actions" style="flex-direction:column;gap:4px;">
-        ${t.status==='open' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'investigating')" style="font-size:0.6rem;">🔍 Investigate</button>` : ''}
-        ${t.status==='investigating' ? `<button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'dispatched')" style="font-size:0.6rem;">🚔 Dispatch</button>` : ''}
-        ${t.status==='dispatched' ? `<button class="btn-tool btn-tool-primary btn-tool-sm" onclick="progressTicket(${t.id},'resolved')" style="font-size:0.6rem;">✅ Resolve</button><button class="btn-tool btn-tool-outline btn-tool-sm" onclick="progressTicket(${t.id},'penalty_issued')" style="font-size:0.6rem;border-color:rgba(239,68,68,0.3);color:#fca5a5;">💰 Issue Penalty</button>` : ''}
-        ${t.status==='resolved'||t.status==='penalty_issued' ? `<span style="font-size:0.6rem;color:var(--text-dim);">✔ Closed ${new Date(t.resolvedAt||t.updatedAt).toLocaleDateString()}</span>` : ''}
-        ${t.notifiedReporter ? `<span style="font-size:0.6rem;color:var(--neon);">📨 Reporter notified</span>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function progressTicket(id, newStatus) {
-  const ticket = (DB.c2gTickets||[]).find(t=>t.id===id);
-  if (!ticket) return;
-  ticket.status = newStatus;
-  ticket.updatedAt = new Date().toISOString();
-  if (newStatus==='resolved' || newStatus==='penalty_issued') {
-    ticket.resolvedAt = new Date().toISOString();
-    ticket.notifiedReporter = true;
-    const msg = `📨 C2G Ticket #${id}: ${ticket.stationName} — Status updated to "${newStatus.replace(/_/g,' ').toUpperCase()}". An automated SMS notification has been dispatched to the reporting citizen (${ticket.phone||ticket.userId||'on file'}).`;
-    if (!DB.notifications) DB.notifications = [];
-    DB.notifications.push({ id:Date.now(), type:'c2g_resolved', message:msg, read:false, date:new Date().toISOString() });
-    showToast('📨 Resolution dispatched — citizen notified via SMS/WhatsApp.');
-  }
-  saveDB();
-  renderC2GAdmin();
-  renderSLATimers();
-}
-
-/* ─── PRICE CAP EDITOR ─── */
-function renderCapEditor() {
-  const container = document.getElementById('adminCapEditor');
-  if (!container) return;
-  const districts = Object.keys(DISTRICT_PRICE_CAPS);
-  container.innerHTML = `<table class="fraud-table">
-    <thead><tr>
-      <th>District</th>
-      <th>Region</th>
-      <th>Petrol Cap (UGX)</th>
-      <th>Diesel Cap (UGX)</th>
-      <th>Last Updated</th>
-    </tr></thead>
-    <tbody>${districts.map(d => {
-      const region = STATIONS_DATA.find(s=>s.district===d)?.region||'—';
-      const caps = DISTRICT_PRICE_CAPS[d];
-      return `<tr>
-        <td style="font-weight:600;">${d}</td>
-        <td style="font-size:0.75rem;color:var(--text-dim);">${region}</td>
-        <td><input type="number" class="cap-input" data-district="${d}" data-fuel="petrol" value="${caps.petrol}" style="width:100px;padding:4px 8px;border:1px solid var(--green-border);border-radius:4px;background:var(--green-dark);color:var(--white);font-family:var(--font-mono);"></td>
-        <td><input type="number" class="cap-input" data-district="${d}" data-fuel="diesel" value="${caps.diesel}" style="width:100px;padding:4px 8px;border:1px solid var(--green-border);border-radius:4px;background:var(--green-dark);color:var(--white);font-family:var(--font-mono);"></td>
-        <td style="font-size:0.65rem;color:var(--text-dim);">${new Date().toLocaleDateString()}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table>`;
-}
-
-document.addEventListener('click', e => {
-  if (e.target.id==='saveAllCapsBtn') {
-    document.querySelectorAll('.cap-input').forEach(inp => {
-      const district = inp.dataset.district;
-      const fuel = inp.dataset.fuel;
-      const val = parseInt(inp.value);
-      if (district && fuel && val > 0 && DISTRICT_PRICE_CAPS[district]) {
-        DISTRICT_PRICE_CAPS[district][fuel] = val;
-      }
-    });
-    saveDB();
-    showToast('💾 Price caps updated across all system layers.');
-    renderPriceCapMatrix();
-  }
-});
-
-/* ─── HIERARCHY — ADD DISTRICT/AREA/STATION ─── */
-function addSubNode(parentId, type) {
-  const name = prompt('Enter name for new '+type+':');
-  if (!name || !name.trim()) return;
-  const tree = DB.admin.hierarchy;
-  if (!tree) return;
-  const parent = findHierarchyNode(tree, parentId);
-  if (!parent) return;
-  if (!parent.children) parent.children = [];
-  const newNode = { id:Date.now(), name:name.trim(), type, children:[] };
-  if (type==='area') newNode.stations = [];
-  parent.children.push(newNode);
-  saveDB();
-  renderHierarchyTree();
-  showToast('✅ '+type.charAt(0).toUpperCase()+type.slice(1)+' "'+name.trim()+'" added.');
-}
-function findHierarchyNode(nodes, id) {
-  for (const n of nodes) {
-    if (n.id===id) return n;
-    if (n.children) {
-      const found = findHierarchyNode(Array.isArray(n.children)?n.children:n.children, id);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-function deleteHierarchyNode(id) {
-  if (!confirm('Delete this node and all its children?')) return;
-  const tree = DB.admin.hierarchy;
-  const remove = (nodes, targetId) => {
-    for (let i=nodes.length-1; i>=0; i--) {
-      if (nodes[i].id===targetId) { nodes.splice(i,1); return true; }
-      if (nodes[i].children) { if (remove(Array.isArray(nodes[i].children)?nodes[i].children:nodes[i].children, targetId)) return true; }
-    }
-    return false;
-  };
-  if (remove(tree, id)) { saveDB(); renderHierarchyTree(); showToast('🗑️ Deleted.'); }
-}
-
-/* ─── CSV EXPORT ─── */
-function exportCSV(data, filename, columns) {
-  if (!data || data.length===0) return showToast('No data to export.');
-  const header = columns.map(c=>c.label).join(',');
-  const rows = data.map(row => columns.map(c => {
-    let val = c.get ? c.get(row) : row[c.key];
-    if (typeof val==='string' && (val.includes(',')||val.includes('"'))) val='"'+val.replace(/"/g,'""')+'"';
-    return val;
-  }).join(','));
-  const csv = [header, ...rows].join('\n');
-  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename+'_'+new Date().toISOString().slice(0,10)+'.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('📥 '+filename+' exported.');
-}
-
-// Add CSV export buttons in admin panes
-document.addEventListener('click', e => {
-  if (e.target.id==='exportFraudBtn') {
-    const queue = (DB.admin.fraudQueue||[]).filter(f=>f.status==='pending');
-    exportCSV(queue, 'fraud_queue', [
-      {label:'Timestamp', get:r=>new Date(r.timestamp).toLocaleString()},
-      {label:'Station', key:'stationName'},
-      {label:'User ID', key:'userId'},
-      {label:'Reported Price', get:r=>'UGX '+r.reportedPrice},
-      {label:'Current Price', get:r=>'UGX '+r.currentPrice},
-      {label:'Deviation %', get:r=>r.deviationPct.toFixed(1)+'%'},
-      {label:'Confidence', key:'confidence'},
-    ]);
-  }
-  if (e.target.id==='exportAuditBtn') {
-    const log = DB.admin.auditLog || [];
-    exportCSV(log, 'audit_trail', [
-      {label:'Timestamp', get:r=>new Date(r.timestamp).toLocaleString()},
-      {label:'Station', key:'stationName'},
-      {label:'Modified By', key:'modifiedBy'},
-      {label:'Previous Price', get:r=>r.previousPrice?'UGX '+r.previousPrice:'—'},
-      {label:'New Price', get:r=>r.newPrice?'UGX '+r.newPrice:'—'},
-      {label:'Channel', key:'channel'},
-      {label:'Action', key:'action'},
-    ]);
-  }
-  if (e.target.id==='exportKPIBtn') {
-    const data = [{
-      totalReports:(DB.reports||[]).length,
-      verified:(DB.reports||[]).filter(r=>r.status==='verified').length,
-      rejected:(DB.reports||[]).filter(r=>r.status==='rejected').length,
-      activeFlags:(DB.admin.fraudQueue||[]).filter(f=>f.status==='pending').length,
-      activeAPITokens:(DB.admin.apiTokens||[]).filter(t=>t.status==='active').length,
-      activeC2GTickets:(DB.c2gTickets||[]).filter(t=>t.status!=='resolved'&&t.status!=='penalty_issued').length,
-    }];
-    exportCSV(data, 'kpi_snapshot', [
-      {label:'Total Reports', key:'totalReports'},
-      {label:'Verified', key:'verified'},
-      {label:'Rejected', key:'rejected'},
-      {label:'Active Flags', key:'activeFlags'},
-      {label:'Active API Tokens', key:'activeAPITokens'},
-      {label:'Active C2G Tickets', key:'activeC2GTickets'},
-    ]);
-  }
-});
-
-// Update the SLA section header in dashboard to show the ticket ID prefixed
-  // Seed new community data if needed
-  seedNewData();
-
-  renderRegionCards();
-  updateHeroCount();
-  renderStationList();
-  renderActivity();
-  renderReviews();
-  renderNotifications();
-  updateBroadcastTicker();
-  updateHubCounts();
-  renderPriceCapMatrix();
-
-  // Never synthesize live prices, official broadcasts or automatic verification.
-});
-
-// SW
-if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
-  });
-}
+initialize();

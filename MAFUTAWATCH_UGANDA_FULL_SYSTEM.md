@@ -1,5 +1,7 @@
 # MafutaWatch Uganda — The National Fuel Price Transparency Platform
 
+> **Historical architecture proposal, not deployment documentation.** The implemented system is described in [README.md](README.md), [docs/09_ARCHITECTURE.md](docs/09_ARCHITECTURE.md) and [docs/10_OPERATIONS.md](docs/10_OPERATIONS.md). SQL/pseudocode and capacity, government affiliation and compliance assertions below are not validated by this reference document.
+
 **Ministry of Works and Transport** | **Ministry of Energy and Mineral Development (MEMD)** | **Republic of Uganda**
 
 ---
