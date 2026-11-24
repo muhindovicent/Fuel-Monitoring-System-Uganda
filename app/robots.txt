@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://mafuta-watch-staging.vercel.app/sitemap.xml
